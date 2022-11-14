@@ -1,0 +1,30 @@
+# Global variables are applied to all deployments and used as the default values
+global:
+  # The user who runs the seaweed cluster.
+  user: "seaweed"
+  # SSH port of servers in the managed cluster.
+  ssh_port: 22
+  # Storage directory for cluster deployment files, startup scripts, and configuration files.
+  deploy_dir: "/sw"
+  # Supported values: "amd64", "arm64" (default: "amd64")
+  arch: "amd64"
+
+server_configs:
+  master_server:
+    volumeSizeLimitMB: 2000
+    defaultReplication: 000
+
+# Server configs are used to specify the configuration of master servers.
+master_servers:
+  # The ip address of the master server.
+  - host: 192.168.2.7
+
+# Server configs are used to specify the configuration of volume servers.
+volume_servers:
+  # The ip address of the volume server.
+  - host: 192.168.2.7
+
+# Server configs are used to specify the configuration of volume servers.
+filer_servers:
+  # The ip address of the volume server.
+  - host: 192.168.2.7
