@@ -7,8 +7,8 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
-func (m *Manager) DeployMasterServer(options spec.GlobalOptions, masterSpec *spec.MasterServerSpec, index int) error {
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.PortSsh), options.User, "", " ", func(op operator.CommandOperator) error {
+func (m *Manager) DeployMasterServer(masterSpec *spec.MasterServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.PortSsh), m.User, "", m.sudoPass, func(op operator.CommandOperator) error {
 
 		component := "master"
 		componentInstance := fmt.Sprintf("%s%d", component, index)

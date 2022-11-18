@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
+	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
 )
 
 type Manager struct {
+	User         string // username to login to the SSH server
+	IdentityFile string // path to the private key file
+	UsePassword  bool   // use password instead of identity file for ssh connection
+
 	skipConfig bool
 	skipEnable bool
 	skipStart  bool
@@ -28,8 +33,15 @@ func NewManager(version string) *Manager {
 }
 
 func (m *Manager) Deploy(specification *spec.Specification) error {
+	if m.UsePassword {
+		password := utils.PromptForPassword("Input SSH password: ")
+		m.sudoPass = password
+		println()
+	}
+	m.User = utils.Nvl(m.User, specification.GlobalOptions.User)
 	for index, masterSpec := range specification.MasterServers {
-		if err := m.DeployMasterServer(specification.GlobalOptions, masterSpec, index); err != nil {
+		if err := m.DeployMasterServer(masterSpec, index); err != nil {
+			fmt.Printf("error is %v\n", err)
 			return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
 		}
 	}
@@ -38,12 +50,12 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))
 	}
 	for index, volumeSpec := range specification.VolumeServers {
-		if err := m.DeployVolumeServer(specification.GlobalOptions, masters, volumeSpec, index); err != nil {
+		if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
 			return fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
 		}
 	}
 	for index, filerSpec := range specification.FilerServers {
-		if err := m.DeployFilerServer(specification.GlobalOptions, masters, filerSpec, index); err != nil {
+		if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
 			return fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
 		}
 	}
