@@ -5,14 +5,12 @@ type (
 	// specification in topology.yaml
 	GlobalOptions struct {
 		User       string `yaml:"user,omitempty" default:"seaweed"`
-		Group      string `yaml:"group,omitempty"`
 		SSHPort    int    `yaml:"ssh_port,omitempty" default:"22" validate:"ssh_port:editable"`
 		TLSEnabled bool   `yaml:"enable_tls,omitempty"`
-		DeployDir  string `yaml:"deploy_dir,omitempty" default:"/sw"`
-		DataDir    string `yaml:"data_dir,omitempty" default:"data"`
-		LogDir     string `yaml:"log_dir,omitempty default:"log"`
+		ConfigDir  string `yaml:"conf_dir,omitempty" default:"/etc/seaweed"`
+		DataDir    string `yaml:"data_dir,omitempty" default:"/opt/seaweed"`
 		OS         string `yaml:"os,omitempty" default:"linux"`
-		Arch       string `yaml:"arch,omitempty"`
+		Arch       string `yaml:"arch,omitempty" default:"amd64"`
 	}
 
 	ServerConfigs struct {

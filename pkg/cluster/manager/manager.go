@@ -20,6 +20,8 @@ type Manager struct {
 	skipStart  bool
 	version    string
 	sudoPass   string
+	confDir    string
+	dataDir    string
 }
 
 func NewManager(version string) *Manager {
@@ -36,13 +38,13 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 	if m.UsePassword {
 		password := utils.PromptForPassword("Input SSH password: ")
 		m.sudoPass = password
-		println()
 	} else if m.User != "root" {
 		password := utils.PromptForPassword("Input sudo password: ")
 		m.sudoPass = password
-		println()
 	}
 	m.User = utils.Nvl(m.User, specification.GlobalOptions.User)
+	m.confDir = utils.Nvl(specification.GlobalOptions.ConfigDir, "/etc/seaweed")
+	m.dataDir = utils.Nvl(specification.GlobalOptions.DataDir, "/opt/seaweed")
 	for index, masterSpec := range specification.MasterServers {
 		if err := m.DeployMasterServer(masterSpec, index); err != nil {
 			fmt.Printf("error is %v\n", err)
@@ -81,6 +83,8 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 	data := map[string]interface{}{
 		"Component":         component,
 		"ComponentInstance": componentInstance,
+		"ConfigDir":         m.confDir,
+		"DataDir":           m.dataDir,
 		"TmpDir":            dir,
 		"SkipEnable":        m.skipEnable,
 		"SkipStart":         m.skipStart,
