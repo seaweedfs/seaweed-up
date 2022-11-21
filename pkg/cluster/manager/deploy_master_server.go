@@ -8,7 +8,7 @@ import (
 )
 
 func (m *Manager) DeployMasterServer(masterSpec *spec.MasterServerSpec, index int) error {
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.PortSsh), m.User, "", m.sudoPass, func(op operator.CommandOperator) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 
 		component := "master"
 		componentInstance := fmt.Sprintf("%s%d", component, index)

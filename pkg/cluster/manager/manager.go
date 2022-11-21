@@ -28,13 +28,17 @@ func NewManager(version string) *Manager {
 		skipEnable: false,
 		skipStart:  false,
 		version:    version,
-		sudoPass:   " ",
+		sudoPass:   "",
 	}
 }
 
 func (m *Manager) Deploy(specification *spec.Specification) error {
 	if m.UsePassword {
 		password := utils.PromptForPassword("Input SSH password: ")
+		m.sudoPass = password
+		println()
+	} else if m.User != "root" {
+		password := utils.PromptForPassword("Input sudo password: ")
 		m.sudoPass = password
 		println()
 	}
