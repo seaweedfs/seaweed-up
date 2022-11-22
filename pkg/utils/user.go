@@ -38,6 +38,16 @@ func Nvl(values ...string) string {
 	return ""
 }
 
+// return the first non empty integer
+func NvlInt(values ...int) int {
+	for _, s := range values {
+		if s != 0 {
+			return s
+		}
+	}
+	return 0
+}
+
 // PromptForPassword reads a password input from console
 func PromptForPassword(format string, a ...interface{}) string {
 	defer fmt.Println("")
