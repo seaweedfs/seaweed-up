@@ -3,6 +3,7 @@ package spec
 import (
 	"bytes"
 	"fmt"
+	"strings"
 )
 
 type MasterServerSpec struct {
@@ -21,8 +22,9 @@ type MasterServerSpec struct {
 	OS                 string                 `yaml:"os,omitempty"`
 }
 
-func (masterSpec *MasterServerSpec) WriteToBuffer(buf *bytes.Buffer) {
+func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "mdir", ".")
+	addToBuffer(buf, "peers", strings.Join(masters, ","))
 	addToBuffer(buf, "ip", masterSpec.Ip)
 	addToBuffer(buf, "ip.bind", masterSpec.IpBind)
 	addToBufferInt(buf, "port", masterSpec.Port, 9333)

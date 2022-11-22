@@ -45,16 +45,23 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 	m.User = utils.Nvl(m.User, specification.GlobalOptions.User)
 	m.confDir = utils.Nvl(specification.GlobalOptions.ConfigDir, "/etc/seaweed")
 	m.dataDir = utils.Nvl(specification.GlobalOptions.DataDir, "/opt/seaweed")
-	for index, masterSpec := range specification.MasterServers {
-		if err := m.DeployMasterServer(masterSpec, index); err != nil {
-			fmt.Printf("error is %v\n", err)
-			return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
-		}
+	for _, masterSpec := range specification.MasterServers {
+		masterSpec.VolumeSizeLimitMB = utils.NvlInt(masterSpec.VolumeSizeLimitMB, specification.GlobalOptions.VolumeSizeLimitMB, 5000)
+		masterSpec.PortSsh = utils.NvlInt(masterSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
 	}
+
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
 		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))
 	}
+
+	for index, masterSpec := range specification.MasterServers {
+		if err := m.DeployMasterServer(masters, masterSpec, index); err != nil {
+			fmt.Printf("error is %v\n", err)
+			return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
+		}
+	}
+
 	for index, volumeSpec := range specification.VolumeServers {
 		if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
 			return fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
