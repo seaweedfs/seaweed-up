@@ -17,8 +17,6 @@ type FilerServerSpec struct {
 	Rack               string                 `yaml:"rack,omitempty"`
 	DefaultReplication int                    `yaml:"defaultReplication,omitempty"`
 	MetricsPort        int                    `yaml:"metrics_port,omitempty"`
-	ConfigDir          string                 `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
-	DataDir            string                 `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`

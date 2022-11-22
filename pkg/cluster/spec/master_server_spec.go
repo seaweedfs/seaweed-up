@@ -15,8 +15,6 @@ type MasterServerSpec struct {
 	VolumeSizeLimitMB  int                    `yaml:"volumeSizeLimitMB" default:"5000"`
 	DefaultReplication string                 `yaml:"defaultReplication,omitempty"`
 	MetricsPort        int                    `yaml:"metrics_port,omitempty"`
-	ConfigDir          string                 `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
-	DataDir            string                 `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`
