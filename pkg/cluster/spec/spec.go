@@ -4,13 +4,14 @@ type (
 	// GlobalOptions represents the global options for all groups in topology
 	// specification in topology.yaml
 	GlobalOptions struct {
-		User       string `yaml:"user,omitempty" default:"seaweed"`
-		SSHPort    int    `yaml:"ssh_port,omitempty" default:"22" validate:"ssh_port:editable"`
-		TLSEnabled bool   `yaml:"enable_tls,omitempty"`
-		ConfigDir  string `yaml:"conf_dir,omitempty" default:"/etc/seaweed"`
-		DataDir    string `yaml:"data_dir,omitempty" default:"/opt/seaweed"`
-		OS         string `yaml:"os,omitempty" default:"linux"`
-		Arch       string `yaml:"arch,omitempty" default:"amd64"`
+		User              string `yaml:"user,omitempty" default:"seaweed"`
+		PortSsh           int    `yaml:"port.ssh" default:"22"`
+		TLSEnabled        bool   `yaml:"enable_tls,omitempty"`
+		ConfigDir         string `yaml:"conf_dir,omitempty" default:"/etc/seaweed"`
+		DataDir           string `yaml:"data_dir,omitempty" default:"/opt/seaweed"`
+		OS                string `yaml:"os,omitempty" default:"linux"`
+		Arch              string `yaml:"arch,omitempty" default:"amd64"`
+		VolumeSizeLimitMB int    `yaml:"volumeSizeLimitMB" default:"5000"`
 	}
 
 	ServerConfigs struct {

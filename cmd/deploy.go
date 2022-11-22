@@ -33,13 +33,14 @@ func DeployCommand() *coral.Command {
 
 		spec := &spec.Specification{
 			GlobalOptions: spec.GlobalOptions{
-				User:       "chris",
-				SSHPort:    22,
-				TLSEnabled: false,
-				ConfigDir:  "",
-				DataDir:    "",
-				OS:         "",
-				Arch:       "",
+				User:              "chris",
+				PortSsh:           22,
+				TLSEnabled:        false,
+				ConfigDir:         "",
+				DataDir:           "",
+				OS:                "",
+				Arch:              "",
+				VolumeSizeLimitMB: 1000,
 			},
 			MasterServers: []*spec.MasterServerSpec{
 				{
@@ -48,7 +49,6 @@ func DeployCommand() *coral.Command {
 					IpBind:             "",
 					Port:               9334,
 					PortGrpc:           0,
-					VolumeSizeLimitMB:  1000,
 					DefaultReplication: "",
 					MetricsPort:        0,
 					ConfigDir:          "",
