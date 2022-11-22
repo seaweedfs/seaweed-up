@@ -11,7 +11,7 @@ type VolumeServerSpec struct {
 	PortSsh            int                    `yaml:"port.ssh" default:"22"`
 	IpBind             string                 `yaml:"ip.bind,omitempty"`
 	IpPublic           string                 `yaml:"ip.public,omitempty"`
-	Port               int                    `yaml:"port" default:"9333"`
+	Port               int                    `yaml:"port" default:"8080"`
 	PortGrpc           int                    `yaml:"port.grpc" default:"19333"`
 	PortPublic         int                    `yaml:"port.public,omitempty"`
 	Folders            []*FolderSpec          `yaml:"folders"`
@@ -19,8 +19,8 @@ type VolumeServerSpec struct {
 	Rack               string                 `yaml:"rack,omitempty"`
 	DefaultReplication int                    `yaml:"defaultReplication,omitempty"`
 	MetricsPort        int                    `yaml:"metrics_port,omitempty"`
-	ConfigDir          string                 `yaml:"conf_dir,omitempty" default:"/etc/seaweed"`
-	DataDir            string                 `yaml:"data_dir,omitempty" default:"/opt/seaweed"`
+	ConfigDir          string                 `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
+	DataDir            string                 `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`

@@ -7,6 +7,8 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
+	"gopkg.in/yaml.v3"
+	"os"
 	"path"
 )
 
@@ -30,80 +32,13 @@ func DeployCommand() *coral.Command {
 	cmd.RunE = func(command *coral.Command, args []string) error {
 
 		fmt.Println(fileName)
-
-		spec := &spec.Specification{
-			GlobalOptions: spec.GlobalOptions{
-				User:              "chris",
-				PortSsh:           22,
-				TLSEnabled:        false,
-				ConfigDir:         "",
-				DataDir:           "",
-				OS:                "",
-				Arch:              "",
-				VolumeSizeLimitMB: 1000,
-			},
-			MasterServers: []*spec.MasterServerSpec{
-				{
-					Ip:                 "localhost",
-					PortSsh:            2222,
-					IpBind:             "",
-					Port:               9334,
-					PortGrpc:           0,
-					DefaultReplication: "",
-					MetricsPort:        0,
-					ConfigDir:          "",
-					DataDir:            "",
-					Config:             nil,
-					Arch:               "",
-					OS:                 "",
-				},
-			},
-			VolumeServers: []*spec.VolumeServerSpec{
-				{
-					Folders: []*spec.FolderSpec{
-						{
-							Folder:   ".",
-							DiskType: "",
-							Max:      0,
-						},
-					},
-					Ip:                 "localhost",
-					PortSsh:            2222,
-					IpBind:             "",
-					IpPublic:           "",
-					Port:               8848,
-					PortGrpc:           0,
-					PortPublic:         0,
-					DataCenter:         "",
-					Rack:               "",
-					DefaultReplication: 0,
-					MetricsPort:        0,
-					ConfigDir:          "",
-					Config:             nil,
-					Arch:               "",
-					OS:                 "",
-				},
-			},
-			FilerServers: []*spec.FilerServerSpec{
-				{
-					Ip:                 "localhost",
-					PortSsh:            2222,
-					IpBind:             "",
-					IpPublic:           "",
-					Port:               8889,
-					PortGrpc:           0,
-					PortPublic:         0,
-					DataCenter:         "",
-					Rack:               "",
-					DefaultReplication: 0,
-					MetricsPort:        0,
-					ConfigDir:          "",
-					DataDir:            "",
-					Config:             nil,
-					Arch:               "",
-					OS:                 "",
-				},
-			},
+		spec := &spec.Specification{}
+		data, readErr := os.ReadFile(fileName)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %v", fileName, readErr)
+		}
+		if unmarshalErr := yaml.Unmarshal(data, spec); unmarshalErr != nil {
+			return fmt.Errorf("unmarshal %s: %v", fileName, unmarshalErr)
 		}
 
 		return m.Deploy(spec)

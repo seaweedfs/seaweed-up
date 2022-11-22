@@ -7,8 +7,8 @@ type (
 		User              string `yaml:"user,omitempty" default:"seaweed"`
 		PortSsh           int    `yaml:"port.ssh" default:"22"`
 		TLSEnabled        bool   `yaml:"enable_tls,omitempty"`
-		ConfigDir         string `yaml:"conf_dir,omitempty" default:"/etc/seaweed"`
-		DataDir           string `yaml:"data_dir,omitempty" default:"/opt/seaweed"`
+		ConfigDir         string `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
+		DataDir           string `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 		OS                string `yaml:"os,omitempty" default:"linux"`
 		Arch              string `yaml:"arch,omitempty" default:"amd64"`
 		VolumeSizeLimitMB int    `yaml:"volumeSizeLimitMB" default:"5000"`

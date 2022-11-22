@@ -49,6 +49,12 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 		masterSpec.VolumeSizeLimitMB = utils.NvlInt(masterSpec.VolumeSizeLimitMB, specification.GlobalOptions.VolumeSizeLimitMB, 5000)
 		masterSpec.PortSsh = utils.NvlInt(masterSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
 	}
+	for _, volumeSpec := range specification.VolumeServers {
+		volumeSpec.PortSsh = utils.NvlInt(volumeSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
+	}
+	for _, filerSpec := range specification.FilerServers {
+		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
+	}
 
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
