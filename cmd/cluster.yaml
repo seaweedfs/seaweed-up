@@ -4,7 +4,7 @@ global:
   port.ssh: 22
   # Storage directory for cluster deployment files, startup scripts, and configuration files.
   dir.conf: "/etc/seaweed"
-  # Data directory for cluster metadata files, volume files, and log files.
+  # Data directory for cluster metadata files, embedded filer store files, and log files.
   dir.data: "/opt/seaweed"
   # volume size limit in MB
   volumeSizeLimitMB: 5000
