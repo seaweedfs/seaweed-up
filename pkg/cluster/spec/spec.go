@@ -9,7 +9,6 @@ type (
 		ConfigDir         string `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
 		DataDir           string `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 		OS                string `yaml:"os,omitempty" default:"linux"`
-		Arch              string `yaml:"arch,omitempty" default:"amd64"`
 		VolumeSizeLimitMB int    `yaml:"volumeSizeLimitMB" default:"5000"`
 	}
 

@@ -6,8 +6,6 @@ global:
   dir.conf: "/etc/seaweed"
   # Data directory for cluster metadata files, volume files, and log files.
   dir.data: "/opt/seaweed"
-  # Supported values: "amd64", "arm64" (default: "amd64")
-  arch: "amd64"
   # volume size limit in MB
   volumeSizeLimitMB: 5000
 
