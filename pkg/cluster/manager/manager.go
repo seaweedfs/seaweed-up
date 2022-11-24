@@ -14,22 +14,22 @@ type Manager struct {
 	User         string // username to login to the SSH server
 	IdentityFile string // path to the private key file
 	UsePassword  bool   // use password instead of identity file for ssh connection
+	Version      string
 
 	skipConfig bool
 	skipEnable bool
 	skipStart  bool
-	version    string
 	sudoPass   string
 	confDir    string
 	dataDir    string
 }
 
-func NewManager(version string) *Manager {
+func NewManager() *Manager {
 	return &Manager{
 		skipConfig: false,
 		skipEnable: false,
 		skipStart:  false,
-		version:    version,
+		Version:    "",
 		sudoPass:   "",
 	}
 }
@@ -101,7 +101,7 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"TmpDir":            dir,
 		"SkipEnable":        m.skipEnable,
 		"SkipStart":         m.skipStart,
-		"Version":           m.version,
+		"Version":           m.Version,
 	}
 
 	installScript, err := scripts.RenderScript("install.sh", data)
