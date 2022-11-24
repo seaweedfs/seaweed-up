@@ -15,6 +15,7 @@ type Manager struct {
 	IdentityFile string // path to the private key file
 	UsePassword  bool   // use password instead of identity file for ssh connection
 	Version      string
+	SshPort      int
 
 	skipConfig bool
 	skipEnable bool
@@ -35,10 +36,7 @@ func NewManager() *Manager {
 }
 
 func (m *Manager) Deploy(specification *spec.Specification) error {
-	if m.UsePassword {
-		password := utils.PromptForPassword("Input SSH password: ")
-		m.sudoPass = password
-	} else if m.User != "root" {
+	if m.User != "root" {
 		password := utils.PromptForPassword("Input sudo password: ")
 		m.sudoPass = password
 	}
@@ -46,13 +44,13 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 	m.dataDir = utils.Nvl(specification.GlobalOptions.DataDir, "/opt/seaweed")
 	for _, masterSpec := range specification.MasterServers {
 		masterSpec.VolumeSizeLimitMB = utils.NvlInt(masterSpec.VolumeSizeLimitMB, specification.GlobalOptions.VolumeSizeLimitMB, 5000)
-		masterSpec.PortSsh = utils.NvlInt(masterSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
+		masterSpec.PortSsh = utils.NvlInt(masterSpec.PortSsh, m.SshPort, 22)
 	}
 	for _, volumeSpec := range specification.VolumeServers {
-		volumeSpec.PortSsh = utils.NvlInt(volumeSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
+		volumeSpec.PortSsh = utils.NvlInt(volumeSpec.PortSsh, m.SshPort, 22)
 	}
 	for _, filerSpec := range specification.FilerServers {
-		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, specification.GlobalOptions.PortSsh, 22)
+		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, m.SshPort, 22)
 	}
 
 	var masters []string

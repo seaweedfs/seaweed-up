@@ -29,8 +29,8 @@ func DeployCommand() *coral.Command {
 	var fileName string
 	cmd.Flags().StringVarP(&fileName, "file", "f", "", "configuration file")
 	cmd.Flags().StringVarP(&m.User, "user", "u", utils.CurrentUser(), "The user name to login via SSH. The user must has root (or sudo) privilege.")
+	cmd.Flags().IntVarP(&m.SshPort, "port", "p", 22, "The port to SSH.")
 	cmd.Flags().StringVarP(&m.IdentityFile, "identity_file", "i", m.IdentityFile, "The path of the SSH identity file. If specified, public key authentication will be used.")
-	cmd.Flags().BoolVarP(&m.UsePassword, "password", "p", false, "Use password of target hosts. If specified, password authentication will be used.")
 	cmd.Flags().StringVarP(&m.Version, "version", "v", "", "The SeaweedFS version")
 
 	cmd.RunE = func(command *coral.Command, args []string) error {

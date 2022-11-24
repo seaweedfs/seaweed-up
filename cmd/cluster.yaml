@@ -1,7 +1,5 @@
 # Global variables are applied to all deployments and used as the default values
 global:
-  # SSH port of servers in the managed cluster.
-  port.ssh: 22
   # Storage directory for cluster deployment files, startup scripts, and configuration files.
   dir.conf: "/etc/seaweed"
   # Data directory for cluster metadata files, embedded filer store files, and log files.
