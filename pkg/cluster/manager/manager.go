@@ -42,7 +42,6 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 		password := utils.PromptForPassword("Input sudo password: ")
 		m.sudoPass = password
 	}
-	m.User = utils.Nvl(m.User, specification.GlobalOptions.User)
 	m.confDir = utils.Nvl(specification.GlobalOptions.ConfigDir, "/etc/seaweed")
 	m.dataDir = utils.Nvl(specification.GlobalOptions.DataDir, "/opt/seaweed")
 	for _, masterSpec := range specification.MasterServers {

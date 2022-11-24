@@ -4,7 +4,6 @@ type (
 	// GlobalOptions represents the global options for all groups in topology
 	// specification in topology.yaml
 	GlobalOptions struct {
-		User              string `yaml:"user,omitempty" default:"seaweed"`
 		PortSsh           int    `yaml:"port.ssh" default:"22"`
 		TLSEnabled        bool   `yaml:"enable_tls,omitempty"`
 		ConfigDir         string `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
