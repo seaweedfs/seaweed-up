@@ -10,13 +10,13 @@ global:
 # Server configs are used to specify the configuration of master servers.
 master_servers:
   # The ip address of the master server.
-  - ip: 192.168.2.7
+  - ip: 127.0.0.1
     port: 9333
 
 # Server configs are used to specify the configuration of volume servers.
 volume_servers:
   # The ip address of the volume server.
-  - ip: 192.168.2.7
+  - ip: 127.0.0.1
     port: 8382
     folders:
       - folder: .
@@ -25,7 +25,7 @@ volume_servers:
 # Server configs are used to specify the configuration of volume servers.
 filer_servers:
   # The ip address of the volume server.
-  - ip: 192.168.2.7
+  - ip: 127.0.0.1
     port: 8888
 
 # Server configs are used to specify the configuration of envoy proxies.

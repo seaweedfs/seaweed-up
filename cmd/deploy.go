@@ -32,6 +32,7 @@ func DeployCommand() *coral.Command {
 	cmd.Flags().IntVarP(&m.SshPort, "port", "p", 22, "The port to SSH.")
 	cmd.Flags().StringVarP(&m.IdentityFile, "identity_file", "i", m.IdentityFile, "The path of the SSH identity file. If specified, public key authentication will be used.")
 	cmd.Flags().StringVarP(&m.Version, "version", "v", "", "The SeaweedFS version")
+	cmd.Flags().StringVarP(&m.ComponentToDeploy, "component", "c", "", "[master|volume|filer|envoy] only install one component")
 
 	cmd.RunE = func(command *coral.Command, args []string) error {
 

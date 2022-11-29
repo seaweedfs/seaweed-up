@@ -2,8 +2,11 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
@@ -11,11 +14,12 @@ import (
 )
 
 type Manager struct {
-	User         string // username to login to the SSH server
-	IdentityFile string // path to the private key file
-	UsePassword  bool   // use password instead of identity file for ssh connection
-	Version      string
-	SshPort      int
+	User              string // username to login to the SSH server
+	IdentityFile      string // path to the private key file
+	UsePassword       bool   // use password instead of identity file for ssh connection
+	ComponentToDeploy string
+	Version           string
+	SshPort           int
 
 	skipConfig bool
 	skipEnable bool
@@ -35,6 +39,10 @@ func NewManager() *Manager {
 	}
 }
 
+func (m *Manager) shouldInstall(c string) bool {
+	return m.ComponentToDeploy == "" || m.ComponentToDeploy == c
+}
+
 func (m *Manager) Deploy(specification *spec.Specification) error {
 	if m.User != "root" {
 		password := utils.PromptForPassword("Input sudo password: ")
@@ -52,27 +60,48 @@ func (m *Manager) Deploy(specification *spec.Specification) error {
 	for _, filerSpec := range specification.FilerServers {
 		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, m.SshPort, 22)
 	}
+	for _, envoySpec := range specification.EnvoyServers {
+		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
+	}
 
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
 		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))
 	}
 
-	for index, masterSpec := range specification.MasterServers {
-		if err := m.DeployMasterServer(masters, masterSpec, index); err != nil {
-			fmt.Printf("error is %v\n", err)
-			return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
+	if m.shouldInstall("master") {
+		for index, masterSpec := range specification.MasterServers {
+			if err := m.DeployMasterServer(masters, masterSpec, index); err != nil {
+				fmt.Printf("error is %v\n", err)
+				return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
+			}
 		}
 	}
 
-	for index, volumeSpec := range specification.VolumeServers {
-		if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-			return fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
+	if m.shouldInstall("volume") {
+		for index, volumeSpec := range specification.VolumeServers {
+			if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
+				return fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
+			}
 		}
 	}
-	for index, filerSpec := range specification.FilerServers {
-		if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-			return fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
+	if m.shouldInstall("filer") {
+		for index, filerSpec := range specification.FilerServers {
+			if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
+				return fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
+			}
+		}
+	}
+	if m.shouldInstall("envoy") {
+		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
+		if err != nil {
+			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+		}
+		for index, envoySpec := range specification.EnvoyServers {
+			envoySpec.Version = utils.Nvl(envoySpec.Version, latest.Version)
+			if err := m.DeployEnvoyServer(specification.FilerServers, envoySpec, index); err != nil {
+				return fmt.Errorf("deploy to envoy server %s:%d :%v", envoySpec.Ip, envoySpec.PortSsh, err)
+			}
 		}
 	}
 	return nil
