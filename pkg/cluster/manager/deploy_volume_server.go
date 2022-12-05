@@ -31,10 +31,12 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 
 func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	println("prepareUnmountedDisks...")
-	devices, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})
+	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})
 	if err != nil {
 		return fmt.Errorf("list device: %v", err)
 	}
+	fmt.Printf("mountpoints: %+v\n", mountpoints)
+
 	disks := make(map[string]*disks.BlockDevice)
 
 	// find all disks
@@ -78,14 +80,6 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	}
 
 	// mount them
-	// collect already used mount points
-	mountpoints := make(map[string]struct{})
-	for _, dev := range disks {
-		if dev.MountPoint != "" {
-			mountpoints[dev.MountPoint] = struct{}{}
-		}
-	}
-
 	for _, dev := range disks {
 		if dev.MountPoint == "" {
 			var targetMountPoint = ""

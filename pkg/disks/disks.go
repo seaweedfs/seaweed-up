@@ -3,7 +3,6 @@ package disks
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"regexp"
 	"strconv"
@@ -23,7 +22,8 @@ type BlockDevice struct {
 	Type           string
 }
 
-func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []*BlockDevice, err error) {
+func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []*BlockDevice, mountpoints map[string]struct{}, err error) {
+	mountpoints = make(map[string]struct{})
 	out, err := op.Output(
 		strings.Join([]string{
 			"lsblk",
@@ -43,7 +43,7 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 			}, ","),
 		}, " "))
 	if err != nil {
-		return nil, fmt.Errorf("lsblk: %v", err)
+		return
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	nvPairPattern := regexp.MustCompile(`([A-Z:]+)=(?:"(.*?)")`)
@@ -70,9 +70,10 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 					}
 				}
 			case "SIZE":
-				size, err := strconv.ParseUint(value, 10, 64)
+				var size uint64
+				size, err = strconv.ParseUint(value, 10, 64)
 				if err != nil {
-					return nil, fmt.Errorf("lsblk invalid size %v: %v", value, err)
+					return
 				} else {
 					dev.Size = size
 				}
@@ -86,6 +87,7 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				dev.Type = value
 			case "MOUNTPOINT":
 				dev.MountPoint = value
+				mountpoints[value] = struct{}{}
 			case "MAJ:MIN":
 				majorMinor = pair[2]
 			}
