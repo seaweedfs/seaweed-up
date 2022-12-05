@@ -23,6 +23,7 @@ type CommandRes struct {
 
 type CommandOperator interface {
 	Execute(command string) error
+	Output(command string) ([]byte, error)
 	Upload(src io.Reader, remotePath string, mode string) error
 	UploadFile(path string, remotePath string, mode string) error
 }

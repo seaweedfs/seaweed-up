@@ -30,6 +30,20 @@ func (s SSHOperator) Close() error {
 	return s.conn.Close()
 }
 
+func (s SSHOperator) Output(command string) (output []byte, err error) {
+	sess, err := s.conn.NewSession()
+	if err != nil {
+		return nil, err
+	}
+
+	defer sess.Close()
+
+	sess.Stderr = os.Stderr
+	output, err = sess.Output(command)
+
+	return output, err
+}
+
 func (s SSHOperator) Execute(command string) error {
 	sess, err := s.conn.NewSession()
 	if err != nil {

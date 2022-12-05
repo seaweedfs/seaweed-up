@@ -15,6 +15,11 @@ func NewLocalOperator() *LocalOperator {
 	return &LocalOperator{}
 }
 
+func (e LocalOperator) Output(command string) ([]byte, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (e LocalOperator) Execute(command string) error {
 	task := goexecute.ExecTask{
 		Command:     command,
