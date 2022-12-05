@@ -120,7 +120,7 @@ download_and_install() {
     info "Downloading ${sourceUrl} to ${BIN_DIR}/${BINARY}"
     $SUDO curl -o "${TMP_DIR}/${BINARY}" -fL "${sourceUrl}"
     $SUDO chmod 755 ${TMP_DIR}/${BINARY}
-    $SUDO mv ${TMP_DIR}/${BINARY} {$BIN_DIR}/${BINARY}
+    $SUDO mv ${TMP_DIR}/${BINARY} ${BIN_DIR}/${BINARY}
   fi
 }
 
