@@ -29,6 +29,36 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 	})
 }
 
+func (m *Manager) ResetVolumeServer(volumeServerSpec *spec.VolumeServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+
+		component := "volume"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+
+		return m.sudo(op, fmt.Sprintf("rm -Rf %s/%s/*", m.dataDir, componentInstance))
+	})
+}
+
+func (m *Manager) StartVolumeServer(volumeServerSpec *spec.VolumeServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+
+		component := "volume"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+
+		return m.sudo(op, fmt.Sprintf("systemctl start seaweed_%s.service", componentInstance))
+	})
+}
+
+func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+
+		component := "volume"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+
+		return m.sudo(op, fmt.Sprintf("systemctl stop seaweed_%s.service", componentInstance))
+	})
+}
+
 func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	println("prepareUnmountedDisks...")
 	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})

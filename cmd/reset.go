@@ -15,15 +15,15 @@ import (
 	"path"
 )
 
-func DeployCommand() *coral.Command {
+func ResetCommand() *coral.Command {
 
 	m := manager.NewManager()
 	m.IdentityFile = path.Join(utils.UserHome(), ".ssh", "id_rsa")
 
 	var cmd = &coral.Command{
-		Use:          "deploy",
-		Short:        "deploy a configuration file",
-		Long:         "deploy a configuration file",
+		Use:          "reset",
+		Short:        "reset a cluster storage to empty",
+		Long:         "reset a cluster storage to empty",
 		SilenceUsage: true,
 	}
 	var fileName string
@@ -33,7 +33,6 @@ func DeployCommand() *coral.Command {
 	cmd.Flags().StringVarP(&m.IdentityFile, "identity_file", "i", m.IdentityFile, "The path of the SSH identity file. If specified, public key authentication will be used.")
 	cmd.Flags().StringVarP(&m.Version, "version", "v", "", "The SeaweedFS version")
 	cmd.Flags().StringVarP(&m.ComponentToDeploy, "component", "c", "", "[master|volume|filer|envoy] only install one component")
-	cmd.Flags().BoolVarP(&m.PrepareVolumeDisks, "mountDisks", "", true, "auto mount disks on volume server if unmounted")
 
 	cmd.RunE = func(command *coral.Command, args []string) error {
 
@@ -55,7 +54,7 @@ func DeployCommand() *coral.Command {
 			return fmt.Errorf("unmarshal %s: %v", fileName, unmarshalErr)
 		}
 
-		return m.DeployCluster(spec)
+		return m.ResetCluster(spec)
 	}
 
 	return cmd

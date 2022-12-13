@@ -19,3 +19,30 @@ func (m *Manager) DeployMasterServer(masters []string, masterSpec *spec.MasterSe
 
 	})
 }
+
+func (m *Manager) ResetMasterServer(masterSpec *spec.MasterServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+
+		component := "master"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+
+		return m.sudo(op, fmt.Sprintf("rm -Rf %s/%s/*", m.dataDir, componentInstance))
+
+	})
+}
+
+func (m *Manager) StartMasterServer(f *spec.MasterServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", f.Ip, f.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+		component := "master"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+		return m.sudo(op, fmt.Sprintf("systemctl start seaweed_%s.service", componentInstance))
+	})
+}
+
+func (m *Manager) StopMasterServer(f *spec.MasterServerSpec, index int) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", f.Ip, f.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+		component := "master"
+		componentInstance := fmt.Sprintf("%s%d", component, index)
+		return m.sudo(op, fmt.Sprintf("systemctl stop seaweed_%s.service", componentInstance))
+	})
+}
