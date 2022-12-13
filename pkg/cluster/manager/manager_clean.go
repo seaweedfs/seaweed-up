@@ -5,7 +5,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
-func (m *Manager) ResetCluster(specification *spec.Specification) error {
+func (m *Manager) CleanCluster(specification *spec.Specification) error {
 	m.prepare(specification)
 
 	// stop all
@@ -35,7 +35,7 @@ func (m *Manager) ResetCluster(specification *spec.Specification) error {
 	if m.shouldInstall("master") {
 		for index, masterSpec := range specification.MasterServers {
 			if err := m.ResetMasterServer(masterSpec, index); err != nil {
-				return fmt.Errorf("reset master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
+				return fmt.Errorf("clean master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
 			}
 		}
 	}
@@ -43,14 +43,14 @@ func (m *Manager) ResetCluster(specification *spec.Specification) error {
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
 			if err := m.ResetVolumeServer(volumeSpec, index); err != nil {
-				return fmt.Errorf("reset volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
+				return fmt.Errorf("clean volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
 			}
 		}
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
 			if err := m.ResetFilerServer(filerSpec, index); err != nil {
-				return fmt.Errorf("reset filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
+				return fmt.Errorf("clean filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
 			}
 		}
 	}

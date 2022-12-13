@@ -16,7 +16,7 @@ func Execute() error {
 	rootCmd.AddCommand(GetCommand())
 	rootCmd.AddCommand(ScaffoldCommand())
 	rootCmd.AddCommand(DeployCommand())
-	rootCmd.AddCommand(ResetCommand())
+	rootCmd.AddCommand(CleanCommand())
 
 	return rootCmd.Execute()
 }

@@ -1,29 +1,26 @@
 package cmd
 
 import (
-	"context"
 	_ "embed"
 	"fmt"
 	"github.com/muesli/coral"
-	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
-	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"gopkg.in/yaml.v3"
 	"os"
 	"path"
 )
 
-func ResetCommand() *coral.Command {
+func CleanCommand() *coral.Command {
 
 	m := manager.NewManager()
 	m.IdentityFile = path.Join(utils.UserHome(), ".ssh", "id_rsa")
 
 	var cmd = &coral.Command{
-		Use:          "reset",
-		Short:        "reset a cluster storage to empty",
-		Long:         "reset a cluster storage to empty",
+		Use:          "clean",
+		Short:        "clean a cluster storage to empty",
+		Long:         "clean a cluster storage to empty",
 		SilenceUsage: true,
 	}
 	var fileName string
@@ -32,17 +29,9 @@ func ResetCommand() *coral.Command {
 	cmd.Flags().IntVarP(&m.SshPort, "port", "p", 22, "The port to SSH.")
 	cmd.Flags().StringVarP(&m.IdentityFile, "identity_file", "i", m.IdentityFile, "The path of the SSH identity file. If specified, public key authentication will be used.")
 	cmd.Flags().StringVarP(&m.Version, "version", "v", "", "The SeaweedFS version")
-	cmd.Flags().StringVarP(&m.ComponentToDeploy, "component", "c", "", "[master|volume|filer|envoy] only install one component")
+	cmd.Flags().StringVarP(&m.ComponentToDeploy, "component", "c", "", "[master|volume|filer] only clean one component")
 
 	cmd.RunE = func(command *coral.Command, args []string) error {
-
-		if m.Version == "" {
-			latest, err := config.GitHubLatestRelease(context.Background(), "0", "seaweedfs", "seaweedfs")
-			if err != nil {
-				return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
-			}
-			m.Version = latest.Version
-		}
 
 		fmt.Println(fileName)
 		spec := &spec.Specification{}
@@ -54,7 +43,7 @@ func ResetCommand() *coral.Command {
 			return fmt.Errorf("unmarshal %s: %v", fileName, unmarshalErr)
 		}
 
-		return m.ResetCluster(spec)
+		return m.CleanCluster(spec)
 	}
 
 	return cmd
