@@ -47,7 +47,7 @@ static_resources:
               domains: ["*"]
               routes:
               - match: { prefix: "/" }
-                route: { cluster: seaweedfs_filer_grpc_cluster }
+                route: { timeout: 0s, cluster: seaweedfs_filer_grpc_cluster }
           http_filters:
           - name: envoy.filters.http.router
             typed_config:
@@ -119,7 +119,7 @@ static_resources:
   {{- end }}
   {{- if .HasFilerGrpcEndPoint }}
   - name: seaweedfs_filer_grpc_cluster
-    connect_timeout: 0
+    connect_timeout: 5s
     http2_protocol_options: {}
     load_assignment:
       cluster_name: seaweedfs_filer_grpc_cluster
