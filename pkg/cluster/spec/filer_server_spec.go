@@ -20,6 +20,10 @@ type FilerServerSpec struct {
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`
+	S3                 bool                   `yaml:"s3" default:"false"`
+	S3Port             int                    `yaml:"s3.port" default:"8333"`
+	Webdav             bool                   `yaml:"webdav" default:"false"`
+	WebdavPort         int                    `yaml:"webdav.port" default:"7333"`
 }
 
 func (f *FilerServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
@@ -28,4 +32,8 @@ func (f *FilerServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBufferInt(buf, "port", f.Port, 8888)
 	addToBufferInt(buf, "port.grpc", f.PortGrpc, 10000+f.Port)
 	addToBuffer(buf, "master", strings.Join(masters, ","))
+	addToBufferBool(buf, "s3", f.S3, false)
+	addToBufferInt(buf, "s3.port", f.S3Port, 8333)
+	addToBufferBool(buf, "webdav", f.Webdav, false)
+	addToBufferInt(buf, "webdav.port", f.WebdavPort, 7333)
 }

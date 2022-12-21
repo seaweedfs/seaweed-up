@@ -18,15 +18,35 @@ var envoyYamlTemplate string
 func (m *Manager) DeployEnvoyServer(filerSpecs []*spec.FilerServerSpec, envoySpec *spec.EnvoyServerSpec, index int) error {
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", envoySpec.Ip, envoySpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 
+		var s3EndPoints, webdavEndPoints []*spec.FilerServerSpec
+		for _, filerSpec := range filerSpecs {
+			if filerSpec.PortGrpc == 0 {
+				filerSpec.PortGrpc = filerSpec.Port + 10000
+			}
+			if filerSpec.S3 || filerSpec.S3Port != 0 {
+				s3EndPoints = append(s3EndPoints, filerSpec)
+			}
+			if filerSpec.Webdav || filerSpec.WebdavPort != 0 {
+				webdavEndPoints = append(webdavEndPoints, filerSpec)
+			}
+		}
+
 		funcs := template.FuncMap{"join": strings.Join}
 		envoyTmpl, err := template.New("envoy.yaml").Funcs(funcs).Parse(envoyYamlTemplate)
 		if err != nil {
 			return fmt.Errorf("parsing template: %v", err)
 		}
 		data := map[string]interface{}{
-			"ConfigDir":      m.confDir,
-			"DataDir":        m.dataDir,
-			"FilerEndPoints": filerSpecs,
+			"ConfigDir":            m.confDir,
+			"DataDir":              m.dataDir,
+			"HasFilerEndPoint":     len(filerSpecs) > 0 && envoySpec.FilerPort != 0,
+			"HasFilerGrpcEndPoint": len(filerSpecs) > 0 && envoySpec.FilerGrpcPort != 0,
+			"FilerEndPoints":       filerSpecs,
+			"HasS3EndPoint":        len(s3EndPoints) > 0 && envoySpec.S3Port != 0,
+			"S3EndPoints":          s3EndPoints,
+			"HasWebdavEndPoint":    len(webdavEndPoints) > 0 && envoySpec.WebdavPort != 0,
+			"WebdavEndPoints":      s3EndPoints,
+			"Envoy":                envoySpec,
 		}
 		var buf bytes.Buffer
 		if err := envoyTmpl.Execute(&buf, data); err != nil {

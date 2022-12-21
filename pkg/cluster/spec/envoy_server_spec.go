@@ -1,19 +1,11 @@
 package spec
 
-import (
-	"bytes"
-	"strings"
-)
-
 type EnvoyServerSpec struct {
-	Ip      string `yaml:"ip"`
-	PortSsh int    `yaml:"port.ssh" default:"22"`
-	Port    int    `yaml:"port" default:"9333"`
-	Version string `yaml:"version,omitempty"`
-}
-
-func (f *EnvoyServerSpec) WriteToBuffer(filers []string, buf *bytes.Buffer) {
-	addToBuffer(buf, "ip", f.Ip)
-	addToBufferInt(buf, "port", f.Port, 8888)
-	addToBuffer(buf, "filers", strings.Join(filers, ","))
+	Ip            string `yaml:"ip"`
+	PortSsh       int    `yaml:"port.ssh" default:"22"`
+	FilerPort     int    `yaml:"filer.port" default:"8888"`
+	FilerGrpcPort int    `yaml:"filer.port.grpc" default:"18888"`
+	S3Port        int    `yaml:"s3.port" default:"8333"`
+	WebdavPort    int    `yaml:"webdav.port" default:"7333"`
+	Version       string `yaml:"version,omitempty"`
 }
