@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
+	"sync"
 )
 
 func (m *Manager) shouldInstall(c string) bool {
@@ -34,20 +35,36 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 
+	var wg sync.WaitGroup
+	var deployErrors []error
+
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-				return fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
-			}
+			wg.Add(1)
+			go func(index int, volumeSpec *spec.VolumeServerSpec) {
+				defer wg.Done()
+				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
+					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
+				}
+			}(index, volumeSpec)
 		}
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
-			if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-				return fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
-			}
+			wg.Add(1)
+			go func(index int, filerSpec *spec.FilerServerSpec) {
+				defer wg.Done()
+				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
+					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err))
+				}
+			}(index, filerSpec)
 		}
 	}
+	wg.Wait()
+	if len(deployErrors) > 0 {
+		return deployErrors[0]
+	}
+
 	if m.shouldInstall("envoy") {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
