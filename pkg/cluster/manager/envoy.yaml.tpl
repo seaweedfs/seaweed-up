@@ -119,7 +119,7 @@ static_resources:
   {{- end }}
   {{- if .HasFilerGrpcEndPoint }}
   - name: seaweedfs_filer_grpc_cluster
-    connect_timeout: 5s
+    connect_timeout: 0
     http2_protocol_options: {}
     load_assignment:
       cluster_name: seaweedfs_filer_grpc_cluster
