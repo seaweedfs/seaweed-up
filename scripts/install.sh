@@ -153,7 +153,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
-ExecStart=${BIN_DIR}/${BINARY} -logdir=. -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options
+ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process
 KillSignal=SIGINT
