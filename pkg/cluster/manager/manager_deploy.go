@@ -72,6 +72,7 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	m.dataDir = utils.Nvl(specification.GlobalOptions.DataDir, "/opt/seaweed")
 	for _, masterSpec := range specification.MasterServers {
 		masterSpec.VolumeSizeLimitMB = utils.NvlInt(masterSpec.VolumeSizeLimitMB, specification.GlobalOptions.VolumeSizeLimitMB, 5000)
+		masterSpec.DefaultReplication = utils.Nvl(masterSpec.DefaultReplication, specification.GlobalOptions.Replication, "")
 		masterSpec.PortSsh = utils.NvlInt(masterSpec.PortSsh, m.SshPort, 22)
 	}
 	for _, volumeSpec := range specification.VolumeServers {

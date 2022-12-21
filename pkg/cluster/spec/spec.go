@@ -9,6 +9,7 @@ type (
 		DataDir           string `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
 		OS                string `yaml:"os,omitempty" default:"linux"`
 		VolumeSizeLimitMB int    `yaml:"volumeSizeLimitMB" default:"5000"`
+		Replication       string `yaml:"replication" default:"000"`
 	}
 
 	ServerConfigs struct {
