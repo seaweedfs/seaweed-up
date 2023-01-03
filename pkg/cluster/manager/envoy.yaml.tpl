@@ -39,6 +39,7 @@ static_resources:
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
           stat_prefix: ingress_http
+          stream_idle_timeout: 0s
           codec_type: AUTO
           route_config:
             name: seaweedfs_filer_grpc_route
