@@ -48,6 +48,7 @@ setup_env() {
   TMP_DIR={{.TmpDir}}
   SKIP_ENABLE={{.SkipEnable}}
   SKIP_START={{.SkipStart}}
+  FORCE_RESTART={{.ForceRestart}}
   SEAWEED_VERSION={{.Version}}
 
   cd $TMP_DIR
@@ -175,9 +176,11 @@ systemd_enable_and_start() {
 
   POST_INSTALL_HASHES=$(get_installed_hashes)
   echo "before ${PRE_INSTALL_HASHES} => ${POST_INSTALL_HASHES}"
-  if [ "${PRE_INSTALL_HASHES}" = "${POST_INSTALL_HASHES}" ]; then
-    info "No change detected so skipping service start"
-    return
+  if [ "${FORCE_RESTART}" != true ]; then
+    if [ "${PRE_INSTALL_HASHES}" = "${POST_INSTALL_HASHES}" ]; then
+      info "No change detected so skipping service start seaweed_${COMPONENT_INSTANCE}"
+      return
+    fi
   fi
 
   info "Starting systemd service"

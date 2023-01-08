@@ -123,6 +123,7 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"TmpDir":            dir,
 		"SkipEnable":        m.skipEnable,
 		"SkipStart":         m.skipStart,
+		"ForceRestart":      m.ForceRestart,
 		"Version":           m.Version,
 	}
 

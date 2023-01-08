@@ -84,6 +84,7 @@ func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component str
 		"TmpDir":            dir,
 		"SkipEnable":        m.skipEnable,
 		"SkipStart":         m.skipStart,
+		"ForceRestart":      m.ForceRestart,
 		"Version":           envoySpec.Version,
 	}
 
