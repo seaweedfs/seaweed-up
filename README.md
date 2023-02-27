@@ -45,7 +45,7 @@ volume_servers:
 
 # Server configs are used to specify the configuration of volume servers.
 filer_servers:
-  # The ip address of the volume server.
+  # The ip address of the filer.
   - ip: 192.168.2.7
     port: 8888
 
