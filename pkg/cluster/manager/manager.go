@@ -9,6 +9,7 @@ type Manager struct {
 	User               string // username to login to the SSH server
 	IdentityFile       string // path to the private key file
 	UsePassword        bool   // use password instead of identity file for ssh connection
+	ProxyUrl           string // proxy URL for binary download
 	ComponentToDeploy  string
 	Version            string
 	SshPort            int

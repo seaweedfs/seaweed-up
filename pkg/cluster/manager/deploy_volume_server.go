@@ -103,7 +103,7 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	for _, dev := range disks {
 		if dev.FilesystemType == "" {
 			info("mkfs " + dev.Path)
-			if err := op.Execute(fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
+			if err := m.sudo(op, fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
 				return fmt.Errorf("create file system on %s: %v", dev.Path, err)
 			}
 		}

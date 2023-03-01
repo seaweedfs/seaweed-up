@@ -119,10 +119,10 @@ download_and_install() {
     LARGE_SUFIX="_large_disk"
     assetFileName="${OS}_${SUFFIX}${FULL_SUFIX}${LARGE_SUFIX}.tar.gz"
     info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
-    curl -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}"
 
     info "Downloading ${SEAWEED_VERSION} ${assetFileName} md5"
-    curl -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
     info "Verifying downloaded ${SEAWEED_VERSION} ${assetFileName}"
     md5Value=`cat $TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5`
     echo "${md5Value}  seaweed_${SEAWEED_VERSION}_${assetFileName}" | md5sum -c

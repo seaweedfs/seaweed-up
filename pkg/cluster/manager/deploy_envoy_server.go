@@ -86,6 +86,12 @@ func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component str
 		"SkipStart":         m.skipStart,
 		"ForceRestart":      m.ForceRestart,
 		"Version":           envoySpec.Version,
+		"ProxyConfig":       "",
+	}
+
+	// Configure proxy if specified
+	if m.ProxyUrl != "" {
+		data["ProxyConfig"] = "--proxy " + m.ProxyUrl
 	}
 
 	installScript, err := scripts.RenderScript("install_envoy.sh", data)
