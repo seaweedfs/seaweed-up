@@ -119,7 +119,7 @@ download_and_install() {
     assetFileName="${BINARY}-${SEAWEED_VERSION}-${OS}-${ARCH}"
     sourceUrl="https://github.com/envoyproxy/envoy/releases/download/v${SEAWEED_VERSION}/${assetFileName}"
     info "Downloading ${sourceUrl} to ${BIN_DIR}/${BINARY}"
-    $SUDO curl -o "${TMP_DIR}/${BINARY}" -fL "${sourceUrl}"
+    $SUDO curl {{.ProxyConfig}} -o "${TMP_DIR}/${BINARY}" -fL "${sourceUrl}"
     $SUDO chmod 755 ${TMP_DIR}/${BINARY}
     $SUDO mv ${TMP_DIR}/${BINARY} ${BIN_DIR}/${BINARY}
   fi

@@ -35,6 +35,7 @@ func DeployCommand() *coral.Command {
 	cmd.Flags().StringVarP(&m.ComponentToDeploy, "component", "c", "", "[master|volume|filer|envoy] only install one component")
 	cmd.Flags().BoolVarP(&m.PrepareVolumeDisks, "mountDisks", "", true, "auto mount disks on volume server if unmounted")
 	cmd.Flags().BoolVarP(&m.ForceRestart, "restart", "", false, "force to restart the service")
+	cmd.Flags().StringVarP(&m.ProxyUrl, "proxy", "x", "", "proxy for curl in format PROTO://PROXY (example: http://someproxy.com:8080/)")
 
 	cmd.RunE = func(command *coral.Command, args []string) error {
 

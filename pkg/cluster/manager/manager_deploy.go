@@ -125,6 +125,12 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"SkipStart":         m.skipStart,
 		"ForceRestart":      m.ForceRestart,
 		"Version":           m.Version,
+		"ProxyConfig":       "",
+	}
+
+	// Configure proxy if specified
+	if m.ProxyUrl != "" {
+		data["ProxyConfig"] = "--proxy " + m.ProxyUrl
 	}
 
 	installScript, err := scripts.RenderScript("install.sh", data)
