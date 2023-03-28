@@ -45,7 +45,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			//			wg.Add(1)
 			//			go func(index int, volumeSpec *spec.VolumeServerSpec) {
 			//				defer wg.Done()
-			if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
+			if err := m.DeployVolumeServer(masters, specification.GlobalOptions, volumeSpec, index); err != nil {
 				deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
 			}
 			//			}(index, volumeSpec)

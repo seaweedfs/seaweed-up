@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/disks"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/scripts"
+	"math"
 	"strings"
 	"time"
 )
@@ -28,7 +29,7 @@ func (m *Manager) GetDynamicVolumes(ip string) []spec.FolderSpec {
 	return []spec.FolderSpec{}
 }
 
-func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.VolumeServerSpec, index int) error {
+func (m *Manager) DeployVolumeServer(masters []string, globalOptions spec.GlobalOptions, volumeServerSpec *spec.VolumeServerSpec, index int) error {
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 
 		component := "volume"
@@ -37,7 +38,7 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		// Prepare dynamic folders
 		dynamicFolders := m.GetDynamicVolumes(volumeServerSpec.Ip)
 		if m.PrepareVolumeDisks {
-			err, changed := m.prepareUnmountedDisks(op, &dynamicFolders)
+			err, changed := m.prepareUnmountedDisks(op, &dynamicFolders, globalOptions.VolumeSizeLimitMB)
 			if err != nil {
 				return fmt.Errorf("prepare disks: %v", err)
 			}
@@ -91,7 +92,7 @@ func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, inde
 	})
 }
 
-func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, dynamicFolders *[]spec.FolderSpec) (err error, changed bool) {
+func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, dynamicFolders *[]spec.FolderSpec, volumeSizeLimitMB int) (err error, changed bool) {
 	println("prepareUnmountedDisks...")
 	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})
 	if err != nil {
@@ -195,16 +196,22 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, dynamicFold
 			return fmt.Errorf("error received during mount %s with UUID %s: %s", dev.DeviceName, dev.UUID, err), changed
 		}
 
+		// Max calculation: reserve min(5%, 10Gb)
+		usableSizeMb := dev.Size / 1024 / 1024
+		if usableSizeMb > 200*1024 {
+			usableSizeMb -= 10 * 1024
+		} else {
+			usableSizeMb = uint64(int(math.Floor(float64(usableSizeMb) * 0.95)))
+		}
+
 		// New volume is mounted, provision it into dynamicFolders
 		folderSpec := spec.FolderSpec{
 			Folder:      targetMountPoint,
 			DiskType:    "hdd",
 			BlockDevice: dev.Path,
 			UUID:        dev.UUID,
+			Max:         int(math.Floor(float64(usableSizeMb) / float64(volumeSizeLimitMB))),
 		}
-
-		// TODO: calculate Max
-		folderSpec.Max = 15
 
 		*dynamicFolders = append(*dynamicFolders, folderSpec)
 		changed = true
