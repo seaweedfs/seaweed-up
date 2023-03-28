@@ -8,21 +8,53 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"strings"
+	"time"
 )
+
+func (m *Manager) UpdateDynamicVolumes(ip string, folders []spec.FolderSpec) {
+	m.DynamicConfig.Lock()
+	m.DynamicConfig.Changed = true
+	m.DynamicConfig.DynamicVolumeServers[ip] = folders
+	m.DynamicConfig.Unlock()
+}
+
+func (m *Manager) GetDynamicVolumes(ip string) []spec.FolderSpec {
+	m.DynamicConfig.Lock()
+	defer m.DynamicConfig.Unlock()
+
+	if m, ok := m.DynamicConfig.DynamicVolumeServers[ip]; ok {
+		return m
+	}
+	return []spec.FolderSpec{}
+}
 
 func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.VolumeServerSpec, index int) error {
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 
 		component := "volume"
 		componentInstance := fmt.Sprintf("%s%d", component, index)
-		var buf bytes.Buffer
-		volumeServerSpec.WriteToBuffer(masters, &buf)
 
+		// Prepare dynamic folders
+		dynamicFolders := m.GetDynamicVolumes(volumeServerSpec.Ip)
 		if m.PrepareVolumeDisks {
-			if err := m.prepareUnmountedDisks(op); err != nil {
+			err, changed := m.prepareUnmountedDisks(op, &dynamicFolders)
+			if err != nil {
 				return fmt.Errorf("prepare disks: %v", err)
 			}
+			if changed {
+				// Pass change info into upper layer
+				m.UpdateDynamicVolumes(volumeServerSpec.Ip, dynamicFolders)
+			}
 		}
+
+		// Update server specification for current server
+		for _, fld := range dynamicFolders {
+			flx := fld
+			volumeServerSpec.Folders = append(volumeServerSpec.Folders, &flx)
+		}
+
+		var buf bytes.Buffer
+		volumeServerSpec.WriteToBuffer(masters, &buf)
 
 		return m.deployComponentInstance(op, component, componentInstance, &buf)
 
@@ -59,95 +91,124 @@ func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, inde
 	})
 }
 
-func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
+func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, dynamicFolders *[]spec.FolderSpec) (err error, changed bool) {
 	println("prepareUnmountedDisks...")
 	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})
 	if err != nil {
-		return fmt.Errorf("list device: %v", err)
+		return fmt.Errorf("list device: %v", err), false
 	}
 	fmt.Printf("mountpoints: %+v\n", mountpoints)
 
-	disks := make(map[string]*disks.BlockDevice)
+	diskList := make(map[string]*disks.BlockDevice)
 
-	// find all disks
+	// find all diskList
 	for _, dev := range devices {
 		if dev.Type == "disk" {
-			disks[dev.Path] = dev
+			diskList[dev.Path] = dev
 		}
 	}
 
-	fmt.Printf("disks0: %+v\n", disks)
+	fmt.Printf("All devices: %+v\n", diskList)
 
-	// remove disks already has partitions
+	// remove diskList already has partitions
 	for _, dev := range devices {
 		if dev.Type == "part" {
-			for parentPath, _ := range disks {
+			for parentPath, _ := range diskList {
 				if strings.HasPrefix(dev.Path, parentPath) {
 					// the disk is already partitioned
-					delete(disks, parentPath)
+					delete(diskList, parentPath)
 				}
 			}
 		}
 	}
-	fmt.Printf("disks1: %+v\n", disks)
+	fmt.Printf("Devices without partition: %+v\n", diskList)
 
 	// remove already has mount point
-	for k, dev := range disks {
+	for k, dev := range diskList {
 		if dev.MountPoint != "" {
-			delete(disks, k)
+			delete(diskList, k)
+		} else if dev.FilesystemType != "" {
+			delete(diskList, k)
 		}
 	}
-	fmt.Printf("disks2: %+v\n", disks)
+	fmt.Printf("Devices without mountpoint and filesystem: %+v\n", diskList)
 
-	// format disk if no fstype
-	for _, dev := range disks {
-		if dev.FilesystemType == "" {
-			info("mkfs " + dev.Path)
-			if err := m.sudo(op, fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
-				return fmt.Errorf("create file system on %s: %v", dev.Path, err)
-			}
+	// Process all unused RAW devices
+	for _, dev := range diskList {
+		// format disk
+		info("mkfs " + dev.Path)
+		if err := m.sudo(op, fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
+			return fmt.Errorf("create file system on %s: %v", dev.Path, err), changed
 		}
+
+		// Wait 2 sec for kernel data sync
+		time.Sleep(2 * time.Second)
+
+		// Get UUID
+		uuid, err := disks.GetDiskUUID(op, dev.Path)
+		if err != nil {
+			return fmt.Errorf("get disk UUID on %s: %v", dev.Path, err), changed
+		}
+
+		if uuid == "" {
+			return fmt.Errorf("get empty disk UUID for %s", dev.Path), changed
+		}
+
+		diskList[dev.Path].UUID = uuid
+		dev.UUID = uuid
+
+		fmt.Printf("* disk [%s] UUID: [%s]", dev.Path, dev.UUID)
+
+		// Allocate spare mountpoint
+		var targetMountPoint = ""
+		for i := 1; i < 100; i++ {
+			t := fmt.Sprintf("/data%d", i)
+			if _, found := mountpoints[t]; found {
+				continue
+			}
+			targetMountPoint = t
+			mountpoints[t] = struct{}{}
+			break
+		}
+		if targetMountPoint == "" {
+			return fmt.Errorf("no good mount point"), changed
+		}
+
+		data := map[string]interface{}{
+			"DevicePath": dev.Path,
+			"DeviceUUID": dev.UUID,
+			"MountPoint": targetMountPoint,
+		}
+		prepareScript, err := scripts.RenderScript("prepare_disk.sh", data)
+		if err != nil {
+			return err, changed
+		}
+		info("Installing mount_" + dev.DeviceName + ".sh")
+		err = op.Upload(prepareScript, fmt.Sprintf("/tmp/mount_%s.sh", dev.DeviceName), "0755")
+		if err != nil {
+			return fmt.Errorf("error received during upload mount script: %s", err), changed
+		}
+
+		info("mount " + dev.DeviceName + " with UUID " + dev.UUID + " into " + targetMountPoint + "...")
+		err = op.Execute(fmt.Sprintf("cat /tmp/mount_%s.sh | SUDO_PASS=\"%s\" sh -\n", dev.DeviceName, m.sudoPass))
+		if err != nil {
+			return fmt.Errorf("error received during mount %s with UUID %s: %s", dev.DeviceName, dev.UUID, err), changed
+		}
+
+		// New volume is mounted, provision it into dynamicFolders
+		folderSpec := spec.FolderSpec{
+			Folder:      targetMountPoint,
+			DiskType:    "hdd",
+			BlockDevice: dev.Path,
+			UUID:        dev.UUID,
+		}
+
+		// TODO: calculate Max
+		folderSpec.Max = 15
+
+		*dynamicFolders = append(*dynamicFolders, folderSpec)
+		changed = true
 	}
 
-	// mount them
-	for _, dev := range disks {
-		if dev.MountPoint == "" {
-			var targetMountPoint = ""
-			for i := 1; i < 100; i++ {
-				t := fmt.Sprintf("/data%d", i)
-				if _, found := mountpoints[t]; found {
-					continue
-				}
-				targetMountPoint = t
-				mountpoints[t] = struct{}{}
-				break
-			}
-			if targetMountPoint == "" {
-				return fmt.Errorf("no good mount point")
-			}
-
-			data := map[string]interface{}{
-				"DevicePath": dev.Path,
-				"MountPoint": targetMountPoint,
-			}
-			prepareScript, err := scripts.RenderScript("prepare_disk.sh", data)
-			if err != nil {
-				return err
-			}
-			info("Installing mount_" + dev.DeviceName + ".sh")
-			err = op.Upload(prepareScript, fmt.Sprintf("/tmp/mount_%s.sh", dev.DeviceName), "0755")
-			if err != nil {
-				return fmt.Errorf("error received during upload mount script: %s", err)
-			}
-
-			info("mount " + dev.DeviceName + "...")
-			err = op.Execute(fmt.Sprintf("cat /tmp/mount_%s.sh | SUDO_PASS=\"%s\" sh -\n", dev.DeviceName, m.sudoPass))
-			if err != nil {
-				return fmt.Errorf("error received during mount: %s", err)
-			}
-
-		}
-	}
-
-	return nil
+	return nil, changed
 }

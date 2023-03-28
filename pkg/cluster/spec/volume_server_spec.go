@@ -24,9 +24,11 @@ type VolumeServerSpec struct {
 	OS                 string                 `yaml:"os,omitempty"`
 }
 type FolderSpec struct {
-	Folder   string `yaml:"folder"`
-	DiskType string `yaml:"disk" default:"hdd"`
-	Max      int    `yaml:"max,omitempty"`
+	Folder      string `yaml:"folder"`
+	DiskType    string `yaml:"disk" default:"hdd"`
+	Max         int    `yaml:"max,omitempty"`
+	BlockDevice string `yaml:"blockDevice,omitempty"`
+	UUID        string `yaml:"uuid,omitempty"`
 }
 
 func (vs *VolumeServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {

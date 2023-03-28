@@ -19,11 +19,12 @@ type (
 	}
 
 	Specification struct {
-		GlobalOptions GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
-		ServerConfigs ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
-		MasterServers []*MasterServerSpec `yaml:"master_servers"`
-		VolumeServers []*VolumeServerSpec `yaml:"volume_servers"`
-		FilerServers  []*FilerServerSpec  `yaml:"filer_servers"`
-		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
+		GlobalOptions        GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
+		ServerConfigs        ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
+		MasterServers        []*MasterServerSpec `yaml:"master_servers"`
+		VolumeServers        []*VolumeServerSpec `yaml:"volume_servers"`
+		FilerServers         []*FilerServerSpec  `yaml:"filer_servers"`
+		EnvoyServers         []*EnvoyServerSpec  `yaml:"envoy_servers"`
+		DynamicVolumeServers []*VolumeServerSpec `yaml:"dynamic_volume_servers,omitempty"`
 	}
 )
