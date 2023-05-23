@@ -151,6 +151,8 @@ Description=Seaweed${COMPONENT_INSTANCE}
 Documentation=https://github.com/seaweedfs/seaweedfs/wiki
 Wants=network-online.target
 After=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=10
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
@@ -162,8 +164,6 @@ LimitNOFILE=infinity
 LimitNPROC=infinity
 Restart=on-failure
 RestartSec=2
-StartLimitBurst=3
-StartLimitIntervalSec=10
 TasksMax=infinity
 
 [Install]

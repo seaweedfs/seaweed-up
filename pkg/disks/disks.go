@@ -3,6 +3,7 @@ package disks
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"regexp"
 	"strconv"
@@ -20,6 +21,20 @@ type BlockDevice struct {
 	MountPoint     string
 	SerialId       string
 	Type           string
+}
+
+func GetDiskUUID(op operator.CommandOperator, devName string) (UUID string, err error) {
+	devices, _, err := ListBlockDevices(op, []string{devName})
+
+	if err != nil {
+		return "", err
+	}
+	for _, dev := range devices {
+		if dev.Path == devName {
+			return dev.UUID, nil
+		}
+	}
+	return "", fmt.Errorf("uuid not found")
 }
 
 func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []*BlockDevice, mountpoints map[string]struct{}, err error) {
@@ -65,7 +80,7 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				for _, prefix := range prefixes {
 					if strings.HasPrefix(dev.Path, prefix) {
 						hasValidPrefix = true
-						println("valid path", dev.Path)
+						//println("valid path", dev.Path)
 						break
 					}
 				}

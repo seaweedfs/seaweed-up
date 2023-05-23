@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
+	"gopkg.in/yaml.v3"
+	"io/ioutil"
 	"sync"
 )
 
@@ -40,14 +42,30 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			wg.Add(1)
-			go func(index int, volumeSpec *spec.VolumeServerSpec) {
-				defer wg.Done()
-				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
-				}
-			}(index, volumeSpec)
+			//			wg.Add(1)
+			//			go func(index int, volumeSpec *spec.VolumeServerSpec) {
+			//				defer wg.Done()
+			if err := m.DeployVolumeServer(masters, specification.GlobalOptions, volumeSpec, index); err != nil {
+				deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
+			}
+			//			}(index, volumeSpec)
 		}
+
+		// Update dynamic volume server specification
+		m.DynamicConfig.Lock()
+		if m.DynamicConfig.Changed {
+			// TODO: Save changes to file
+			b, err := yaml.Marshal(m.DynamicConfig.DynamicVolumeServers)
+			if err != nil {
+				deployErrors = append(deployErrors, fmt.Errorf("error yaml marshal for Dynamic Volume Servers: %v", err))
+			} else {
+				err = ioutil.WriteFile(m.DynamicConfigFile, b, 0666)
+				if err != nil {
+					deployErrors = append(deployErrors, fmt.Errorf("error writing to %s with Dynamic Volume Servers: %v", m.DynamicConfigFile, err))
+				}
+			}
+		}
+		m.DynamicConfig.Unlock()
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
@@ -66,12 +84,15 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("envoy") {
-		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
-		if err != nil {
-			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+		if m.EnvoyVersion == "" {
+			latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
+			if err != nil {
+				return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+			}
+			m.EnvoyVersion = latest.Version
 		}
 		for index, envoySpec := range specification.EnvoyServers {
-			envoySpec.Version = utils.Nvl(envoySpec.Version, latest.Version)
+			envoySpec.Version = utils.Nvl(envoySpec.Version, m.EnvoyVersion)
 			if err := m.DeployEnvoyServer(specification.FilerServers, envoySpec, index); err != nil {
 				return fmt.Errorf("deploy to envoy server %s:%d :%v", envoySpec.Ip, envoySpec.PortSsh, err)
 			}
