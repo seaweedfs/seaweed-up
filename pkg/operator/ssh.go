@@ -60,22 +60,8 @@ func (s SSHOperator) Execute(command string) error {
 }
 
 func (s SSHOperator) Upload(source io.Reader, remotePath string, mode string) error {
-	sess, err := s.conn.NewSession()
-	if err != nil {
-		return err
-	}
-
-	defer sess.Close()
-
-	client := scp.Client{
-		Session:      sess,
-		Conn:         s.conn,
-		RemoteBinary: "scp",
-	}
-
-	err = client.CopyFile(context.Background(), source, remotePath, mode)
-
-	return err
+	client, _ := scp.NewClientBySSH(s.conn)
+	return client.CopyFile(context.Background(), source, remotePath, mode)
 }
 
 func (s SSHOperator) UploadFile(path string, remotePath string, mode string) error {

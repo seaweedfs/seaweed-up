@@ -65,7 +65,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
-	if m.shouldInstall("envoy") {
+	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
 			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
@@ -143,7 +143,7 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		return fmt.Errorf("error received during upload install script: %s", err)
 	}
 
-	err = op.Upload(cliOptions, fmt.Sprintf("%s/config/%s.options", dir, component), "0755")
+	err = op.Upload(cliOptions, fmt.Sprintf("%s/config/%s.options", dir, component), "0644")
 	if err != nil {
 		return fmt.Errorf("error received during upload %s.options: %s", component, err)
 	}

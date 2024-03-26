@@ -96,7 +96,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	}
 	if ver == "0" {
 		release = releaseList[0]
-		log.Printf("latest version is %v", release.TagName)
+		log.Printf("latest version is %v / %v", release.TagName, release.PublishedAt.Local())
 	} else {
 		for _, r := range releaseList {
 			if r.TagName == ver {
