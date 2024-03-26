@@ -104,7 +104,7 @@ func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component str
 		return fmt.Errorf("error received during upload install script: %s", err)
 	}
 
-	err = op.Upload(buf, fmt.Sprintf("%s/config/%s.yaml", dir, component), "0755")
+	err = op.Upload(buf, fmt.Sprintf("%s/config/%s.yaml", dir, component), "0644")
 	if err != nil {
 		return fmt.Errorf("error received during upload %s.yaml: %s", component, err)
 	}
