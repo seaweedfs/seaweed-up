@@ -1,0 +1,144 @@
+version: '3.8'
+
+networks:
+  seaweedfs-demo:
+    driver: bridge
+
+services:
+  # Master server - cluster coordination
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-master
+    hostname: master
+    command: [
+      "weed", "master", 
+      "-port=9333",
+      "-mdir=/data",
+      "-volumeSizeLimitMB=512"
+    ]
+    ports:
+      - "19333:9333"  # Using different external port to avoid conflicts
+    volumes:
+      - master-data:/data
+    networks:
+      - seaweedfs-demo
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Volume server 1 - data storage
+  seaweedfs-volume-1:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-1
+    hostname: volume-1
+    command: [
+      "weed", "volume",
+      "-port=8080",
+      "-mserver=master:9333",
+      "-dir=/data",
+      "-max=50"
+    ]
+    ports:
+      - "18080:8080"
+    volumes:
+      - volume-1-data:/data
+    networks:
+      - seaweedfs-demo
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Volume server 2 - data storage
+  seaweedfs-volume-2:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-2
+    hostname: volume-2
+    command: [
+      "weed", "volume",
+      "-port=8080",
+      "-mserver=master:9333",
+      "-dir=/data",
+      "-max=50"
+    ]
+    ports:
+      - "18081:8080"
+    volumes:
+      - volume-2-data:/data
+    networks:
+      - seaweedfs-demo
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Filer server - file system interface
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-filer
+    hostname: filer
+    command: [
+      "weed", "filer",
+      "-port=8888",
+      "-master=master:9333"
+    ]
+    ports:
+      - "18888:8888"
+    volumes:
+      - filer-data:/data
+    networks:
+      - seaweedfs-demo
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume-1
+      - seaweedfs-volume-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # S3 Gateway
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-s3
+    hostname: s3-gateway
+    command: [
+      "weed", "s3",
+      "-port=8333",
+      "-filer=filer:8888"
+    ]
+    ports:
+      - "18333:8333"
+    networks:
+      - seaweedfs-demo
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-filer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8333/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  master-data:
+    driver: local
+  volume-1-data:
+    driver: local
+  volume-2-data:
+    driver: local
+  filer-data:
+    driver: local

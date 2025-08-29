@@ -1,0 +1,65 @@
+# SeaweedFS Simple Demo Cluster Configuration
+# Optimized for local testing and demonstration
+
+apiVersion: seaweed-up/v1
+kind: Cluster
+metadata:
+  name: simple-cluster
+  description: "Demo cluster for seaweed-up capabilities"
+  version: "3.75"
+
+# Global cluster settings
+global:
+  user: seaweedfs
+  ssh_port: 22
+  deploy_dir: /opt/seaweedfs
+  data_dir: /data/seaweedfs
+  log_dir: /var/log/seaweedfs
+  replication: "000"
+
+# Master server - single instance for simplicity
+master_servers:
+  - host: localhost
+    listen_port: 9333
+    raft_port: 9334
+    data_dir: /data/seaweedfs/master
+
+# Volume servers - 2 instances for redundancy
+volume_servers:
+  - host: localhost
+    listen_port: 8080
+    data_dir: /data/seaweedfs/volume1
+    max_volumes: 50
+    masters:
+      - "localhost:9333"
+      
+  - host: localhost
+    listen_port: 8081
+    data_dir: /data/seaweedfs/volume2
+    max_volumes: 50
+    masters:
+      - "localhost:9333"
+
+# Filer server - file system interface
+filer_servers:
+  - host: localhost
+    listen_port: 8888
+    masters:
+      - "localhost:9333"
+    data_dir: /data/seaweedfs/filer
+    enable_s3: true
+    s3_port: 8333
+
+# Monitoring configuration
+monitoring:
+  enable_metrics: true
+  metrics_port: 9327
+  log_level: "info"
+
+# Environment-specific configurations
+environments:
+  demo:
+    replicas:
+      master: 1
+      volume: 2
+      filer: 1

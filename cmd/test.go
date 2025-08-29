@@ -337,7 +337,7 @@ func runTestBenchmark(configFile string, duration time.Duration, fileSize string
 		"read_throughput_mbps":  120.7,
 		"avg_latency_ms":        12.4,
 		"max_latency_ms":        45.2,
-		"operations_per_second": 1250,
+		"operations_per_second": 1250.0,
 		"success_rate":          99.8,
 		"errors":                2,
 	}

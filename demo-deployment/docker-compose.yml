@@ -1,0 +1,340 @@
+version: '3.8'
+
+networks:
+  seaweedfs-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+services:
+  # Master servers - 3 instances for high availability
+  seaweedfs-master-1:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-master-1
+    hostname: master-1
+    command: [
+      "weed", "master", 
+      "-port=9333",
+      "-peers=master-1:9334,master-2:9334,master-3:9334",
+      "-mdir=/data",
+      "-volumeSizeLimitMB=1024"
+    ]
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    volumes:
+      - master-1-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.1.10
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-master-2:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-master-2
+    hostname: master-2
+    command: [
+      "weed", "master",
+      "-port=9333", 
+      "-peers=master-1:9334,master-2:9334,master-3:9334",
+      "-mdir=/data",
+      "-volumeSizeLimitMB=1024"
+    ]
+    ports:
+      - "9334:9333"
+      - "19334:19333"
+    volumes:
+      - master-2-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.1.11
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-master-3:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-master-3
+    hostname: master-3
+    command: [
+      "weed", "master",
+      "-port=9333",
+      "-peers=master-1:9334,master-2:9334,master-3:9334", 
+      "-mdir=/data",
+      "-volumeSizeLimitMB=1024"
+    ]
+    ports:
+      - "9335:9333"
+      - "19335:19333"
+    volumes:
+      - master-3-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.1.12
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9333/cluster/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Volume servers - 4 instances for data storage
+  seaweedfs-volume-1:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-1
+    hostname: volume-1
+    command: [
+      "weed", "volume",
+      "-port=8080",
+      "-mserver=master-1:9333,master-2:9333,master-3:9333",
+      "-dir=/data",
+      "-max=100"
+    ]
+    ports:
+      - "8080:8080"
+    volumes:
+      - volume-1-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.2.10
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-volume-2:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-2
+    hostname: volume-2
+    command: [
+      "weed", "volume",
+      "-port=8080",
+      "-mserver=master-1:9333,master-2:9333,master-3:9333",
+      "-dir=/data", 
+      "-max=100"
+    ]
+    ports:
+      - "8081:8080"
+    volumes:
+      - volume-2-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.2.11
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-volume-3:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-3
+    hostname: volume-3
+    command: [
+      "weed", "volume", 
+      "-port=8080",
+      "-mserver=master-1:9333,master-2:9333,master-3:9333",
+      "-dir=/data",
+      "-max=100"
+    ]
+    ports:
+      - "8082:8080"
+    volumes:
+      - volume-3-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.2.12
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-volume-4:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-volume-4
+    hostname: volume-4
+    command: [
+      "weed", "volume",
+      "-port=8080", 
+      "-mserver=master-1:9333,master-2:9333,master-3:9333",
+      "-dir=/data",
+      "-max=100"
+    ]
+    ports:
+      - "8083:8080"
+    volumes:
+      - volume-4-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.2.13
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Filer servers - 2 instances for file system interface  
+  seaweedfs-filer-1:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-filer-1
+    hostname: filer-1
+    command: [
+      "weed", "filer",
+      "-port=8888",
+      "-master=master-1:9333,master-2:9333,master-3:9333"
+    ]
+    ports:
+      - "8888:8888"
+      - "8333:8333"
+    volumes:
+      - filer-1-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.3.10
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+      - seaweedfs-volume-1
+      - seaweedfs-volume-2
+      - seaweedfs-volume-3
+      - seaweedfs-volume-4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  seaweedfs-filer-2:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-filer-2
+    hostname: filer-2
+    command: [
+      "weed", "filer",
+      "-port=8888",
+      "-master=master-1:9333,master-2:9333,master-3:9333"
+    ]
+    ports:
+      - "8889:8888"
+      - "8334:8333"
+    volumes:
+      - filer-2-data:/data
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.3.11
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-master-1
+      - seaweedfs-master-2
+      - seaweedfs-master-3
+      - seaweedfs-volume-1
+      - seaweedfs-volume-2
+      - seaweedfs-volume-3
+      - seaweedfs-volume-4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # S3 Gateway for compatibility
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-s3
+    hostname: s3-gateway
+    command: [
+      "weed", "s3",
+      "-port=8333",
+      "-filer=filer-1:8888,filer-2:8888"
+    ]
+    ports:
+      - "8335:8333"
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.4.10
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-filer-1
+      - seaweedfs-filer-2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8333/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Admin UI for cluster monitoring
+  seaweedfs-webdav:
+    image: chrislusf/seaweedfs:3.75
+    container_name: seaweedfs-webdav
+    hostname: webdav
+    command: [
+      "weed", "webdav",
+      "-port=7333",
+      "-filer=filer-1:8888,filer-2:8888"
+    ]
+    ports:
+      - "7333:7333"
+    networks:
+      seaweedfs-net:
+        ipv4_address: 172.20.5.10
+    restart: unless-stopped
+    depends_on:
+      - seaweedfs-filer-1
+      - seaweedfs-filer-2
+
+volumes:
+  master-1-data:
+    driver: local
+  master-2-data:
+    driver: local
+  master-3-data:
+    driver: local
+  volume-1-data:
+    driver: local
+  volume-2-data:
+    driver: local
+  volume-3-data:
+    driver: local
+  volume-4-data:
+    driver: local
+  filer-1-data:
+    driver: local
+  filer-2-data:
+    driver: local

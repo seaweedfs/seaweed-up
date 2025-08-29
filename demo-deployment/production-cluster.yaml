@@ -1,0 +1,161 @@
+# SeaweedFS Production Cluster Configuration
+# Generated for comprehensive seaweed-up demonstration
+
+apiVersion: seaweed-up/v1
+kind: Cluster
+metadata:
+  name: production-cluster
+  description: "High-availability SeaweedFS cluster for production workloads"
+  version: "3.75"
+
+# Global cluster settings
+global:
+  user: seaweedfs
+  ssh_port: 22
+  deploy_dir: /opt/seaweedfs
+  data_dir: /data/seaweedfs
+  log_dir: /var/log/seaweedfs
+  replication: "001"
+  
+# Security configuration
+security:
+  enable_https: true
+  cert_dir: /opt/seaweedfs/certs
+  enable_jwt: true
+  jwt_signing_key: "demo-secret-key-change-in-production"
+  
+# Monitoring configuration  
+monitoring:
+  enable_metrics: true
+  metrics_port: 9327
+  enable_pprof: true
+  log_level: "info"
+
+# Master servers - providing cluster metadata and coordination
+master_servers:
+  - host: master-1
+    listen_port: 9333
+    peers: 
+      - "master-1:9334"
+      - "master-2:9334"
+      - "master-3:9334"
+    raft_port: 9334
+    data_dir: /data/seaweedfs/master
+    
+  - host: master-2  
+    listen_port: 9333
+    peers:
+      - "master-1:9334" 
+      - "master-2:9334"
+      - "master-3:9334"
+    raft_port: 9334
+    data_dir: /data/seaweedfs/master
+    
+  - host: master-3
+    listen_port: 9333
+    peers:
+      - "master-1:9334"
+      - "master-2:9334" 
+      - "master-3:9334"
+    raft_port: 9334
+    data_dir: /data/seaweedfs/master
+
+# Volume servers - storing the actual file data
+volume_servers:
+  - host: volume-1
+    listen_port: 8080
+    data_dir: /data/seaweedfs/volume
+    max_volumes: 100
+    masters:
+      - "master-1:9333"
+      - "master-2:9333"
+      - "master-3:9333"
+    disk_type: "ssd"
+    
+  - host: volume-2
+    listen_port: 8080
+    data_dir: /data/seaweedfs/volume  
+    max_volumes: 100
+    masters:
+      - "master-1:9333"
+      - "master-2:9333"
+      - "master-3:9333"
+    disk_type: "ssd"
+    
+  - host: volume-3
+    listen_port: 8080
+    data_dir: /data/seaweedfs/volume
+    max_volumes: 100
+    masters:
+      - "master-1:9333"
+      - "master-2:9333" 
+      - "master-3:9333"
+    disk_type: "ssd"
+    
+  - host: volume-4
+    listen_port: 8080
+    data_dir: /data/seaweedfs/volume
+    max_volumes: 100
+    masters:
+      - "master-1:9333"
+      - "master-2:9333"
+      - "master-3:9333" 
+    disk_type: "hdd"
+
+# Filer servers - providing file system interface
+filer_servers:
+  - host: filer-1
+    listen_port: 8888
+    masters:
+      - "master-1:9333"
+      - "master-2:9333"
+      - "master-3:9333"
+    data_dir: /data/seaweedfs/filer
+    enable_s3: true
+    s3_port: 8333
+    s3_config:
+      region: "us-east-1"
+      
+  - host: filer-2
+    listen_port: 8888
+    masters:
+      - "master-1:9333"
+      - "master-2:9333"
+      - "master-3:9333"
+    data_dir: /data/seaweedfs/filer
+    enable_s3: true
+    s3_port: 8333
+    s3_config:
+      region: "us-east-1"
+
+# Resource limits and performance tuning
+resources:
+  master:
+    memory_limit: "1Gi"
+    cpu_limit: "500m"
+  volume:
+    memory_limit: "2Gi" 
+    cpu_limit: "1000m"
+  filer:
+    memory_limit: "1Gi"
+    cpu_limit: "500m"
+
+# Environment-specific configurations
+environments:
+  production:
+    replicas:
+      master: 3
+      volume: 4
+      filer: 2
+    backup:
+      enable: true
+      schedule: "0 2 * * *"
+      retention_days: 30
+      
+  staging:
+    replicas:
+      master: 1
+      volume: 2
+      filer: 1
+    backup:
+      enable: false
