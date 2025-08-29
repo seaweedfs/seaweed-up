@@ -27,55 +27,63 @@ type (
 		FilerServers  []*FilerServerSpec  `yaml:"filer_servers"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
 	}
-	
+
 	// MasterServerSpec represents a master server configuration
 	MasterServerSpec struct {
-		Host         string `yaml:"ip"`
-		Port         int    `yaml:"port" default:"9333"`
-		DataDir      string `yaml:"dir,omitempty"`
-		LogLevel     string `yaml:"log_level,omitempty"`
-		DefaultReplication string `yaml:"default_replication,omitempty"`
-		Peers        []string `yaml:"peers,omitempty"`
+		Host               string   `yaml:"ip"`
+		Port               int      `yaml:"port" default:"9333"`
+		DataDir            string   `yaml:"dir,omitempty"`
+		LogLevel           string   `yaml:"log_level,omitempty"`
+		DefaultReplication string   `yaml:"default_replication,omitempty"`
+		Peers              []string `yaml:"peers,omitempty"`
 	}
-	
-	// VolumeServerSpec represents a volume server configuration  
+
+	// VolumeServerSpec represents a volume server configuration
 	VolumeServerSpec struct {
-		Host     string           `yaml:"ip"`
-		Port     int              `yaml:"port" default:"8080"`
-		DataDir  string           `yaml:"dir,omitempty"`
-		LogLevel string           `yaml:"log_level,omitempty"`
-		Masters  []string         `yaml:"masters,omitempty"`
-		Folders  []VolumeFolderSpec `yaml:"folders,omitempty"`
-		MaxVolumes int            `yaml:"max_volumes,omitempty"`
+		Host       string             `yaml:"ip"`
+		Port       int                `yaml:"port" default:"8080"`
+		DataDir    string             `yaml:"dir,omitempty"`
+		LogLevel   string             `yaml:"log_level,omitempty"`
+		Masters    []string           `yaml:"masters,omitempty"`
+		Folders    []VolumeFolderSpec `yaml:"folders,omitempty"`
+		MaxVolumes int                `yaml:"max_volumes,omitempty"`
 	}
-	
+
 	// FilerServerSpec represents a filer server configuration
 	FilerServerSpec struct {
-		Host         string   `yaml:"ip"`
-		Port         int      `yaml:"port" default:"8888"`
-		DataDir      string   `yaml:"dir,omitempty"`
-		LogLevel     string   `yaml:"log_level,omitempty"`
-		Masters      []string `yaml:"masters,omitempty"`
-		Collection   string   `yaml:"collection,omitempty"`
-		DefaultReplication string `yaml:"default_replication,omitempty"`
-		S3           bool     `yaml:"s3,omitempty"`
-		WebDAV       bool     `yaml:"webdav,omitempty"`
-		S3Port       int      `yaml:"s3_port,omitempty" default:"8333"`
-		WebDAVPort   int      `yaml:"webdav_port,omitempty" default:"7333"`
+		Host               string   `yaml:"ip"`
+		Port               int      `yaml:"port" default:"8888"`
+		DataDir            string   `yaml:"dir,omitempty"`
+		LogLevel           string   `yaml:"log_level,omitempty"`
+		Masters            []string `yaml:"masters,omitempty"`
+		Collection         string   `yaml:"collection,omitempty"`
+		DefaultReplication string   `yaml:"default_replication,omitempty"`
+		S3                 bool     `yaml:"s3,omitempty"`
+		WebDAV             bool     `yaml:"webdav,omitempty"`
+		S3Port             int      `yaml:"s3_port,omitempty" default:"8333"`
+		WebDAVPort         int      `yaml:"webdav_port,omitempty" default:"7333"`
 	}
-	
+
 	// EnvoyServerSpec represents an envoy proxy configuration
 	EnvoyServerSpec struct {
-		Host     string `yaml:"ip"`
-		Port     int    `yaml:"port" default:"8000"`
-		DataDir  string `yaml:"dir,omitempty"`
-		LogLevel string `yaml:"log_level,omitempty"`
+		Host     string   `yaml:"ip"`
+		Port     int      `yaml:"port" default:"8000"`
+		DataDir  string   `yaml:"dir,omitempty"`
+		LogLevel string   `yaml:"log_level,omitempty"`
 		Targets  []string `yaml:"targets,omitempty"`
 	}
-	
+
 	// VolumeFolderSpec represents a volume folder configuration
 	VolumeFolderSpec struct {
 		Folder string `yaml:"folder"`
 		Disk   string `yaml:"disk,omitempty"`
+	}
+
+	// ComponentSpec interface for all component specifications
+	ComponentSpec interface {
+		GetHost() string
+		GetPort() int
+		GetType() string
+		GetDataDir() string
 	}
 )

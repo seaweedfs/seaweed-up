@@ -1,0 +1,30 @@
+cluster_name: "test-cluster"
+
+global:
+  enable_tls: false
+  dir:
+    conf: "/etc/seaweedfs"
+    data: "/opt/seaweedfs"
+  os: "linux"
+  volumeSizeLimitMB: 5000
+  replication: "000"
+
+master_servers:
+  - ip: "localhost"
+    port: 9333
+    dir: "/opt/seaweedfs/master"
+    log_level: "info"
+
+volume_servers:
+  - ip: "localhost"
+    port: 8080
+    dir: "/opt/seaweedfs/volume1"
+    log_level: "info"
+
+filer_servers:
+  - ip: "localhost"
+    port: 8888
+    dir: "/opt/seaweedfs/filer"
+    log_level: "info"
+    s3: true
+    s3_port: 8333

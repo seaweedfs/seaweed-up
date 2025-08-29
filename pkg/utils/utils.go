@@ -20,13 +20,13 @@ import (
 // PromptForConfirmation asks user for yes/no confirmation
 func PromptForConfirmation(message string) bool {
 	color.Yellow("❓ %s (y/N): ", message)
-	
+
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
 		response := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		return response == "y" || response == "yes"
 	}
-	
+
 	return false
 }
 
@@ -72,7 +72,7 @@ func FormatBytes(bytes int64) string {
 		GB = MB * 1024
 		TB = GB * 1024
 	)
-	
+
 	switch {
 	case bytes >= TB:
 		return fmt.Sprintf("%.1fTB", float64(bytes)/TB)
@@ -102,7 +102,7 @@ func ValidateClusterName(name string) error {
 	if name == "" {
 		return fmt.Errorf("cluster name cannot be empty")
 	}
-	
+
 	// Check for invalid characters
 	invalidChars := []string{" ", "\t", "\n", "/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
 	for _, char := range invalidChars {
@@ -110,7 +110,7 @@ func ValidateClusterName(name string) error {
 			return fmt.Errorf("cluster name contains invalid character: '%s'", char)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -175,7 +175,7 @@ func SSHAgent() (ssh.AuthMethod, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
 	}
-	
+
 	return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers), nil
 }
 
@@ -185,7 +185,7 @@ func ExecuteCommand(command string) (string, error) {
 	if len(parts) == 0 {
 		return "", fmt.Errorf("empty command")
 	}
-	
+
 	cmd := exec.Command(parts[0], parts[1:]...)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
