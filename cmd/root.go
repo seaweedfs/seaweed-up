@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/seaweedfs/seaweed-up/pkg/environment"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/seaweedfs/seaweed-up/pkg/environment"
 )
 
 var (
@@ -24,7 +24,7 @@ It provides enterprise-grade cluster lifecycle management including:
 - Rolling upgrades and scaling operations
 - Component version management
 - Backup and recovery operations`,
-		
+
 		Example: `  # Deploy a cluster from configuration
   seaweed-up cluster deploy -f cluster.yaml
 
@@ -45,7 +45,7 @@ It provides enterprise-grade cluster lifecycle management including:
 			}
 			return environment.InitGlobalEnv()
 		},
-		
+
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -58,17 +58,19 @@ func Execute() error {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	
+
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.seaweed-up.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	
+
 	// Bind flags to viper
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
-	
+
 	// Add command groups
 	rootCmd.AddCommand(newClusterCmd())
 	rootCmd.AddCommand(newComponentCmd())
+	rootCmd.AddCommand(newMonitoringCmd())
+	rootCmd.AddCommand(newSecurityCmd())
 	rootCmd.AddCommand(newEnvCmd())
 	rootCmd.AddCommand(newTemplateCmd())
 	rootCmd.AddCommand(newVersionCmd())
@@ -81,14 +83,14 @@ func initConfig() {
 	} else {
 		home, err := os.UserHomeDir()
 		cobra.CheckErr(err)
-		
+
 		viper.AddConfigPath(home)
 		viper.SetConfigType("yaml")
 		viper.SetConfigName(".seaweed-up")
 	}
-	
+
 	viper.AutomaticEnv()
-	
+
 	if err := viper.ReadInConfig(); err == nil {
 		if verbose {
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())

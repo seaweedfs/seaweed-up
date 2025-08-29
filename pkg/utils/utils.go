@@ -97,6 +97,17 @@ func ParseComponentVersion(spec string) (component, version string) {
 	return
 }
 
+// ReadPassword reads a password from stdin without echoing
+func ReadPassword() string {
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		log.Printf("Error reading password: %v", err)
+		return ""
+	}
+	fmt.Println() // Add a newline after password input
+	return string(bytePassword)
+}
+
 // ValidateClusterName checks if cluster name is valid
 func ValidateClusterName(name string) error {
 	if name == "" {
