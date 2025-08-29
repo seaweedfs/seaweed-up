@@ -19,6 +19,7 @@ type (
 	}
 
 	Specification struct {
+		Name          string              `yaml:"cluster_name,omitempty"`
 		GlobalOptions GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
 		ServerConfigs ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
 		MasterServers []*MasterServerSpec `yaml:"master_servers"`
