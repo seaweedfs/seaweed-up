@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/jedib0t/go-pretty/v6/table"
+	
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/executor"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/status"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"gopkg.in/yaml.v3"
@@ -134,20 +139,71 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 		return runClusterStatusWithRefresh(args, opts)
 	}
 	
-	// TODO: Implement actual status collection
 	color.Green("📊 Cluster Status")
 	
 	if len(args) == 0 {
+		// Show all clusters (for now, just show help message)
 		color.Yellow("📋 All Clusters:")
-		// Show all clusters
 		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
-	} else {
-		clusterName := args[0]
-		color.Yellow("📋 Cluster: %s", clusterName)
-		fmt.Println("Status collection not yet implemented")
+		color.Cyan("💡 Usage: seaweed-up cluster status <cluster-name> -f <config-file>")
+		return nil
 	}
 	
-	return nil
+	// For now, we need a config file to know what to monitor
+	// In the future, we'll maintain a registry of deployed clusters
+	if len(args) == 0 {
+		return fmt.Errorf("cluster name is required")
+	}
+	
+	clusterName := args[0]
+	color.Yellow("📋 Cluster: %s", clusterName)
+	
+	// For demonstration, create a sample cluster spec
+	// In a real implementation, this would be loaded from the cluster registry
+	sampleCluster := &spec.Specification{
+		Name: clusterName,
+		MasterServers: []*spec.MasterServerSpec{
+			{Host: "localhost", Port: 9333},
+		},
+		VolumeServers: []*spec.VolumeServerSpec{
+			{Host: "localhost", Port: 8382},
+		},
+		FilerServers: []*spec.FilerServerSpec{
+			{Host: "localhost", Port: 8888},
+		},
+	}
+	
+	// Create status collector with local executor (for demo)
+	localExecutor := executor.NewLocalExecutor()
+	defer localExecutor.Close()
+	
+	collector := status.NewStatusCollector(localExecutor)
+	
+	// Parse timeout
+	timeout, err := time.ParseDuration(opts.Timeout)
+	if err != nil {
+		timeout = 30 * time.Second
+	}
+	
+	// Collect status
+	statusOpts := status.StatusCollectionOptions{
+		Timeout:        timeout,
+		IncludeMetrics: opts.Verbose,
+		Verbose:        opts.Verbose,
+		HealthCheck:    true,
+	}
+	
+	clusterStatus, err := collector.CollectClusterStatus(context.Background(), sampleCluster, statusOpts)
+	if err != nil {
+		return fmt.Errorf("failed to collect cluster status: %w", err)
+	}
+	
+	// Output results
+	if opts.JSONOutput {
+		return outputClusterStatusJSON(clusterStatus)
+	}
+	
+	return displayClusterStatus(clusterStatus, opts.Verbose)
 }
 
 func runClusterStatusWithRefresh(args []string, opts *ClusterStatusOptions) error {
@@ -263,4 +319,169 @@ func loadClusterSpec(configFile string) (*spec.Specification, error) {
 	}
 	
 	return clusterSpec, nil
+}
+
+// Helper functions for status display
+
+func outputClusterStatusJSON(clusterStatus *status.ClusterStatus) error {
+	data, err := json.MarshalIndent(clusterStatus, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal status to JSON: %w", err)
+	}
+	
+	fmt.Println(string(data))
+	return nil
+}
+
+func displayClusterStatus(clusterStatus *status.ClusterStatus, verbose bool) error {
+	// Display cluster summary
+	color.Green("🏗️  Cluster: %s", clusterStatus.Name)
+	fmt.Printf("State: %s\n", getStateIcon(clusterStatus.State)+string(clusterStatus.State))
+	fmt.Printf("Components: %d\n", len(clusterStatus.Components))
+	
+	if clusterStatus.Version != "" {
+		fmt.Printf("Version: %s\n", clusterStatus.Version)
+	}
+	
+	fmt.Printf("Last Updated: %s\n", clusterStatus.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Println()
+	
+	// Create components table
+	t := table.NewWriter()
+	t.SetStyle(table.StyleLight)
+	
+	if verbose {
+		t.AppendHeader(table.Row{"Component", "Type", "Host:Port", "Status", "Health", "PID", "Memory", "Uptime", "Last Check"})
+	} else {
+		t.AppendHeader(table.Row{"Component", "Type", "Host:Port", "Status", "Health"})
+	}
+	
+	for _, comp := range clusterStatus.Components {
+		healthIcon := getHealthIcon(comp.HealthCheck.Status)
+		statusIcon := getStatusIcon(comp.Status)
+		
+		hostPort := fmt.Sprintf("%s:%d", comp.Host, comp.Port)
+		
+		if verbose {
+			memory := "N/A"
+			if comp.MemoryUsage > 0 {
+				memory = utils.FormatBytes(comp.MemoryUsage)
+			}
+			
+			uptime := "N/A"
+			if comp.Uptime > 0 {
+				uptime = utils.FormatDuration(int64(comp.Uptime.Seconds()))
+			}
+			
+			lastCheck := "N/A"
+			if !comp.HealthCheck.LastCheck.IsZero() {
+				lastCheck = comp.HealthCheck.LastCheck.Format("15:04:05")
+			}
+			
+			t.AppendRow(table.Row{
+				comp.Name,
+				string(comp.Type),
+				hostPort,
+				statusIcon + comp.Status,
+				healthIcon + comp.HealthCheck.Status,
+				comp.PID,
+				memory,
+				uptime,
+				lastCheck,
+			})
+		} else {
+			t.AppendRow(table.Row{
+				comp.Name,
+				string(comp.Type),
+				hostPort,
+				statusIcon + comp.Status,
+				healthIcon + comp.HealthCheck.Status,
+			})
+		}
+	}
+	
+	fmt.Println(t.Render())
+	
+	// Show health summary
+	if verbose {
+		showHealthSummary(clusterStatus)
+	}
+	
+	return nil
+}
+
+func showHealthSummary(clusterStatus *status.ClusterStatus) {
+	fmt.Println()
+	color.Green("📊 Health Summary")
+	
+	healthy := 0
+	unhealthy := 0
+	warning := 0
+	
+	for _, comp := range clusterStatus.Components {
+		switch comp.HealthCheck.Status {
+		case "healthy":
+			healthy++
+		case "unhealthy":
+			unhealthy++
+		case "warning":
+			warning++
+		}
+	}
+	
+	fmt.Printf("✅ Healthy: %d\n", healthy)
+	if warning > 0 {
+		fmt.Printf("⚠️  Warning: %d\n", warning)
+	}
+	if unhealthy > 0 {
+		fmt.Printf("❌ Unhealthy: %d\n", unhealthy)
+	}
+	
+	// Show any errors
+	for _, comp := range clusterStatus.Components {
+		if comp.HealthCheck.Error != "" {
+			color.Red("❌ %s: %s", comp.Name, comp.HealthCheck.Error)
+		}
+	}
+}
+
+func getStateIcon(state status.ClusterState) string {
+	switch state {
+	case status.StateRunning:
+		return "✅ "
+	case status.StateStopped:
+		return "⛔ "
+	case status.StateDegraded:
+		return "⚠️  "
+	case status.StateError:
+		return "❌ "
+	default:
+		return "❓ "
+	}
+}
+
+func getStatusIcon(status string) string {
+	switch status {
+	case "running", "healthy":
+		return "✅ "
+	case "stopped":
+		return "⛔ "
+	case "unhealthy":
+		return "❌ "
+	default:
+		return "❓ "
+	}
+}
+
+func getHealthIcon(health string) string {
+	switch health {
+	case "healthy":
+		return "💚 "
+	case "unhealthy":
+		return "❤️ "
+	case "warning":
+		return "💛 "
+	default:
+		return "🤍 "
+	}
 }

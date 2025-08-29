@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"strings"
 	"syscall"
 
 	"github.com/fatih/color"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/term"
 )
 
@@ -154,4 +158,35 @@ func PromptForPassword(format string, a ...interface{}) string {
 		return ""
 	}
 	return string(input)
+}
+
+// LoadPrivateKey loads a private key from file
+func LoadPrivateKey(keyPath string) ([]byte, error) {
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read private key: %w", err)
+	}
+	return key, nil
+}
+
+// SSHAgent returns SSH agent authentication method
+func SSHAgent() (ssh.AuthMethod, error) {
+	sshAgent, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SSH agent: %w", err)
+	}
+	
+	return ssh.PublicKeysCallback(agent.NewClient(sshAgent).Signers), nil
+}
+
+// ExecuteCommand executes a local command and returns output
+func ExecuteCommand(command string) (string, error) {
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+	
+	cmd := exec.Command(parts[0], parts[1:]...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
 }
