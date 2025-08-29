@@ -108,6 +108,11 @@ func ReadPassword() string {
 	return string(bytePassword)
 }
 
+// WriteFile writes content to a file
+func WriteFile(filename, content string) error {
+	return os.WriteFile(filename, []byte(content), 0644)
+}
+
 // ValidateClusterName checks if cluster name is valid
 func ValidateClusterName(name string) error {
 	if name == "" {

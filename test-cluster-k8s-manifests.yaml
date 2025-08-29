@@ -1,0 +1,216 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+    labels:
+        app.kubernetes.io/instance: demo
+        app.kubernetes.io/name: seaweedfs
+    name: demo
+---
+apiVersion: v1
+data:
+    cluster-name: test-cluster
+    replication: "000"
+kind: ConfigMap
+metadata:
+    name: seaweedfs-config
+    namespace: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    labels:
+        app: seaweedfs
+        app.kubernetes.io/instance: demo
+        app.kubernetes.io/name: seaweedfs
+        component: master
+    name: seaweedfs-master-0
+    namespace: demo
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: seaweedfs
+            component: master
+            instance: master-0
+    template:
+        metadata:
+            labels:
+                app: seaweedfs
+                component: master
+                instance: master-0
+        spec:
+            containers:
+                - command:
+                    - /usr/bin/weed
+                    - master
+                    - -port=9333
+                    - -peers=
+                  env:
+                    - name: POD_NAMESPACE
+                      valueFrom:
+                        fieldRef:
+                            fieldPath: metadata.namespace
+                    - name: POD_NAME
+                      valueFrom:
+                        fieldRef:
+                            fieldPath: metadata.name
+                  image: chrislusf/seaweedfs:latest
+                  livenessProbe:
+                    httpGet:
+                        path: /cluster/status
+                        port: 9333
+                    initialDelaySeconds: 30
+                    timeoutSeconds: 10
+                  name: seaweedfs
+                  ports:
+                    - containerPort: 9333
+                      name: http
+                      protocol: TCP
+                  readinessProbe:
+                    httpGet:
+                        path: /cluster/status
+                        port: 9333
+                    initialDelaySeconds: 5
+                    timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+    labels:
+        app: seaweedfs
+        app.kubernetes.io/instance: demo
+        app.kubernetes.io/name: seaweedfs
+        component: master
+    name: seaweedfs-master-0
+    namespace: demo
+spec:
+    ports:
+        - name: http
+          port: 9333
+          protocol: TCP
+          targetPort: 9333
+    selector:
+        app: seaweedfs
+        component: master
+        instance: master-0
+    type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+    labels:
+        app: seaweedfs
+        app.kubernetes.io/instance: demo
+        app.kubernetes.io/name: seaweedfs
+        component: volume
+    name: seaweedfs-volume-0
+    namespace: demo
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: seaweedfs
+            component: volume
+            instance: volume-0
+    serviceName: seaweedfs-volume-0
+    template:
+        metadata:
+            labels:
+                app: seaweedfs
+                component: volume
+                instance: volume-0
+        spec:
+            containers:
+                - command:
+                    - /usr/bin/weed
+                    - volume
+                    - -port=8080
+                    - -mserver=
+                    - -dir=/data
+                  image: chrislusf/seaweedfs:latest
+                  name: seaweedfs
+                  ports:
+                    - containerPort: 8080
+                      name: http
+                      protocol: TCP
+                  volumeMounts:
+                    - mountPath: /data
+                      name: data
+    volumeClaimTemplates:
+        - metadata:
+            name: data
+          spec:
+            accessModes:
+                - ReadWriteOnce
+            resources:
+                requests:
+                    storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+    name: seaweedfs-volume-0
+    namespace: demo
+spec:
+    ports:
+        - name: http
+          port: 8080
+          targetPort: 8080
+    selector:
+        app: seaweedfs
+        component: volume
+        instance: volume-0
+    type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: seaweedfs-filer-0
+    namespace: demo
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: seaweedfs
+            component: filer
+            instance: filer-0
+    template:
+        metadata:
+            labels:
+                app: seaweedfs
+                component: filer
+                instance: filer-0
+        spec:
+            containers:
+                - command:
+                    - /usr/bin/weed
+                    - filer
+                    - -port=8888
+                    - -master=
+                    - -s3.port=8333
+                  image: chrislusf/seaweedfs:latest
+                  name: seaweedfs
+                  ports:
+                    - containerPort: 8888
+                      name: http
+                    - containerPort: 8333
+                      name: s3
+---
+apiVersion: v1
+kind: Service
+metadata:
+    name: seaweedfs-filer-0
+    namespace: demo
+spec:
+    ports:
+        - name: http
+          port: 8888
+          targetPort: 8888
+        - name: s3
+          port: 8333
+          targetPort: 8333
+    selector:
+        app: seaweedfs
+        component: filer
+        instance: filer-0
+    type: LoadBalancer
