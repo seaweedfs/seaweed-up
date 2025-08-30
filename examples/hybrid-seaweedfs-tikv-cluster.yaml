@@ -1,0 +1,268 @@
+# Hybrid SeaweedFS + TiKV Cluster Configuration
+# SeaweedFS filers use TiKV as the distributed metadata backend
+# This combines SeaweedFS efficient file storage with TiKV's ACID transactions
+
+apiVersion: seaweed-up/v2
+kind: Cluster
+metadata:
+  name: hybrid-seaweedfs-tikv
+  description: "SeaweedFS cluster with TiKV as filer metadata backend"
+  
+spec:
+  # Deploy both SeaweedFS and TiKV components
+  components:
+    - seaweedfs
+    - tikv
+    
+  # Global configuration
+  global:
+    seaweedfs_version: "3.96"
+    tikv_version: "7.5.0"
+    deploy_dir: /opt/seaweedfs
+    data_dir: /data
+    log_dir: /var/log
+    
+    # SSH configuration
+    ssh_port: 22
+    ssh_user: ubuntu
+    ssh_private_key: ~/.ssh/cluster_rsa
+    
+  # TiKV Cluster for Metadata Storage
+  # PD nodes (TiKV cluster management)
+  pd:
+    - host: 10.0.1.10
+      name: pd-1
+      client_port: 2379
+      peer_port: 2380
+      data_dir: /data/tikv/pd-1
+      
+    - host: 10.0.1.11
+      name: pd-2  
+      client_port: 2379
+      peer_port: 2380
+      data_dir: /data/tikv/pd-2
+      
+    - host: 10.0.1.12
+      name: pd-3
+      client_port: 2379
+      peer_port: 2380
+      data_dir: /data/tikv/pd-3
+
+  # TiKV nodes (Key-Value storage for SeaweedFS metadata)
+  tikv:
+    - host: 10.0.2.10
+      port: 20160
+      status_port: 20180
+      data_dir: /data/tikv/tikv-1
+      labels:
+        zone: "zone-1"
+        rack: "rack-1"
+      storage:
+        capacity: "200GB"  # Metadata doesn't need huge storage
+        engine: "rocksdb"
+        
+    - host: 10.0.2.11
+      port: 20160
+      status_port: 20180
+      data_dir: /data/tikv/tikv-2
+      labels:
+        zone: "zone-2" 
+        rack: "rack-1"
+      storage:
+        capacity: "200GB"
+        engine: "rocksdb"
+        
+    - host: 10.0.2.12
+      port: 20160
+      status_port: 20180
+      data_dir: /data/tikv/tikv-3
+      labels:
+        zone: "zone-3"
+        rack: "rack-1" 
+      storage:
+        capacity: "200GB"
+        engine: "rocksdb"
+
+  # SeaweedFS Master Servers
+  masters:
+    - host: 10.0.3.10
+      port: 9333
+      peer_port: 9334
+      data_dir: /data/seaweedfs/master
+      
+    - host: 10.0.3.11
+      port: 9333
+      peer_port: 9334
+      data_dir: /data/seaweedfs/master
+
+  # SeaweedFS Volume Servers (File Data Storage)
+  volumes:
+    - host: 10.0.4.10
+      port: 8080
+      public_port: 8080
+      data_dir: /data/seaweedfs/volume1
+      max_volumes: 200
+      
+    - host: 10.0.4.11
+      port: 8080
+      public_port: 8080
+      data_dir: /data/seaweedfs/volume2
+      max_volumes: 200
+      
+    - host: 10.0.4.12
+      port: 8080
+      public_port: 8080
+      data_dir: /data/seaweedfs/volume3
+      max_volumes: 200
+      
+    - host: 10.0.4.13
+      port: 8080
+      public_port: 8080
+      data_dir: /data/seaweedfs/volume4
+      max_volumes: 200
+
+  # SeaweedFS Filer Servers (Using TiKV as backend)
+  filers:
+    - host: 10.0.5.10
+      port: 8888
+      data_dir: /data/seaweedfs/filer1
+      
+      # TiKV Filer Store Configuration
+      filer_store:
+        type: "tikv"
+        config:
+          # Connect to TiKV cluster via PD endpoints
+          pdaddrs: "10.0.1.10:2379,10.0.1.11:2379,10.0.1.12:2379"
+          
+          # TLS configuration (if enabled)
+          ca_path: "/opt/seaweedfs/certs/ca.pem"
+          cert_path: "/opt/seaweedfs/certs/filer.pem"  
+          key_path: "/opt/seaweedfs/certs/filer-key.pem"
+          verify_cn: "tikv-server"
+          
+          # TiKV specific options
+          deleterange_concurrency: 1
+          enable_1pc: true  # One-phase commit for better performance
+      
+      # Enable S3 API
+      enable_s3: true
+      s3_port: 8333
+      
+    - host: 10.0.5.11
+      port: 8888
+      data_dir: /data/seaweedfs/filer2
+      
+      # Same TiKV configuration for filer HA
+      filer_store:
+        type: "tikv"
+        config:
+          pdaddrs: "10.0.1.10:2379,10.0.1.11:2379,10.0.1.12:2379"
+          ca_path: "/opt/seaweedfs/certs/ca.pem"
+          cert_path: "/opt/seaweedfs/certs/filer.pem"
+          key_path: "/opt/seaweedfs/certs/filer-key.pem"
+          verify_cn: "tikv-server"
+          deleterange_concurrency: 1
+          enable_1pc: true
+      
+      enable_s3: true
+      s3_port: 8333
+
+  # Monitoring for both systems
+  monitoring:
+    enabled: true
+    prometheus:
+      port: 9090
+      retention: "30d"
+    grafana:
+      port: 3000
+      
+    # Combined alerting for both SeaweedFS and TiKV
+    alerting:
+      rules:
+        # TiKV alerts
+        - name: "TiKV Cluster Health"
+          rules:
+            - alert: "PD Leader Missing"
+              expr: 'pd_cluster_status{type="leader_count"} == 0'
+              severity: "critical"
+              description: "TiKV PD cluster has no leader"
+              
+            - alert: "TiKV Node Down"
+              expr: 'up{job="tikv"} == 0' 
+              severity: "critical"
+              description: "TiKV node is unreachable"
+              
+        # SeaweedFS alerts  
+        - name: "SeaweedFS Cluster Health"
+          rules:
+            - alert: "Master Node Down"
+              expr: 'up{job="seaweedfs-master"} == 0'
+              severity: "critical"
+              description: "SeaweedFS master is unreachable"
+              
+            - alert: "Volume Server Down" 
+              expr: 'up{job="seaweedfs-volume"} == 0'
+              severity: "warning"
+              description: "SeaweedFS volume server is unreachable"
+              
+            - alert: "Filer Store Connection Error"
+              expr: 'seaweedfs_filer_store_operation_total{result="error"} > 10'
+              severity: "warning"
+              description: "High error rate connecting to TiKV filer store"
+
+# TLS configuration for secure communication
+security:
+  enable_tls: true
+  
+  # Certificate authority
+  ca:
+    cert_file: /opt/seaweedfs/certs/ca.pem
+    key_file: /opt/seaweedfs/certs/ca-key.pem
+    
+  # TiKV certificates
+  tikv:
+    cert_file: /opt/seaweedfs/certs/tikv-server.pem
+    key_file: /opt/seaweedfs/certs/tikv-server-key.pem
+    
+  # SeaweedFS certificates
+  seaweedfs:
+    cert_file: /opt/seaweedfs/certs/seaweedfs.pem
+    key_file: /opt/seaweedfs/certs/seaweedfs-key.pem
+
+# Deployment strategy
+deployment:
+  strategy: "sequential"
+  phases:
+    # Phase 1: Deploy TiKV cluster first (metadata backend)
+    - name: "tikv-cluster"
+      components: ["pd", "tikv"]
+      wait_for_healthy: true
+      timeout: 300s
+      
+    # Phase 2: Deploy SeaweedFS cluster
+    - name: "seaweedfs-cluster"  
+      components: ["masters", "volumes"]
+      wait_for_healthy: true
+      timeout: 300s
+      
+    # Phase 3: Deploy filers (connect to TiKV)
+    - name: "seaweedfs-filers"
+      components: ["filers"]
+      wait_for_healthy: true
+      timeout: 180s
+
+# Backup configuration
+backup:
+  # TiKV metadata backup
+  tikv:
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retention: "30d"
+    destination: "s3://backups/tikv-metadata"
+    
+  # SeaweedFS data backup  
+  seaweedfs:
+    enabled: true
+    schedule: "0 3 * * *"  # Daily at 3 AM
+    retention: "7d"
+    destination: "s3://backups/seaweedfs-data"

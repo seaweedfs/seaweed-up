@@ -1,0 +1,61 @@
+# SeaweedFS Filer Configuration with TiKV Backend
+# This shows how to configure a SeaweedFS filer to use TiKV as the metadata store
+
+# Default filer store configuration (TiKV)
+[tikv]
+enabled = true
+# TiKV PD endpoints - connect to the TiKV cluster
+pdaddrs = "10.0.1.10:2379,10.0.1.11:2379,10.0.1.12:2379"
+
+# TLS configuration for secure TiKV connection
+ca_path = "/opt/seaweedfs/certs/ca.pem"
+cert_path = "/opt/seaweedfs/certs/filer.pem"  
+key_path = "/opt/seaweedfs/certs/filer-key.pem"
+verify_cn = "tikv-server,tikv-pd"
+
+# TiKV performance options
+deleterange_concurrency = 1    # Concurrent delete range operations
+enable_1pc = true              # Enable one-phase commit for better performance
+
+# Path-specific filer store (optional)
+# Use different TiKV clusters for different paths
+[tikv.hot_data]
+enabled = true
+location = "/hot"              # Files under /hot path
+pdaddrs = "10.0.10.10:2379,10.0.10.11:2379,10.0.10.12:2379"
+ca_path = "/opt/seaweedfs/certs/ca.pem"
+cert_path = "/opt/seaweedfs/certs/filer-hot.pem"
+key_path = "/opt/seaweedfs/certs/filer-hot-key.pem"
+enable_1pc = true
+
+[tikv.cold_data]  
+enabled = true
+location = "/archive"          # Files under /archive path
+pdaddrs = "10.0.20.10:2379,10.0.20.11:2379,10.0.20.12:2379"
+ca_path = "/opt/seaweedfs/certs/ca.pem"
+cert_path = "/opt/seaweedfs/certs/filer-archive.pem"
+key_path = "/opt/seaweedfs/certs/filer-archive-key.pem"
+enable_1pc = false             # Use 2PC for archive data (stronger consistency)
+
+# Alternative: Other filer stores for comparison
+# [mysql]
+# enabled = false
+# username = "root"
+# password = "password"
+# hostname = "localhost"
+# port = 3306
+# database = "seaweedfs"
+
+# [postgres]
+# enabled = false
+# hostname = "localhost"
+# port = 5432
+# username = "postgres"
+# password = "password" 
+# database = "seaweedfs"
+
+# [redis]
+# enabled = false
+# address = "localhost:6379"
+# password = ""
+# database = 0
