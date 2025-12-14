@@ -632,14 +632,9 @@ func (k *KubernetesExporter) generateFilerServer(cluster *spec.Specification, fi
 		)
 
 		// Add S3 command arguments
+		// Note: IAM API is now embedded in S3 by default (on the same port)
 		container := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})["spec"].(map[string]interface{})["containers"].([]map[string]interface{})[0]
 		container["command"] = append(container["command"].([]string), fmt.Sprintf("-s3.port=%d", filer.S3Port))
-
-		// IAM is embedded in S3 by default. Only add -iam=false if explicitly disabled
-		if filer.IAM != nil && !*filer.IAM {
-			container["command"] = append(container["command"].([]string), "-iam=false")
-		}
-		// Note: IAM API is accessible on the same port as S3 (S3Port) when embedded
 
 		// Add S3 port to container ports
 		container["ports"] = append(container["ports"].([]map[string]interface{}), map[string]interface{}{

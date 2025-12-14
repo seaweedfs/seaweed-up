@@ -62,9 +62,8 @@ type (
 		WebDAV             bool     `yaml:"webdav,omitempty"`
 		S3Port             int      `yaml:"s3_port,omitempty" default:"8333"`
 		WebDAVPort         int      `yaml:"webdav_port,omitempty" default:"7333"`
-		// IAM controls whether IAM API is embedded in S3 server (default: true when S3 is enabled)
-		// IAM API is accessible on the same port as S3 (S3Port)
-		IAM *bool `yaml:"iam,omitempty"`
+		// Note: IAM API is now embedded in S3 by default (on the same port as S3).
+		// No configuration needed - IAM is automatically enabled when S3 is enabled.
 	}
 
 	// EnvoyServerSpec represents an envoy proxy configuration
