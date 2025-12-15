@@ -165,8 +165,11 @@ func (e *TestEnvironment) setupSSHKeys() error {
 	// Copy public key to each host using docker exec
 	for _, host := range e.hosts {
 		containerName := fmt.Sprintf("seaweed-up-%s", host.Name)
-		cmd := exec.Command("docker", "exec", containerName, "bash", "-c",
-			fmt.Sprintf("mkdir -p /root/.ssh && echo '%s' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys", strings.TrimSpace(string(pubKey))))
+		setupCmd := fmt.Sprintf(
+			"mkdir -p /root/.ssh && chmod 700 /root/.ssh && echo '%s' > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys",
+			strings.TrimSpace(string(pubKey)),
+		)
+		cmd := exec.Command("docker", "exec", containerName, "bash", "-c", setupCmd)
 
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to copy SSH key to %s: %w", host.Name, err)

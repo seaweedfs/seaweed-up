@@ -74,11 +74,18 @@ jobs:
           mkdir -p .ssh
           ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
           
-          # Copy public key to all hosts
+          # Read public key content
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          
+          # Copy public key to all hosts using docker exec (more reliable than docker cp)
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Setting up SSH key on $host..."
             docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
-            docker cp .ssh/id_rsa_test.pub $host:/root/.ssh/authorized_keys
-            docker exec $host chmod 600 /root/.ssh/authorized_keys
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+            # Verify the key was written correctly
+            docker exec $host bash -c "cat /root/.ssh/authorized_keys | head -c 50"
+            echo ""
           done
 
       - name: Verify SSH connectivity
@@ -186,10 +193,14 @@ jobs:
           mkdir -p .ssh
           ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
           
+          # Read public key content
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Setting up SSH key on $host..."
             docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
-            docker cp .ssh/id_rsa_test.pub $host:/root/.ssh/authorized_keys
-            docker exec $host chmod 600 /root/.ssh/authorized_keys
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
           done
 
       - name: Run multi-node deployment test
