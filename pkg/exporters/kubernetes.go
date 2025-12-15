@@ -49,15 +49,15 @@ func NewKubernetesExporter(namespace string, options KubernetesExportOptions) *K
 	if namespace == "" {
 		namespace = "seaweedfs"
 	}
-	
+
 	if options.ImageRepository == "" {
 		options.ImageRepository = "chrislusf/seaweedfs"
 	}
-	
+
 	if options.ImageTag == "" {
 		options.ImageTag = "latest"
 	}
-	
+
 	if options.ServiceType == "" {
 		options.ServiceType = "ClusterIP"
 	}
@@ -174,12 +174,12 @@ func (k *KubernetesExporter) Export(ctx context.Context, cluster *spec.Specifica
 		if i > 0 {
 			yamlOutput.WriteString("---\n")
 		}
-		
+
 		yamlBytes, err := yaml.Marshal(manifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal manifest: %w", err)
 		}
-		
+
 		yamlOutput.Write(yamlBytes)
 	}
 
@@ -267,7 +267,7 @@ func (k *KubernetesExporter) generateMasterServer(cluster *spec.Specification, m
 	var manifests []map[string]interface{}
 
 	name := fmt.Sprintf("seaweedfs-master-%d", index)
-	
+
 	// Deployment
 	deployment := map[string]interface{}{
 		"apiVersion": "apps/v1",
@@ -361,18 +361,18 @@ func (k *KubernetesExporter) generateMasterServer(cluster *spec.Specification, m
 	// Add resource limits if specified
 	if k.options.ResourceLimits.Master.CPU != "" || k.options.ResourceLimits.Master.Memory != "" {
 		container := deployment["spec"].(map[string]interface{})["template"].(map[string]interface{})["spec"].(map[string]interface{})["containers"].([]map[string]interface{})[0]
-		
+
 		resources := map[string]interface{}{
 			"limits": map[string]interface{}{},
 		}
-		
+
 		if k.options.ResourceLimits.Master.CPU != "" {
 			resources["limits"].(map[string]interface{})["cpu"] = k.options.ResourceLimits.Master.CPU
 		}
 		if k.options.ResourceLimits.Master.Memory != "" {
 			resources["limits"].(map[string]interface{})["memory"] = k.options.ResourceLimits.Master.Memory
 		}
-		
+
 		container["resources"] = resources
 	}
 
