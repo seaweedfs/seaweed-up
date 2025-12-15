@@ -94,7 +94,8 @@ func initConfig() {
 		// Config file not found is acceptable - we'll use defaults
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			// Config file was found but another error was produced (e.g., malformed YAML)
-			cobra.CheckErr(err)
+			fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+			os.Exit(1)
 		}
 	} else {
 		if verbose {

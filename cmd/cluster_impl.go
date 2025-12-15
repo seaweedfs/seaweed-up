@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -84,14 +85,33 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	
 	// Create cluster manager
 	mgr := manager.NewManager()
-	mgr.User = opts.User
 	mgr.SshPort = opts.SSHPort
-	mgr.IdentityFile = opts.IdentityFile
 	mgr.Version = opts.Version
 	mgr.ComponentToDeploy = opts.Component
 	mgr.PrepareVolumeDisks = opts.MountDisks
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
+	
+	// Default SSH user to current user if not specified
+	if opts.User == "" {
+		currentUser, err := utils.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("failed to get current user for SSH: %w", err)
+		}
+		mgr.User = currentUser
+	} else {
+		mgr.User = opts.User
+	}
+	
+	// Default identity file to ~/.ssh/id_rsa if not specified
+	if opts.IdentityFile == "" {
+		home, err := utils.UserHome()
+		if err == nil {
+			mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+		}
+	} else {
+		mgr.IdentityFile = opts.IdentityFile
+	}
 	
 	// Get latest version if not specified
 	if mgr.Version == "" {
