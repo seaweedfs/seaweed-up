@@ -34,16 +34,16 @@ func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.B
 
 func addToBuffer(buf *bytes.Buffer, name, value string) {
 	if value != "" {
-		buf.WriteString(fmt.Sprintf("%s=%s\n", name, value))
+		fmt.Fprintf(buf, "%s=%s\n", name, value)
 	}
 }
 func addToBufferInt(buf *bytes.Buffer, name string, value, defaultValue int) {
 	if value != 0 && value != defaultValue {
-		buf.WriteString(fmt.Sprintf("%s=%d\n", name, value))
+		fmt.Fprintf(buf, "%s=%d\n", name, value)
 	}
 }
 func addToBufferBool(buf *bytes.Buffer, name string, value, defaultValue bool) {
 	if value != defaultValue {
-		buf.WriteString(fmt.Sprintf("%s=%v\n", name, value))
+		fmt.Fprintf(buf, "%s=%v\n", name, value)
 	}
 }

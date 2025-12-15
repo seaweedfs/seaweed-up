@@ -18,13 +18,13 @@ jobs:
     name: Build and Test
     runs-on: ubuntu-latest
     steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
-
-      - name: Check out code
-        uses: actions/checkout@v4
+          go-version: '1.24'
 
       - name: Get dependencies
         run: go mod download
@@ -45,20 +45,19 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.21'
-
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          version: v1.64.8
+          go-version: '1.24'
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.1.6
           args: --timeout=5m
-          skip-cache: true
 
   security:
     name: Security Scan
@@ -81,4 +80,3 @@ jobs:
           # G305: Zip file traversal - low risk for known releases
           # G401/G501: MD5 - used for checksum verification, not security
           args: -exclude=G106,G110,G115,G204,G301,G304,G305,G401,G501 ./...
-

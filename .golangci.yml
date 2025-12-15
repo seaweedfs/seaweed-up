@@ -1,46 +1,39 @@
-# golangci-lint configuration
+# golangci-lint configuration for v2
 # https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
-  go: "1.21"
+  go: "1.24"
 
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
-
-linters-settings:
-  errcheck:
-    # Check for errors on type assertions
-    check-type-assertions: false
-    # Check for errors on blank identifier assignments
-    check-blank: false
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+  exclusions:
+    rules:
+      # Ignore errors in defer statements (common pattern)
+      - linters:
+          - errcheck
+        source: "defer"
+      # Ignore test files for some linters
+      - path: _test\.go
+        linters:
+          - errcheck
 
 issues:
-  # Don't skip any issues
   max-issues-per-linter: 0
   max-same-issues: 0
-  
-  # Exclude some common patterns
-  exclude-rules:
-    # Ignore errors in defer statements (common pattern)
-    - linters:
-        - errcheck
-      source: "defer"
-    
-    # Ignore test files for some linters
-    - path: _test\.go
-      linters:
-        - errcheck
 
 output:
   formats:
-    - format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-
+    text:
+      path: stdout
