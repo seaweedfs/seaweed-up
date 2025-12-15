@@ -39,10 +39,7 @@ and cluster states.`,
 }
 
 func newEnvCreateCmd() *cobra.Command {
-	var (
-		description string
-		copyFrom    string
-	)
+	opts := &EnvCreateOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "create <env-name>",
@@ -60,24 +57,18 @@ and component cache for isolation between different deployment contexts.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvCreate(args[0], &EnvCreateOptions{
-				Description: description,
-				CopyFrom:    copyFrom,
-			})
+			return runEnvCreate(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVar(&description, "description", "", "environment description")
-	cmd.Flags().StringVar(&copyFrom, "copy-from", "", "copy configuration from existing environment")
+	cmd.Flags().StringVar(&opts.Description, "description", "", "environment description")
+	cmd.Flags().StringVar(&opts.CopyFrom, "copy-from", "", "copy configuration from existing environment")
 	
 	return cmd
 }
 
 func newEnvListCmd() *cobra.Command {
-	var (
-		jsonOutput bool
-		verbose    bool
-	)
+	opts := &EnvListOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -92,15 +83,12 @@ and basic information.`,
   seaweed-up env list --verbose`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvList(&EnvListOptions{
-				JSONOutput: jsonOutput,
-				Verbose:    verbose,
-			})
+			return runEnvList(opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "show detailed information")
+	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	
 	return cmd
 }
@@ -130,10 +118,7 @@ configuration and cluster registry.`,
 }
 
 func newEnvDeleteCmd() *cobra.Command {
-	var (
-		skipConfirm bool
-		removeData  bool
-	)
+	opts := &EnvDeleteOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "delete <env-name>",
@@ -151,15 +136,12 @@ optionally all associated cluster data.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runEnvDelete(args[0], &EnvDeleteOptions{
-				SkipConfirm: skipConfirm,
-				RemoveData:  removeData,
-			})
+			return runEnvDelete(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
-	cmd.Flags().BoolVar(&removeData, "remove-data", false, "remove all environment data")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.RemoveData, "remove-data", false, "remove all environment data")
 	
 	return cmd
 }

@@ -40,10 +40,7 @@ This command group provides component lifecycle management including:
 }
 
 func newComponentInstallCmd() *cobra.Command {
-	var (
-		version string
-		force   bool
-	)
+	opts := &ComponentInstallOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "install <component>[:<version>]",
@@ -66,26 +63,18 @@ Supported components: master, volume, filer, s3, webdav, mount`,
 		
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runComponentInstall(args, &ComponentInstallOptions{
-				Version: version,
-				Force:   force,
-			})
+			return runComponentInstall(args, opts)
 		},
 	}
 	
-	cmd.Flags().StringVar(&version, "version", "", "specific version to install")
-	cmd.Flags().BoolVar(&force, "force", false, "force reinstall if already installed")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "specific version to install")
+	cmd.Flags().BoolVar(&opts.Force, "force", false, "force reinstall if already installed")
 	
 	return cmd
 }
 
 func newComponentListCmd() *cobra.Command {
-	var (
-		installedOnly bool
-		available     bool
-		jsonOutput    bool
-		verbose       bool
-	)
+	opts := &ComponentListOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "list [component]",
@@ -106,29 +95,20 @@ shows available versions for that component.`,
   seaweed-up component list --available`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runComponentList(args, &ComponentListOptions{
-				InstalledOnly: installedOnly,
-				Available:     available,
-				JSONOutput:    jsonOutput,
-				Verbose:       verbose,
-			})
+			return runComponentList(args, opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&installedOnly, "installed", false, "show only installed components")
-	cmd.Flags().BoolVar(&available, "available", false, "show all available versions")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "show detailed information")
+	cmd.Flags().BoolVar(&opts.InstalledOnly, "installed", false, "show only installed components")
+	cmd.Flags().BoolVar(&opts.Available, "available", false, "show all available versions")
+	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	
 	return cmd
 }
 
 func newComponentUpdateCmd() *cobra.Command {
-	var (
-		all       bool
-		version   string
-		skipConfirm bool
-	)
+	opts := &ComponentUpdateOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "update [component...]",
@@ -148,26 +128,19 @@ to the latest available versions.`,
   seaweed-up component update master --version=3.75`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runComponentUpdate(args, &ComponentUpdateOptions{
-				All:         all,
-				Version:     version,
-				SkipConfirm: skipConfirm,
-			})
+			return runComponentUpdate(args, opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&all, "all", false, "update all installed components")
-	cmd.Flags().StringVar(&version, "version", "", "specific version to update to")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.All, "all", false, "update all installed components")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "specific version to update to")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
 	return cmd
 }
 
 func newComponentUninstallCmd() *cobra.Command {
-	var (
-		all         bool
-		skipConfirm bool
-	)
+	opts := &ComponentUninstallOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "uninstall <component>[:<version>]",
@@ -185,15 +158,12 @@ currently used by running clusters will be protected.`,
 		
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runComponentUninstall(args, &ComponentUninstallOptions{
-				All:         all,
-				SkipConfirm: skipConfirm,
-			})
+			return runComponentUninstall(args, opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&all, "all", false, "uninstall all versions of the component")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.All, "all", false, "uninstall all versions of the component")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
 	return cmd
 }

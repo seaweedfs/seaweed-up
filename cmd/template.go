@@ -36,16 +36,11 @@ such as development, testing, production, and specialized deployments.`,
 }
 
 func newTemplateGenerateCmd() *cobra.Command {
-	var (
-		templateType string
-		nodes        int
-		output       string
-		masters      int
-		volumes      int
-		filers       int
-		enableTLS    bool
-		enableS3     bool
-	)
+	opts := &TemplateGenerateOptions{
+		Type:   "production",
+		Nodes:  3,
+		Output: "cluster.yaml",
+	}
 	
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -65,36 +60,24 @@ including resource allocation, security settings, and best practices.`,
   seaweed-up template generate --masters 3 --volumes 6 --filers 2`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTemplateGenerate(&TemplateGenerateOptions{
-				Type:      templateType,
-				Nodes:     nodes,
-				Output:    output,
-				Masters:   masters,
-				Volumes:   volumes,
-				Filers:    filers,
-				EnableTLS: enableTLS,
-				EnableS3:  enableS3,
-			})
+			return runTemplateGenerate(opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&templateType, "type", "t", "production", "template type [dev|testing|production|minimal]")
-	cmd.Flags().IntVarP(&nodes, "nodes", "n", 3, "total number of nodes")
-	cmd.Flags().StringVarP(&output, "output", "o", "cluster.yaml", "output file path")
-	cmd.Flags().IntVar(&masters, "masters", 0, "number of master servers (overrides template)")
-	cmd.Flags().IntVar(&volumes, "volumes", 0, "number of volume servers (overrides template)")
-	cmd.Flags().IntVar(&filers, "filers", 0, "number of filer servers (overrides template)")
-	cmd.Flags().BoolVar(&enableTLS, "enable-tls", false, "enable TLS encryption")
-	cmd.Flags().BoolVar(&enableS3, "enable-s3", false, "enable S3 gateway")
+	cmd.Flags().StringVarP(&opts.Type, "type", "t", "production", "template type [dev|testing|production|minimal]")
+	cmd.Flags().IntVarP(&opts.Nodes, "nodes", "n", 3, "total number of nodes")
+	cmd.Flags().StringVarP(&opts.Output, "output", "o", "cluster.yaml", "output file path")
+	cmd.Flags().IntVar(&opts.Masters, "masters", 0, "number of master servers (overrides template)")
+	cmd.Flags().IntVar(&opts.Volumes, "volumes", 0, "number of volume servers (overrides template)")
+	cmd.Flags().IntVar(&opts.Filers, "filers", 0, "number of filer servers (overrides template)")
+	cmd.Flags().BoolVar(&opts.EnableTLS, "enable-tls", false, "enable TLS encryption")
+	cmd.Flags().BoolVar(&opts.EnableS3, "enable-s3", false, "enable S3 gateway")
 	
 	return cmd
 }
 
 func newTemplateListCmd() *cobra.Command {
-	var (
-		verbose    bool
-		jsonOutput bool
-	)
+	opts := &TemplateListOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -109,24 +92,18 @@ and recommended use cases.`,
   seaweed-up template list --verbose`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTemplateList(&TemplateListOptions{
-				Verbose:    verbose,
-				JSONOutput: jsonOutput,
-			})
+			return runTemplateList(opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "show detailed information")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
+	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
 	
 	return cmd
 }
 
 func newTemplateValidateCmd() *cobra.Command {
-	var (
-		configFile string
-		strict     bool
-	)
+	opts := &TemplateValidateOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "validate",
@@ -146,15 +123,12 @@ Performs comprehensive validation including:
   seaweed-up template validate -f cluster.yaml --strict`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTemplateValidate(&TemplateValidateOptions{
-				ConfigFile: configFile,
-				Strict:     strict,
-			})
+			return runTemplateValidate(opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "configuration file to validate (required)")
-	cmd.Flags().BoolVar(&strict, "strict", false, "enable strict validation with all checks")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "configuration file to validate (required)")
+	cmd.Flags().BoolVar(&opts.Strict, "strict", false, "enable strict validation with all checks")
 	
 	cmd.MarkFlagRequired("file")
 	
@@ -162,11 +136,7 @@ Performs comprehensive validation including:
 }
 
 func newTemplateCreateCmd() *cobra.Command {
-	var (
-		name        string
-		description string
-		configFile  string
-	)
+	opts := &TemplateCreateOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "create <template-name>",
@@ -181,17 +151,13 @@ for future deployments.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTemplateCreate(args[0], &TemplateCreateOptions{
-				Name:        name,
-				Description: description,
-				ConfigFile:  configFile,
-			})
+			return runTemplateCreate(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVar(&name, "name", "", "template name")
-	cmd.Flags().StringVar(&description, "description", "", "template description")
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "source configuration file")
+	cmd.Flags().StringVar(&opts.Name, "name", "", "template name")
+	cmd.Flags().StringVar(&opts.Description, "description", "", "template description")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "source configuration file")
 	
 	cmd.MarkFlagRequired("file")
 	
