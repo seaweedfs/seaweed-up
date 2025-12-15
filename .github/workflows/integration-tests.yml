@@ -202,10 +202,9 @@ jobs:
           ../../seaweed-up cluster status test-single || true
           ../../seaweed-up cluster list || true
 
-      - name: Run Go integration tests
-        working-directory: .
-        run: |
-          go test -v -tags=integration -timeout=15m ./test/integration/... || true
+      # Note: Go integration tests are skipped in CI because they use docker-compose
+      # which conflicts with the network created by the shell-based tests above.
+      # The shell-based tests provide equivalent coverage.
 
       - name: Save logs
         if: always()
