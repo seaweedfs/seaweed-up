@@ -52,37 +52,45 @@ jobs:
         run: |
           docker compose up -d
           
-          # Wait for containers to be healthy (systemd running)
-          echo "Waiting for containers to be ready..."
-          for i in {1..90}; do
-            healthy_count=$(docker compose ps --format json | grep -c '"Health":"healthy"' || echo "0")
-            if [ "$healthy_count" -ge 3 ]; then
-              echo "All containers are healthy"
-              break
-            fi
-            if [ $i -eq 90 ]; then
-              echo "Timeout waiting for containers"
-              docker compose ps
-              docker compose logs
-              exit 1
-            fi
-            echo "Waiting for systemd... ($i/90, healthy: $healthy_count)"
-            sleep 2
+          # Wait for containers to start
+          echo "Waiting for containers to start..."
+          sleep 10
+          docker compose ps
+          
+          # Wait for systemd to be ready in each container
+          echo "Waiting for systemd to initialize..."
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Checking systemd on $host..."
+            for i in {1..60}; do
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Timeout waiting for systemd on $host"
+                docker logs $host
+                exit 1
+              fi
+              echo "Waiting for systemd on $host... ($i/60, state: $state)"
+              sleep 2
+            done
           done
 
       - name: Install SSH on containers
         run: |
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "Installing SSH on $host..."
-            docker exec $host bash -c "apt-get update && apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
             docker exec $host bash -c "mkdir -p /run/sshd"
             docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
             docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
             docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
-            echo "SSH installed on $host"
+            echo "SSH installed and started on $host"
           done
           
           # Wait for SSH to be ready
+          echo "Waiting for SSH to be ready..."
           sleep 5
           for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
             for j in {1..30}; do
@@ -203,27 +211,36 @@ jobs:
         run: |
           docker compose up -d
           
-          echo "Waiting for containers to be ready..."
-          for i in {1..90}; do
-            healthy_count=$(docker compose ps --format json | grep -c '"Health":"healthy"' || echo "0")
-            if [ "$healthy_count" -ge 3 ]; then
-              echo "All containers are healthy"
-              break
-            fi
-            if [ $i -eq 90 ]; then
-              echo "Timeout waiting for containers"
-              docker compose ps
-              exit 1
-            fi
-            echo "Waiting for systemd... ($i/90, healthy: $healthy_count)"
-            sleep 2
+          # Wait for containers to start
+          echo "Waiting for containers to start..."
+          sleep 10
+          docker compose ps
+          
+          # Wait for systemd to be ready in each container
+          echo "Waiting for systemd to initialize..."
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Checking systemd on $host..."
+            for i in {1..60}; do
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Timeout waiting for systemd on $host"
+                docker logs $host
+                exit 1
+              fi
+              echo "Waiting for systemd on $host... ($i/60, state: $state)"
+              sleep 2
+            done
           done
 
       - name: Install SSH on containers
         run: |
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "Installing SSH on $host..."
-            docker exec $host bash -c "apt-get update && apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
             docker exec $host bash -c "mkdir -p /run/sshd"
             docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
             docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"

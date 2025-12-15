@@ -22,12 +22,7 @@ services:
       - /run/lock
     environment:
       - container=docker
-    healthcheck:
-      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
-      interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 30s
+    stop_grace_period: 1s
 
   target-host-2:
     image: jrei/systemd-ubuntu:22.04
@@ -46,12 +41,7 @@ services:
       - /run/lock
     environment:
       - container=docker
-    healthcheck:
-      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
-      interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 30s
+    stop_grace_period: 1s
 
   target-host-3:
     image: jrei/systemd-ubuntu:22.04
@@ -70,12 +60,7 @@ services:
       - /run/lock
     environment:
       - container=docker
-    healthcheck:
-      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
-      interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 30s
+    stop_grace_period: 1s
 
 networks:
   seaweed-up-net:
