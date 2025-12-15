@@ -318,7 +318,7 @@ func (e *TestEnvironment) VerifyMasterRunning(host HostInfo, port int) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
@@ -329,7 +329,7 @@ func (e *TestEnvironment) VerifyVolumeRunning(host HostInfo, port int) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
@@ -340,7 +340,7 @@ func (e *TestEnvironment) VerifyFilerRunning(host HostInfo, port int) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
