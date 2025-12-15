@@ -17,23 +17,20 @@ linters:
     - unused
   settings:
     errcheck:
-      # Check for errors on type assertions
       check-type-assertions: false
-      # Check for errors on blank identifier assignments
       check-blank: false
-    exclusions:
-      rules:
-        # Ignore errors in defer statements (common pattern)
-        - linters:
-            - errcheck
-          source: "defer"
-        # Ignore test files for some linters
-        - path: _test\.go
-          linters:
-            - errcheck
+  exclusions:
+    rules:
+      # Ignore errors in defer statements (common pattern)
+      - linters:
+          - errcheck
+        source: "defer"
+      # Ignore test files for some linters
+      - path: _test\.go
+        linters:
+          - errcheck
 
 issues:
-  # Don't skip any issues
   max-issues-per-linter: 0
   max-same-issues: 0
 
