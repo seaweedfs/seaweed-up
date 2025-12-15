@@ -70,9 +70,19 @@ func (e *TestEnvironment) Setup() error {
 
 	e.dockerRunning = true
 
-	// Wait for all hosts to be ready
+	// Wait for systemd to be ready in containers
+	if err := e.waitForSystemd(); err != nil {
+		return fmt.Errorf("failed waiting for systemd: %w", err)
+	}
+
+	// Install SSH on containers
+	if err := e.installSSH(); err != nil {
+		return fmt.Errorf("failed to install SSH: %w", err)
+	}
+
+	// Wait for SSH to be ready
 	if err := e.waitForHosts(); err != nil {
-		return fmt.Errorf("failed waiting for hosts: %w", err)
+		return fmt.Errorf("failed waiting for SSH: %w", err)
 	}
 
 	// Setup SSH keys on hosts
@@ -104,6 +114,84 @@ func (e *TestEnvironment) Teardown() error {
 
 	e.dockerRunning = false
 	e.t.Log("Docker test environment cleaned up!")
+	return nil
+}
+
+// waitForSystemd waits for systemd to be running in all containers
+func (e *TestEnvironment) waitForSystemd() error {
+	e.t.Log("Waiting for systemd to be ready in containers...")
+
+	timeout := 180 * time.Second
+	interval := 3 * time.Second
+	deadline := time.Now().Add(timeout)
+
+	for _, host := range e.hosts {
+		containerName := fmt.Sprintf("seaweed-up-%s", host.Name)
+		for {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for systemd on %s", containerName)
+			}
+
+			cmd := exec.Command("docker", "exec", containerName, "systemctl", "is-system-running", "--quiet")
+			if err := cmd.Run(); err == nil {
+				e.t.Logf("Systemd ready on %s", containerName)
+				break
+			}
+
+			// Also accept "degraded" state (some services failed but systemd is running)
+			cmd = exec.Command("docker", "exec", containerName, "systemctl", "is-system-running")
+			output, _ := cmd.Output()
+			state := strings.TrimSpace(string(output))
+			if state == "running" || state == "degraded" {
+				e.t.Logf("Systemd ready on %s (state: %s)", containerName, state)
+				break
+			}
+
+			e.t.Logf("Waiting for systemd on %s (state: %s)...", containerName, state)
+			time.Sleep(interval)
+		}
+	}
+
+	return nil
+}
+
+// installSSH installs and configures SSH on all containers
+func (e *TestEnvironment) installSSH() error {
+	e.t.Log("Installing SSH on containers...")
+
+	for _, host := range e.hosts {
+		containerName := fmt.Sprintf("seaweed-up-%s", host.Name)
+		e.t.Logf("Installing SSH on %s...", containerName)
+
+		// Install SSH
+		cmd := exec.Command("docker", "exec", containerName, "bash", "-c",
+			"apt-get update && apt-get install -y openssh-server curl netcat-openbsd")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to install SSH on %s: %w", containerName, err)
+		}
+
+		// Configure SSH
+		commands := []string{
+			"mkdir -p /run/sshd",
+			"sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config",
+			"sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config",
+			"systemctl enable ssh && systemctl start ssh",
+		}
+
+		for _, cmdStr := range commands {
+			cmd := exec.Command("docker", "exec", containerName, "bash", "-c", cmdStr)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("failed to configure SSH on %s: %w", containerName, err)
+			}
+		}
+
+		e.t.Logf("SSH installed on %s", containerName)
+	}
+
+	// Give SSH a moment to fully start
+	time.Sleep(3 * time.Second)
 	return nil
 }
 

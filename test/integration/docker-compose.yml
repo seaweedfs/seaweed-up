@@ -1,10 +1,12 @@
 # Docker Compose for seaweed-up integration testing
 # This provides target VMs (containers) that seaweed-up can deploy to
+# Uses systemd-enabled containers for proper service management
+
 services:
 
-  # Target hosts for deployment - these simulate remote servers
+  # Target hosts for deployment - these simulate remote servers with systemd
   target-host-1:
-    image: ubuntu:22.04
+    image: jrei/systemd-ubuntu:22.04
     hostname: host1
     container_name: seaweed-up-host1
     privileged: true
@@ -15,26 +17,20 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host1-data:/opt/seaweed
       - host1-conf:/etc/seaweed
+    tmpfs:
+      - /run
+      - /run/lock
     environment:
       - container=docker
-    command: >
-      bash -c "
-        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
-        mkdir -p /run/sshd &&
-        echo 'root:testpassword' | chpasswd &&
-        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
-        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
-        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
-        /usr/sbin/sshd -D
-      "
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
       interval: 5s
-      timeout: 5s
+      timeout: 10s
       retries: 30
+      start_period: 30s
 
   target-host-2:
-    image: ubuntu:22.04
+    image: jrei/systemd-ubuntu:22.04
     hostname: host2
     container_name: seaweed-up-host2
     privileged: true
@@ -45,26 +41,20 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host2-data:/opt/seaweed
       - host2-conf:/etc/seaweed
+    tmpfs:
+      - /run
+      - /run/lock
     environment:
       - container=docker
-    command: >
-      bash -c "
-        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
-        mkdir -p /run/sshd &&
-        echo 'root:testpassword' | chpasswd &&
-        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
-        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
-        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
-        /usr/sbin/sshd -D
-      "
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
       interval: 5s
-      timeout: 5s
+      timeout: 10s
       retries: 30
+      start_period: 30s
 
   target-host-3:
-    image: ubuntu:22.04
+    image: jrei/systemd-ubuntu:22.04
     hostname: host3
     container_name: seaweed-up-host3
     privileged: true
@@ -75,23 +65,17 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host3-data:/opt/seaweed
       - host3-conf:/etc/seaweed
+    tmpfs:
+      - /run
+      - /run/lock
     environment:
       - container=docker
-    command: >
-      bash -c "
-        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
-        mkdir -p /run/sshd &&
-        echo 'root:testpassword' | chpasswd &&
-        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
-        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
-        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
-        /usr/sbin/sshd -D
-      "
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      test: ["CMD", "systemctl", "is-system-running", "--quiet"]
       interval: 5s
-      timeout: 5s
+      timeout: 10s
       retries: 30
+      start_period: 30s
 
 networks:
   seaweed-up-net:
@@ -107,4 +91,3 @@ volumes:
   host2-conf:
   host3-data:
   host3-conf:
-

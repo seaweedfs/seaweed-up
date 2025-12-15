@@ -52,21 +52,50 @@ jobs:
         run: |
           docker compose up -d
           
-          # Wait for containers to be healthy
+          # Wait for containers to be healthy (systemd running)
           echo "Waiting for containers to be ready..."
-          for i in {1..60}; do
-            if docker compose ps | grep -q "healthy"; then
-              echo "Containers are healthy"
+          for i in {1..90}; do
+            healthy_count=$(docker compose ps --format json | grep -c '"Health":"healthy"' || echo "0")
+            if [ "$healthy_count" -ge 3 ]; then
+              echo "All containers are healthy"
               break
             fi
-            if [ $i -eq 60 ]; then
+            if [ $i -eq 90 ]; then
               echo "Timeout waiting for containers"
               docker compose ps
               docker compose logs
               exit 1
             fi
-            echo "Waiting... ($i/60)"
+            echo "Waiting for systemd... ($i/90, healthy: $healthy_count)"
             sleep 2
+          done
+
+      - name: Install SSH on containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Installing SSH on $host..."
+            docker exec $host bash -c "apt-get update && apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+            echo "SSH installed on $host"
+          done
+          
+          # Wait for SSH to be ready
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                echo "SSH ready on $ip"
+                break
+              fi
+              if [ $j -eq 30 ]; then
+                echo "SSH not ready on $ip after 30 attempts"
+                exit 1
+              fi
+              sleep 1
+            done
           done
 
       - name: Setup SSH keys
@@ -175,16 +204,41 @@ jobs:
           docker compose up -d
           
           echo "Waiting for containers to be ready..."
-          for i in {1..60}; do
-            if docker compose ps | grep -q "healthy"; then
-              echo "Containers are healthy"
+          for i in {1..90}; do
+            healthy_count=$(docker compose ps --format json | grep -c '"Health":"healthy"' || echo "0")
+            if [ "$healthy_count" -ge 3 ]; then
+              echo "All containers are healthy"
               break
             fi
-            if [ $i -eq 60 ]; then
+            if [ $i -eq 90 ]; then
               echo "Timeout waiting for containers"
+              docker compose ps
               exit 1
             fi
+            echo "Waiting for systemd... ($i/90, healthy: $healthy_count)"
             sleep 2
+          done
+
+      - name: Install SSH on containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "Installing SSH on $host..."
+            docker exec $host bash -c "apt-get update && apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+          done
+          
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                echo "SSH ready on $ip"
+                break
+              fi
+              sleep 1
+            done
           done
 
       - name: Setup SSH keys
