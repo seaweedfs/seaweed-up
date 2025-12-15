@@ -407,6 +407,16 @@ jobs:
             docker exec $host journalctl -u 'seaweed*' --no-pager -n 30 2>&1 || true
           done
           
+          # Show what ports are listening on each host
+          echo "=== Checking listening ports ==="
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "--- $host listening ports ---"
+            docker exec $host ss -tlnp 2>&1 | grep -E '(8080|8888|9333|LISTEN)' || echo "No relevant ports"
+          done
+          
+          # Give services a moment to bind ports
+          sleep 5
+          
           # Verify services - fail if any service is not running
           echo "=== Verifying services ==="
           FAILED=0
