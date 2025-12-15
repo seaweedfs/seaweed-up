@@ -38,7 +38,7 @@ func TestDeploySingleNode(t *testing.T) {
 			"-f", configFile,
 			"-u", "root",
 			"--identity", sshKey,
-			"--skip-confirm",
+			"--yes",
 		)
 
 		if err != nil {
@@ -121,7 +121,7 @@ func TestDeployMultiNode(t *testing.T) {
 			"-f", configFile,
 			"-u", "root",
 			"--identity", sshKey,
-			"--skip-confirm",
+			"--yes",
 		)
 
 		if err != nil {
@@ -205,7 +205,7 @@ func TestClusterDestroy(t *testing.T) {
 		"-f", configFile,
 		"-u", "root",
 		"--identity", sshKey,
-		"--skip-confirm",
+		"--yes",
 	)
 	if err != nil {
 		t.Logf("Deploy output: %s", output)

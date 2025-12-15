@@ -120,7 +120,7 @@ make build
   -f testdata/cluster-single.yaml \
   -u root \
   --identity .ssh/id_rsa_test \
-  --skip-confirm
+  --yes
 
 # Clean up when done
 make clean

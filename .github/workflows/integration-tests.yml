@@ -101,7 +101,7 @@ jobs:
             -f testdata/cluster-single.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
-            --skip-confirm
+            --yes
           
           # Wait for services to start
           sleep 15
@@ -210,7 +210,7 @@ jobs:
             -f testdata/cluster-multi.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
-            --skip-confirm
+            --yes
           
           sleep 15
           
