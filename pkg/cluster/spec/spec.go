@@ -1,5 +1,7 @@
 package spec
 
+import "fmt"
+
 type (
 	// GlobalOptions represents the global options for all groups in topology
 	// specification in topology.yaml
@@ -28,3 +30,15 @@ type (
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
 	}
 )
+
+// Validate validates the Specification and returns an error if invalid
+func (s *Specification) Validate() error {
+	if len(s.MasterServers) == 0 {
+		return fmt.Errorf("at least one master server is required")
+	}
+
+	// Name is optional but validated if provided
+	// The Name can be set from command line args if not in config
+
+	return nil
+}

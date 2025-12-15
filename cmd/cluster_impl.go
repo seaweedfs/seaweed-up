@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -153,23 +155,40 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 }
 
 func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
-	// Handle auto-refresh mode
+	// Handle auto-refresh mode with proper signal handling
 	if opts.Refresh > 0 {
 		ticker := time.NewTicker(time.Duration(opts.Refresh) * time.Second)
 		defer ticker.Stop()
-		
+
+		// Set up signal handling for graceful shutdown
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigChan)
+
+		// Show initial status
+		clearScreen()
+		if err := displayClusterStatus(args, opts); err != nil {
+			return err
+		}
+		color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+
 		for {
-			// Clear screen using cross-platform method
-			clearScreen()
-			
-			// Show status (with refresh disabled to avoid recursion)
-			displayClusterStatus(args, opts)
-			
-			color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
-			<-ticker.C
+			select {
+			case <-sigChan:
+				// Graceful shutdown on interrupt
+				fmt.Println()
+				color.Yellow("⏹️  Refresh stopped by user")
+				return nil
+			case <-ticker.C:
+				clearScreen()
+				if err := displayClusterStatus(args, opts); err != nil {
+					return err
+				}
+				color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+			}
 		}
 	}
-	
+
 	return displayClusterStatus(args, opts)
 }
 
@@ -283,16 +302,21 @@ func loadClusterSpec(configFile string) (*spec.Specification, error) {
 	if configFile == "" {
 		return nil, fmt.Errorf("configuration file is required")
 	}
-	
+
 	data, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", configFile, err)
 	}
-	
+
 	clusterSpec := &spec.Specification{}
 	if err := yaml.Unmarshal(data, clusterSpec); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", configFile, err)
 	}
-	
+
+	// Validate the specification
+	if err := clusterSpec.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid cluster specification: %w", err)
+	}
+
 	return clusterSpec, nil
 }

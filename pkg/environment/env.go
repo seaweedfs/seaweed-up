@@ -3,6 +3,7 @@ package environment
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/seaweedfs/seaweed-up/pkg/errors"
@@ -21,39 +22,45 @@ type Environment struct {
 // Note: Using a global variable simplifies CLI command access but introduces
 // global state. For a CLI tool this is acceptable, but for better testability
 // consider passing Environment explicitly via dependency injection in the future.
-var globalEnv *Environment
+var (
+	globalEnv     *Environment
+	globalEnvOnce sync.Once
+	globalEnvErr  error
+)
 
-// InitGlobalEnv initializes the global environment
+// InitGlobalEnv initializes the global environment in a thread-safe manner.
+// It uses sync.Once to ensure initialization happens exactly once,
+// even if called concurrently from multiple goroutines.
 func InitGlobalEnv() error {
-	if globalEnv != nil {
-		return nil // Already initialized
-	}
-	
-	homeDir, err := homedir.Dir()
-	if err != nil {
-		return errors.NewEnvironmentError("default", "init", err)
-	}
-	
-	seaweedUpHome := filepath.Join(homeDir, ".seaweed-up")
-	
-	env := &Environment{
-		HomeDir:     homeDir,
-		ConfigDir:   filepath.Join(seaweedUpHome, "config"),
-		DataDir:     filepath.Join(seaweedUpHome, "data"),
-		CacheDir:    filepath.Join(seaweedUpHome, "cache"),
-		ProfileName: "default",
-	}
-	
-	// Create directories if they don't exist
-	dirs := []string{env.ConfigDir, env.DataDir, env.CacheDir}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return errors.NewEnvironmentError("default", "create_directories", err)
+	globalEnvOnce.Do(func() {
+		homeDir, err := homedir.Dir()
+		if err != nil {
+			globalEnvErr = errors.NewEnvironmentError("default", "init", err)
+			return
 		}
-	}
-	
-	globalEnv = env
-	return nil
+
+		seaweedUpHome := filepath.Join(homeDir, ".seaweed-up")
+
+		env := &Environment{
+			HomeDir:     homeDir,
+			ConfigDir:   filepath.Join(seaweedUpHome, "config"),
+			DataDir:     filepath.Join(seaweedUpHome, "data"),
+			CacheDir:    filepath.Join(seaweedUpHome, "cache"),
+			ProfileName: "default",
+		}
+
+		// Create directories if they don't exist
+		dirs := []string{env.ConfigDir, env.DataDir, env.CacheDir}
+		for _, dir := range dirs {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				globalEnvErr = errors.NewEnvironmentError("default", "create_directories", err)
+				return
+			}
+		}
+
+		globalEnv = env
+	})
+	return globalEnvErr
 }
 
 // GlobalEnv returns the global environment instance
