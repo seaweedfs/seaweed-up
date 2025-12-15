@@ -408,12 +408,19 @@ jobs:
             docker exec $host journalctl -u 'seaweed*' --no-pager -n 30 2>&1 || true
           done
           
-          # Verify services
+          # Verify services - fail if any service is not running
           echo "=== Verifying services ==="
-          nc -z 172.28.0.10 9333 && echo "Master verified on 172.28.0.10:9333" || echo "Master NOT running"
-          nc -z 172.28.0.11 8382 && echo "Volume1 verified on 172.28.0.11:8382" || echo "Volume1 NOT running"
-          nc -z 172.28.0.12 8382 && echo "Volume2 verified on 172.28.0.12:8382" || echo "Volume2 NOT running"
-          nc -z 172.28.0.10 8888 && echo "Filer verified on 172.28.0.10:8888" || echo "Filer NOT running"
+          FAILED=0
+          nc -z 172.28.0.10 9333 && echo "Master verified on 172.28.0.10:9333" || { echo "Master NOT running"; FAILED=1; }
+          nc -z 172.28.0.11 8382 && echo "Volume1 verified on 172.28.0.11:8382" || { echo "Volume1 NOT running"; FAILED=1; }
+          nc -z 172.28.0.12 8382 && echo "Volume2 verified on 172.28.0.12:8382" || { echo "Volume2 NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 8888 && echo "Filer verified on 172.28.0.10:8888" || { echo "Filer NOT running"; FAILED=1; }
+          
+          if [ $FAILED -eq 1 ]; then
+            echo "Some services failed to start"
+            exit 1
+          fi
+          echo "All services verified running!"
 
       - name: List clusters
         working-directory: test/integration
