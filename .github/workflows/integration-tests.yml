@@ -55,13 +55,36 @@ jobs:
           # Wait for containers to start
           echo "Waiting for containers to start..."
           sleep 10
-          docker compose ps
+          
+          echo "=== Container Status ==="
+          docker compose ps -a
+          
+          # Check if containers are running
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+            echo "Container $host status: $status"
+            if [ "$status" != "running" ]; then
+              echo "=== Logs for $host ==="
+              docker logs $host 2>&1 || true
+              echo "=== Inspect $host ==="
+              docker inspect $host 2>&1 | head -50 || true
+            fi
+          done
           
           # Wait for systemd to be ready in each container
           echo "Waiting for systemd to initialize..."
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "Checking systemd on $host..."
             for i in {1..60}; do
+              # First check if container is running
+              status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+              if [ "$status" != "running" ]; then
+                echo "Container $host is not running (status: $status)"
+                echo "=== Container logs ==="
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              
               state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
               if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
                 echo "Systemd ready on $host (state: $state)"
@@ -69,7 +92,12 @@ jobs:
               fi
               if [ $i -eq 60 ]; then
                 echo "Timeout waiting for systemd on $host"
-                docker logs $host
+                echo "=== Container logs ==="
+                docker logs $host 2>&1 || true
+                echo "=== Systemd status ==="
+                docker exec $host systemctl status 2>&1 || true
+                echo "=== Journal ==="
+                docker exec $host journalctl -xe --no-pager 2>&1 | tail -100 || true
                 exit 1
               fi
               echo "Waiting for systemd on $host... ($i/60, state: $state)"
@@ -214,13 +242,32 @@ jobs:
           # Wait for containers to start
           echo "Waiting for containers to start..."
           sleep 10
-          docker compose ps
+          
+          echo "=== Container Status ==="
+          docker compose ps -a
+          
+          # Check if containers are running
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+            echo "Container $host status: $status"
+            if [ "$status" != "running" ]; then
+              echo "=== Logs for $host ==="
+              docker logs $host 2>&1 || true
+            fi
+          done
           
           # Wait for systemd to be ready in each container
           echo "Waiting for systemd to initialize..."
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "Checking systemd on $host..."
             for i in {1..60}; do
+              status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+              if [ "$status" != "running" ]; then
+                echo "Container $host is not running (status: $status)"
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              
               state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
               if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
                 echo "Systemd ready on $host (state: $state)"
@@ -228,7 +275,8 @@ jobs:
               fi
               if [ $i -eq 60 ]; then
                 echo "Timeout waiting for systemd on $host"
-                docker logs $host
+                docker logs $host 2>&1 || true
+                docker exec $host journalctl -xe --no-pager 2>&1 | tail -100 || true
                 exit 1
               fi
               echo "Waiting for systemd on $host... ($i/60, state: $state)"
