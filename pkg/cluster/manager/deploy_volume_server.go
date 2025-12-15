@@ -81,7 +81,7 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	// remove disks already has partitions
 	for _, dev := range devices {
 		if dev.Type == "part" {
-			for parentPath, _ := range disks {
+			for parentPath := range disks {
 				if strings.HasPrefix(dev.Path, parentPath) {
 					// the disk is already partitioned
 					delete(disks, parentPath)

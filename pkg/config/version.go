@@ -10,16 +10,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/cheggaaa/pb/v3"
-	"golang.org/x/net/context/ctxhttp"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cheggaaa/pb/v3"
+	"golang.org/x/net/context/ctxhttp"
 )
 
 // Release collects data about a single release on GitHub.
@@ -83,7 +83,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 		return Release{}, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
-	buf, err := ioutil.ReadAll(res.Body)
+	buf, err := io.ReadAll(res.Body)
 	if err != nil {
 		return Release{}, err
 	}
@@ -187,7 +187,7 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	readerCloser := withProgressBar(res.Body, int(res.ContentLength))
 	defer readerCloser.Close()
 
-	buf, err := ioutil.ReadAll(readerCloser)
+	buf, err := io.ReadAll(readerCloser)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func extractToFile(buf []byte, filename, target string) error {
 
 	// Write everything to a temp file
 	dir := filepath.Dir(target)
-	new, err := ioutil.TempFile(dir, "weed")
+	new, err := os.CreateTemp(dir, "weed")
 	if err != nil {
 		return err
 	}

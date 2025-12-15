@@ -1,5 +1,7 @@
 package spec
 
+import "fmt"
+
 type (
 	// GlobalOptions represents the global options for all groups in topology
 	// specification in topology.yaml
@@ -19,6 +21,7 @@ type (
 	}
 
 	Specification struct {
+		Name          string              `yaml:"cluster_name,omitempty"`
 		GlobalOptions GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
 		ServerConfigs ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
 		MasterServers []*MasterServerSpec `yaml:"master_servers"`
@@ -27,3 +30,15 @@ type (
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
 	}
 )
+
+// Validate validates the Specification and returns an error if invalid
+func (s *Specification) Validate() error {
+	if len(s.MasterServers) == 0 {
+		return fmt.Errorf("at least one master server is required")
+	}
+
+	// Name is optional but validated if provided
+	// The Name can be set from command line args if not in config
+
+	return nil
+}

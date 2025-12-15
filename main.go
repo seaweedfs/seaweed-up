@@ -4,48 +4,76 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fatih/color"
 	"github.com/seaweedfs/seaweed-up/cmd"
-	"github.com/seaweedfs/seaweed-up/pkg/operator"
+	"github.com/seaweedfs/seaweed-up/pkg/errors"
 )
 
 func main() {
 	if err := cmd.Execute(); err != nil {
-
-		switch err.(type) {
-		case *operator.TargetConnectError:
-			fmt.Printf(targetConnectErrorMessage, err)
-		case *operator.SshAgentError:
-			fmt.Printf(sshAgentErrorMessage, err)
-		default:
-			fmt.Println(err)
-		}
-
+		handleError(err)
 		os.Exit(1)
 	}
 }
 
-const sshAgentErrorMessage = `
-There was an issue finding a private key. 
-This could happen when seaweed-up can not reach an authentication agent or when no private key is loaded.
+func handleError(err error) {
+	// Enhanced error handling with structured error types
+	switch e := err.(type) {
+	case *errors.SSHConnectionError:
+		handleSSHError(e)
+	case *errors.ClusterOperationError:
+		handleClusterError(e)
+	case *errors.ComponentError:
+		handleComponentError(e)
+	default:
+		// Generic error handling
+		color.Red("❌ Error: %v", err)
+	}
+}
 
-Reason: %s
+func handleSSHError(err *errors.SSHConnectionError) {
+	color.Red("🔐 SSH Connection Failed")
+	fmt.Printf("Host: %s:%d\n", err.Host, err.Port)
+	fmt.Printf("User: %s\n", err.User)
+	fmt.Printf("Error: %s\n", err.Message)
+	fmt.Println()
+	
+	color.Yellow("💡 Suggestions:")
+	fmt.Println("- Verify the host is reachable: ping", err.Host)
+	fmt.Println("- Check SSH service is running on target host")
+	fmt.Println("- Verify SSH key permissions (should be 600)")
+	fmt.Println("- Test connection manually: ssh", fmt.Sprintf("%s@%s", err.User, err.Host))
+	fmt.Println("- Check SSH agent: ssh-add -l")
+}
 
-How to fix this?
+func handleClusterError(err *errors.ClusterOperationError) {
+	color.Red("🏗️  Cluster Operation Failed")
+	fmt.Printf("Operation: %s\n", err.Operation)
+	fmt.Printf("Cluster: %s\n", err.ClusterName)
+	if err.Node != "" {
+		fmt.Printf("Node: %s\n", err.Node)
+	}
+	fmt.Printf("Error: %s\n", err.Message)
+	fmt.Println()
+	
+	color.Yellow("💡 Suggestions:")
+	fmt.Println("- Check cluster status: seaweed-up cluster status", err.ClusterName)
+	fmt.Println("- Review cluster configuration file")
+	fmt.Println("- Verify all nodes are accessible")
+}
 
-- check if an authentication agent is running and add a private key, e.g. 'ssh-add ~/.ssh/id_rsa'
-- or add the '--ssh-target-key' flag to use a specific key, e.g. '--ssh-target-key ~/.ssh/id_rsa'
-
-`
-
-const targetConnectErrorMessage = `
-There was an issue connecting to your target host. 
-This could happen when seaweed-up can not reach the target host or when the private key authentication is invalid.
-
-Reason: %s
-
-How to fix this?
-
-- check if the target host is reachable and an SSH server is running
-- check if the user and the private key are valid
-
-`
+func handleComponentError(err *errors.ComponentError) {
+	color.Red("📦 Component Error")
+	fmt.Printf("Component: %s\n", err.Component)
+	if err.Version != "" {
+		fmt.Printf("Version: %s\n", err.Version)
+	}
+	fmt.Printf("Action: %s\n", err.Action)
+	fmt.Printf("Error: %s\n", err.Message)
+	fmt.Println()
+	
+	color.Yellow("💡 Suggestions:")
+	fmt.Println("- List available components: seaweed-up component list")
+	fmt.Println("- Check component status: seaweed-up component list --installed")
+	fmt.Println("- Try with a different version")
+}

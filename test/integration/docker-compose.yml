@@ -1,0 +1,60 @@
+# Docker Compose for seaweed-up integration testing
+# This provides target VMs (containers) that seaweed-up can deploy to
+# Uses geerlingguy's Ansible-compatible images with systemd
+
+services:
+
+  # Target hosts for deployment - these simulate remote servers with systemd
+  target-host-1:
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
+    hostname: host1
+    container_name: seaweed-up-host1
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.10
+    volumes:
+      - host1-data:/opt/seaweed
+      - host1-conf:/etc/seaweed
+    stop_grace_period: 1s
+
+  target-host-2:
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
+    hostname: host2
+    container_name: seaweed-up-host2
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.11
+    volumes:
+      - host2-data:/opt/seaweed
+      - host2-conf:/etc/seaweed
+    stop_grace_period: 1s
+
+  target-host-3:
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
+    hostname: host3
+    container_name: seaweed-up-host3
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.12
+    volumes:
+      - host3-data:/opt/seaweed
+      - host3-conf:/etc/seaweed
+    stop_grace_period: 1s
+
+networks:
+  seaweed-up-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  host1-data:
+  host1-conf:
+  host2-data:
+  host2-conf:
+  host3-data:
+  host3-conf:

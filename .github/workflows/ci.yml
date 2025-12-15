@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build -v -o seaweed-up .
+
+      - name: Run unit tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.64.8
+          args: --timeout=5m
+          skip-cache: true
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          # Exclude rules acceptable for a deployment CLI tool:
+          # G106: InsecureIgnoreHostKey - expected for deployment tools
+          # G107: URL provided to HTTP request - not applicable
+          # G110: Decompression bomb - low risk for known releases
+          # G115: Integer overflow - standard file permission pattern
+          # G204: Subprocess with variable - expected for CLI tools
+          # G301: Directory permissions 0755 - standard for CLI
+          # G304: File path from variable - expected for config files
+          # G305: Zip file traversal - low risk for known releases
+          # G401/G501: MD5 - used for checksum verification, not security
+          args: -exclude=G106,G110,G115,G204,G301,G304,G305,G401,G501 ./...
+

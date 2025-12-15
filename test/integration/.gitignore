@@ -1,0 +1,7 @@
+# Generated SSH keys
+.ssh/
+
+# Test artifacts
+*.log
+*.tmp
+
