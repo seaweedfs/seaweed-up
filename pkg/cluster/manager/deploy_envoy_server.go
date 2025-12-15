@@ -65,16 +65,14 @@ func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component str
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
 
-	defer op.Execute("rm -rf " + dir)
+	defer func() { _ = op.Execute("rm -rf " + dir) }()
 
 	err := op.Execute("mkdir -p " + dir + "/config")
 	if err != nil {
 		return fmt.Errorf("error received during installation: %s", err)
 	}
 
-	if strings.HasPrefix(envoySpec.Version, "v") {
-		envoySpec.Version = envoySpec.Version[1:]
-	}
+	envoySpec.Version = strings.TrimPrefix(envoySpec.Version, "v")
 
 	data := map[string]interface{}{
 		"Component":         component,

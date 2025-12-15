@@ -79,8 +79,8 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
-	cmd.MarkFlagRequired("file")
-	
+	_ = cmd.MarkFlagRequired("file")
+
 	return cmd
 }
 
@@ -159,8 +159,8 @@ This command safely upgrades cluster components with minimal downtime:
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
 	
-	cmd.MarkFlagRequired("version")
-	
+	_ = cmd.MarkFlagRequired("version")
+
 	return cmd
 }
 

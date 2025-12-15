@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -13,7 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 type CommandRes struct {
@@ -57,7 +56,7 @@ func ExecuteRemote(host string, user string, privateKey string, password string,
 
 		method = ssh.PublicKeysCallback(client.Signers)
 	} else {
-		buffer, err := ioutil.ReadFile(expandPath(privateKey))
+		buffer, err := os.ReadFile(expandPath(privateKey))
 		if err != nil {
 			return errors.Wrapf(err, "unable to parse private key: %s", privateKey)
 		}
@@ -70,14 +69,14 @@ func ExecuteRemote(host string, user string, privateKey string, password string,
 			}
 
 			sshAgent, closeAgent := privateKeyUsingSSHAgent(privateKey + ".pub")
-			defer closeAgent()
+			defer func() { _ = closeAgent() }()
 
 			if sshAgent != nil {
 				method = sshAgent
 			} else {
 				fmt.Printf("Enter passphrase for '%s': ", privateKey)
 				STDIN := int(os.Stdin.Fd())
-				bytePassword, _ := terminal.ReadPassword(STDIN)
+				bytePassword, _ := term.ReadPassword(STDIN)
 				fmt.Println()
 
 				key, err = ssh.ParsePrivateKeyWithPassphrase(buffer, bytePassword)
@@ -103,7 +102,7 @@ func privateKeyUsingSSHAgent(publicKeyPath string) (ssh.AuthMethod, func() error
 			return nil, sshAgentConn.Close
 		}
 
-		pubkey, err := ioutil.ReadFile(expandPath(publicKeyPath))
+		pubkey, err := os.ReadFile(expandPath(publicKeyPath))
 		if err != nil {
 			return nil, sshAgentConn.Close
 		}
@@ -154,6 +153,9 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 }
 
 func expandPath(path string) string {
-	res, _ := homedir.Expand(path)
+	res, err := homedir.Expand(path)
+	if err != nil {
+		return path
+	}
 	return res
 }

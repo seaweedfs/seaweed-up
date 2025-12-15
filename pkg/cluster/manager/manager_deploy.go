@@ -108,7 +108,7 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
 
-	defer op.Execute("rm -rf " + dir)
+	defer func() { _ = op.Execute("rm -rf " + dir) }()
 
 	err := op.Execute("mkdir -p " + dir + "/config")
 	if err != nil {

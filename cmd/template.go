@@ -130,8 +130,8 @@ Performs comprehensive validation including:
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "configuration file to validate (required)")
 	cmd.Flags().BoolVar(&opts.Strict, "strict", false, "enable strict validation with all checks")
 	
-	cmd.MarkFlagRequired("file")
-	
+	_ = cmd.MarkFlagRequired("file")
+
 	return cmd
 }
 
@@ -159,8 +159,8 @@ for future deployments.`,
 	cmd.Flags().StringVar(&opts.Description, "description", "", "template description")
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "source configuration file")
 	
-	cmd.MarkFlagRequired("file")
-	
+	_ = cmd.MarkFlagRequired("file")
+
 	return cmd
 }
 
