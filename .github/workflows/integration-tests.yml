@@ -225,7 +225,7 @@ jobs:
 
       - name: Archive logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: integration-test-logs
           path: test/integration/docker-compose.log
@@ -457,7 +457,7 @@ jobs:
 
       - name: Upload logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: multi-node-test-logs
           path: test/integration/multi-node.log
