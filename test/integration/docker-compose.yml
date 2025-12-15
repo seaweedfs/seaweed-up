@@ -1,0 +1,110 @@
+# Docker Compose for seaweed-up integration testing
+# This provides target VMs (containers) that seaweed-up can deploy to
+services:
+
+  # Target hosts for deployment - these simulate remote servers
+  target-host-1:
+    image: ubuntu:22.04
+    hostname: host1
+    container_name: seaweed-up-host1
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.10
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - host1-data:/opt/seaweed
+      - host1-conf:/etc/seaweed
+    environment:
+      - container=docker
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
+        mkdir -p /run/sshd &&
+        echo 'root:testpassword' | chpasswd &&
+        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
+        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
+        /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  target-host-2:
+    image: ubuntu:22.04
+    hostname: host2
+    container_name: seaweed-up-host2
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.11
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - host2-data:/opt/seaweed
+      - host2-conf:/etc/seaweed
+    environment:
+      - container=docker
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
+        mkdir -p /run/sshd &&
+        echo 'root:testpassword' | chpasswd &&
+        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
+        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
+        /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  target-host-3:
+    image: ubuntu:22.04
+    hostname: host3
+    container_name: seaweed-up-host3
+    privileged: true
+    networks:
+      seaweed-up-net:
+        ipv4_address: 172.28.0.12
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - host3-data:/opt/seaweed
+      - host3-conf:/etc/seaweed
+    environment:
+      - container=docker
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y openssh-server sudo curl netcat-openbsd systemctl &&
+        mkdir -p /run/sshd &&
+        echo 'root:testpassword' | chpasswd &&
+        sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config &&
+        sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config &&
+        mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
+        /usr/sbin/sshd -D
+      "
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+networks:
+  seaweed-up-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  host1-data:
+  host1-conf:
+  host2-data:
+  host2-conf:
+  host3-data:
+  host3-conf:
+
