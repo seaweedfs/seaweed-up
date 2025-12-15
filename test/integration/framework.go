@@ -211,7 +211,7 @@ func (e *TestEnvironment) waitForHosts() error {
 
 			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host.IP, host.Port), 5*time.Second)
 			if err == nil {
-				conn.Close()
+				_ = conn.Close()
 				e.t.Logf("Host %s (%s) is ready", host.Name, host.IP)
 				break
 			}
