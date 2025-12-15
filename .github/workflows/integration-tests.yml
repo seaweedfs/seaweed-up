@@ -394,13 +394,18 @@ jobs:
           # Debug: show systemd service status on each host
           echo "=== Debugging service status ==="
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
-            echo "--- $host ---"
+            echo ""
+            echo "========== $host =========="
+            echo "IP address:"
+            docker exec $host hostname -I 2>&1 || true
             echo "Binary check:"
-            docker exec $host ls -la /usr/local/bin/weed 2>&1 || echo "weed binary not found"
+            docker exec $host ls -la /usr/local/bin/weed 2>&1 || echo "weed binary NOT FOUND"
+            echo ""
             echo "Systemd services:"
-            docker exec $host systemctl list-units 'seaweed*' --no-pager 2>&1 || true
-            echo "Service status:"
-            docker exec $host systemctl status 'seaweed*' --no-pager 2>&1 || true
+            docker exec $host systemctl list-units 'seaweed*' --all --no-pager 2>&1 || true
+            echo ""
+            echo "Journal logs for seaweed services:"
+            docker exec $host journalctl -u 'seaweed*' --no-pager -n 30 2>&1 || true
           done
           
           # Verify services
