@@ -40,8 +40,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/VividCortex/ewma v1.1.1 h1:MnEK4VOv6n0RSY4vtRe3h11qjxL3+t0B8yOL8iMXdcM=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
-github.com/alexellis/go-execute v0.5.0 h1:L8kgNlFzNbJov7jrInlaig7i6ZUSz/tYYmqvb8dyD0s=
-github.com/alexellis/go-execute v0.5.0/go.mod h1:AgHTcsCF9wrP0mMVTO8N+lFw1Biy71NybBOk8M+qgy8=
+github.com/alexellis/go-execute v0.6.0 h1:FVGoudJnWSObwf9qmehbvVuvhK6g1UpKOCBjS+OUXEA=
+github.com/alexellis/go-execute v0.6.0/go.mod h1:nlg2F6XdYydUm1xXQMMiuibQCV1mveybBkNWfdNznjk=
 github.com/bramvdbogaerde/go-scp v1.6.0 h1:lDh0lUuz1dbIhJqlKLwWT7tzIRONCp1Mtx3pgQVaLQo=
 github.com/bramvdbogaerde/go-scp v1.6.0/go.mod h1:on2aH5AxaFb2G0N5Vsdy6B0Ml7k9HuHSwfo1y0QzAbQ=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
