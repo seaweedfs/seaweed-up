@@ -10,7 +10,6 @@ services:
     hostname: host1
     container_name: seaweed-up-host1
     privileged: true
-    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.10
@@ -29,7 +28,6 @@ services:
     hostname: host2
     container_name: seaweed-up-host2
     privileged: true
-    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.11
@@ -48,7 +46,6 @@ services:
     hostname: host3
     container_name: seaweed-up-host3
     privileged: true
-    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.12
