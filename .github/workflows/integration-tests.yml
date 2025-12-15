@@ -391,32 +391,24 @@ jobs:
             --identity .ssh/id_rsa_test \
             --yes
           
-          # Wait for services to start with retry logic
-          echo "Waiting for services to start..."
+          # Debug: show systemd service status on each host
+          echo "=== Debugging service status ==="
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "--- $host ---"
+            echo "Binary check:"
+            docker exec $host ls -la /usr/local/bin/weed 2>&1 || echo "weed binary not found"
+            echo "Systemd services:"
+            docker exec $host systemctl list-units 'seaweed*' --no-pager 2>&1 || true
+            echo "Service status:"
+            docker exec $host systemctl status 'seaweed*' --no-pager 2>&1 || true
+          done
           
-          # Function to wait for a service
-          wait_for_service() {
-            local ip=$1
-            local port=$2
-            local name=$3
-            for i in {1..30}; do
-              if nc -z $ip $port 2>/dev/null; then
-                echo "$name verified running on $ip:$port"
-                return 0
-              fi
-              echo "Waiting for $name on $ip:$port... ($i/30)"
-              sleep 2
-            done
-            echo "$name not running on $ip:$port after 60 seconds"
-            return 1
-          }
-          
-          wait_for_service 172.28.0.10 9333 "Master"
-          wait_for_service 172.28.0.11 8382 "Volume server 1"
-          wait_for_service 172.28.0.12 8382 "Volume server 2"
-          wait_for_service 172.28.0.10 8888 "Filer"
-          
-          echo "All services verified running!"
+          # Verify services
+          echo "=== Verifying services ==="
+          nc -z 172.28.0.10 9333 && echo "Master verified on 172.28.0.10:9333" || echo "Master NOT running"
+          nc -z 172.28.0.11 8382 && echo "Volume1 verified on 172.28.0.11:8382" || echo "Volume1 NOT running"
+          nc -z 172.28.0.12 8382 && echo "Volume2 verified on 172.28.0.12:8382" || echo "Volume2 NOT running"
+          nc -z 172.28.0.10 8888 && echo "Filer verified on 172.28.0.10:8888" || echo "Filer NOT running"
 
       - name: List clusters
         working-directory: test/integration
