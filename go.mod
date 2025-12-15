@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/alexellis/go-execute v0.5.0
-	github.com/bramvdbogaerde/go-scp v1.3.0
+	github.com/bramvdbogaerde/go-scp v1.6.0
 	github.com/cheggaaa/pb/v3 v3.1.0
 	github.com/fatih/color v1.18.0
 	github.com/mitchellh/go-homedir v1.1.0
