@@ -11,12 +11,12 @@ master_servers:
 
 volume_servers:
   - ip: 172.28.0.11
-    port: 8382
+    port: 8080
     folders:
       - folder: /opt/seaweed/volume0
         disk: ""
   - ip: 172.28.0.12
-    port: 8382
+    port: 8080
     folders:
       - folder: /opt/seaweed/volume1
         disk: ""
