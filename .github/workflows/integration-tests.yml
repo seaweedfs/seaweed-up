@@ -412,6 +412,10 @@ jobs:
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "--- $host listening ports ---"
             docker exec $host ss -tlnp 2>&1 | grep -E '(8080|8888|9333|LISTEN)' || echo "No relevant ports"
+            echo "--- $host weed processes ---"
+            docker exec $host ps aux | grep weed || echo "No weed processes"
+            echo "--- $host service logs ---"
+            docker exec $host journalctl -u 'seaweed*' -n 20 --no-pager 2>&1 | tail -20 || true
           done
           
           # Give services a moment to bind ports
