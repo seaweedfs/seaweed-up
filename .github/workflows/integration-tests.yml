@@ -410,12 +410,14 @@ jobs:
           # Show what ports are listening on each host
           echo "=== Checking listening ports ==="
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
-            echo "--- $host listening ports ---"
-            docker exec $host ss -tlnp 2>&1 | grep -E '(8080|8888|9333|LISTEN)' || echo "No relevant ports"
-            echo "--- $host weed processes ---"
-            docker exec $host ps aux | grep weed || echo "No weed processes"
-            echo "--- $host service logs ---"
-            docker exec $host journalctl -u 'seaweed*' -n 20 --no-pager 2>&1 | tail -20 || true
+            echo ""
+            echo "========== $host =========="
+            echo "--- weed processes ---"
+            docker exec $host ps aux | grep -v grep | grep weed || echo "No weed processes"
+            echo "--- listening ports ---"
+            docker exec $host ss -tlnp 2>&1 || echo "No ports"
+            echo "--- weed log files ---"
+            docker exec $host find /opt/seaweed -name "*.log" -exec tail -20 {} \; 2>&1 || echo "No log files"
           done
           
           # Give services a moment to bind ports
