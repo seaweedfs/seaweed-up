@@ -33,31 +33,53 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
       - name: Build seaweed-up binary
         working-directory: .
         run: go build -v -o seaweed-up .
 
-      - name: Start Docker environment
+      - name: Create Docker network
         run: |
-          docker compose up -d
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start containers with docker run
+        run: |
+          # Use docker run with --cgroupns=host which is required for systemd on GitHub Actions
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+          
+          docker run -d \
+            --name seaweed-up-host2 \
+            --hostname host2 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.11 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+          
+          docker run -d \
+            --name seaweed-up-host3 \
+            --hostname host3 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.12 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
           
           # Wait for containers to start
           echo "Waiting for containers to start..."
           sleep 10
           
           echo "=== Container Status ==="
-          docker compose ps -a
+          docker ps -a
           
           # Check if containers are running
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
@@ -67,7 +89,8 @@ jobs:
               echo "=== Logs for $host ==="
               docker logs $host 2>&1 || true
               echo "=== Inspect $host ==="
-              docker inspect $host 2>&1 | head -50 || true
+              docker inspect $host 2>&1 | head -80 || true
+              exit 1
             fi
           done
           
@@ -76,7 +99,6 @@ jobs:
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
             echo "Checking systemd on $host..."
             for i in {1..60}; do
-              # First check if container is running
               status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
               if [ "$status" != "running" ]; then
                 echo "Container $host is not running (status: $status)"
@@ -188,10 +210,13 @@ jobs:
       - name: Save logs
         if: always()
         run: |
-          docker compose logs > docker-compose.log 2>&1
+          echo "=== Container Status ===" > docker-compose.log
+          docker ps -a >> docker-compose.log
           
-          echo "=== Container Status ===" >> docker-compose.log
-          docker compose ps >> docker-compose.log
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "=== Logs for $host ===" >> docker-compose.log
+            docker logs $host >> docker-compose.log 2>&1 || true
+          done
           
           echo "=== Host1 Processes ===" >> docker-compose.log
           docker exec seaweed-up-host1 ps aux >> docker-compose.log 2>&1 || true
@@ -210,7 +235,9 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker compose down -v --remove-orphans
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker network rm seaweed-up-net || true
           rm -rf .ssh
 
   multi-node-test:
@@ -228,23 +255,54 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build seaweed-up binary
         run: go build -v -o seaweed-up .
 
-      - name: Start Docker environment
+      - name: Create Docker network
         working-directory: test/integration
         run: |
-          docker compose up -d
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start containers with docker run
+        working-directory: test/integration
+        run: |
+          # Use docker run with --cgroupns=host which is required for systemd on GitHub Actions
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+          
+          docker run -d \
+            --name seaweed-up-host2 \
+            --hostname host2 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.11 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+          
+          docker run -d \
+            --name seaweed-up-host3 \
+            --hostname host3 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.12 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
           
           # Wait for containers to start
           echo "Waiting for containers to start..."
           sleep 10
           
           echo "=== Container Status ==="
-          docker compose ps -a
+          docker ps -a
           
           # Check if containers are running
           for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
@@ -253,6 +311,7 @@ jobs:
             if [ "$status" != "running" ]; then
               echo "=== Logs for $host ==="
               docker logs $host 2>&1 || true
+              exit 1
             fi
           done
           
@@ -353,7 +412,13 @@ jobs:
       - name: Archive logs
         if: always()
         working-directory: test/integration
-        run: docker compose logs > multi-node.log 2>&1
+        run: |
+          echo "=== Container Status ===" > multi-node.log
+          docker ps -a >> multi-node.log
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "=== Logs for $host ===" >> multi-node.log
+            docker logs $host >> multi-node.log 2>&1 || true
+          done
 
       - name: Upload logs
         if: always()
@@ -367,6 +432,7 @@ jobs:
         if: always()
         working-directory: test/integration
         run: |
-          docker compose down -v --remove-orphans
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker network rm seaweed-up-net || true
           rm -rf .ssh
-
