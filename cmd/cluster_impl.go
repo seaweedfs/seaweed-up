@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
@@ -66,7 +66,7 @@ type ClusterListOptions struct {
 	Verbose    bool
 }
 
-func runClusterDeploy(args []string, opts *ClusterDeployOptions) error {
+func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOptions) error {
 	color.Green("🚀 Deploying SeaweedFS cluster...")
 	
 	// Load cluster specification
@@ -93,7 +93,7 @@ func runClusterDeploy(args []string, opts *ClusterDeployOptions) error {
 	
 	// Get latest version if not specified
 	if mgr.Version == "" {
-		latest, err := config.GitHubLatestRelease(context.Background(), "0", "seaweedfs", "seaweedfs")
+		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", "seaweedfs", "seaweedfs")
 		if err != nil {
 			return fmt.Errorf("unable to get latest version: %w", err)
 		}
@@ -130,10 +130,28 @@ func runClusterDeploy(args []string, opts *ClusterDeployOptions) error {
 }
 
 func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
+	// Handle auto-refresh mode
 	if opts.Refresh > 0 {
-		return runClusterStatusWithRefresh(args, opts)
+		ticker := time.NewTicker(time.Duration(opts.Refresh) * time.Second)
+		defer ticker.Stop()
+		
+		for {
+			// Clear screen
+			fmt.Print("\033[H\033[2J")
+			
+			// Show status (with refresh disabled to avoid recursion)
+			displayClusterStatus(args, opts)
+			
+			color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+			<-ticker.C
+		}
 	}
 	
+	return displayClusterStatus(args, opts)
+}
+
+// displayClusterStatus shows the actual cluster status
+func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
 	// TODO: Implement actual status collection
 	color.Green("📊 Cluster Status")
 	
@@ -148,28 +166,6 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 	}
 	
 	return nil
-}
-
-func runClusterStatusWithRefresh(args []string, opts *ClusterStatusOptions) error {
-	ticker := time.NewTicker(time.Duration(opts.Refresh) * time.Second)
-	defer ticker.Stop()
-	
-	for {
-		// Clear screen
-		fmt.Print("\033[H\033[2J")
-		
-		// Show status
-		if err := runClusterStatus(args, &ClusterStatusOptions{
-			JSONOutput: opts.JSONOutput,
-			Verbose:    opts.Verbose,
-			Timeout:    opts.Timeout,
-		}); err != nil {
-			return err
-		}
-		
-		color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
-		<-ticker.C
-	}
 }
 
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
@@ -222,9 +218,7 @@ func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 	}
 	
 	if !opts.SkipConfirm {
-		color.Yellow("Type the cluster name to confirm destruction:")
-		var confirmation string
-		fmt.Scanln(&confirmation)
+		confirmation := utils.PromptForInput("Type the cluster name to confirm destruction: ")
 		
 		if confirmation != clusterName {
 			color.Yellow("⚠️  Destruction cancelled - cluster name didn't match")

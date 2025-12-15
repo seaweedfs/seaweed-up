@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fatih/color"
+	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -254,9 +255,7 @@ func runEnvDelete(envName string, opts *EnvDeleteOptions) error {
 	}
 	
 	if !opts.SkipConfirm {
-		fmt.Printf("Type the environment name to confirm deletion: ")
-		var confirmation string
-		fmt.Scanln(&confirmation)
+		confirmation := utils.PromptForInput("Type the environment name to confirm deletion: ")
 		
 		if confirmation != envName {
 			color.Yellow("⚠️  Deletion cancelled - environment name didn't match")

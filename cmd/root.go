@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mitchellh/go-homedir"
+	"github.com/seaweedfs/seaweed-up/pkg/environment"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/seaweedfs/seaweed-up/pkg/environment"
 )
 
 var (
@@ -32,7 +33,7 @@ It provides enterprise-grade cluster lifecycle management including:
   seaweed-up cluster status my-cluster
 
   # Scale cluster by adding volume servers
-  seaweed-up cluster scale-out -f cluster.yaml --add-volume=2
+  seaweed-up cluster scale out my-cluster --add-volume=2
 
   # Upgrade cluster to latest version
   seaweed-up cluster upgrade my-cluster --version=latest`,
@@ -79,7 +80,7 @@ func initConfig() {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
-		home, err := os.UserHomeDir()
+		home, err := homedir.Dir()
 		cobra.CheckErr(err)
 		
 		viper.AddConfigPath(home)

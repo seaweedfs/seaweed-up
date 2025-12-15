@@ -26,7 +26,7 @@ This command group provides comprehensive cluster lifecycle management including
   seaweed-up cluster upgrade prod-cluster --version=3.75
   
   # Scale out cluster
-  seaweed-up cluster scale-out prod-cluster --add-volume=2`,
+  seaweed-up cluster scale out prod-cluster --add-volume=2`,
 	}
 	
 	// Add cluster subcommands
@@ -72,7 +72,7 @@ SeaweedFS components across the target hosts using SSH.`,
   seaweed-up cluster deploy -f cluster.yaml --component=master`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterDeploy(args, &ClusterDeployOptions{
+			return runClusterDeploy(cmd, args, &ClusterDeployOptions{
 				ConfigFile:   configFile,
 				User:         user,
 				SSHPort:      sshPort,

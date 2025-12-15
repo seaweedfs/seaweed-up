@@ -3,7 +3,6 @@ package utils
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"os"
 	"os/user"
 	"strings"
@@ -27,23 +26,31 @@ func PromptForConfirmation(message string) bool {
 }
 
 // CurrentUser returns the current username
-func CurrentUser() string {
+func CurrentUser() (string, error) {
 	currentUser, err := user.Current()
 	if err != nil {
-		log.Printf("Get current user: %s", err)
-		return "root"
+		return "", fmt.Errorf("failed to get current user: %w", err)
 	}
-	return currentUser.Username
+	return currentUser.Username, nil
 }
 
 // UserHome returns the current user's home directory
-func UserHome() string {
+func UserHome() (string, error) {
 	currentUser, err := user.Current()
 	if err != nil {
-		log.Printf("Get current user home: %s", err)
-		return "/root"
+		return "", fmt.Errorf("failed to get current user home: %w", err)
 	}
-	return currentUser.HomeDir
+	return currentUser.HomeDir, nil
+}
+
+// PromptForInput reads a line of input from the user
+func PromptForInput(message string) string {
+	fmt.Print(message)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		return strings.TrimSpace(scanner.Text())
+	}
+	return ""
 }
 
 // IsExist checks if a file or directory exists

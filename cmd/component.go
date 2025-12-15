@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fatih/color"
+	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -275,10 +276,7 @@ func runComponentUninstall(args []string, opts *ComponentUninstallOptions) error
 	color.Yellow("🗑️  Uninstalling components: %v", args)
 	
 	if !opts.SkipConfirm {
-		fmt.Print("Are you sure you want to uninstall these components? (y/N): ")
-		var response string
-		fmt.Scanln(&response)
-		if response != "y" && response != "Y" {
+		if !utils.PromptForConfirmation("Are you sure you want to uninstall these components?") {
 			color.Yellow("⚠️  Uninstall cancelled")
 			return nil
 		}
