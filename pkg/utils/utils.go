@@ -53,18 +53,10 @@ func PromptForInput(message string) string {
 	return ""
 }
 
-// IsExist checks if a file or directory exists
-func IsExist(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// EnsureDir creates directory if it doesn't exist
+// EnsureDir creates directory if it doesn't exist.
+// os.MkdirAll is idempotent and handles existing directories.
 func EnsureDir(dir string) error {
-	if !IsExist(dir) {
-		return os.MkdirAll(dir, 0755)
-	}
-	return nil
+	return os.MkdirAll(dir, 0755)
 }
 
 // FormatBytes formats bytes into human readable format

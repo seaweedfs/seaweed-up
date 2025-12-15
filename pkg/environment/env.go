@@ -17,6 +17,10 @@ type Environment struct {
 	ProfileName string
 }
 
+// globalEnv holds the singleton environment instance.
+// Note: Using a global variable simplifies CLI command access but introduces
+// global state. For a CLI tool this is acceptable, but for better testability
+// consider passing Environment explicitly via dependency injection in the future.
 var globalEnv *Environment
 
 // InitGlobalEnv initializes the global environment

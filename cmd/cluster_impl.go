@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/fatih/color"
@@ -136,8 +138,8 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 		defer ticker.Stop()
 		
 		for {
-			// Clear screen
-			fmt.Print("\033[H\033[2J")
+			// Clear screen using cross-platform method
+			clearScreen()
 			
 			// Show status (with refresh disabled to avoid recursion)
 			displayClusterStatus(args, opts)
@@ -148,6 +150,19 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 	}
 	
 	return displayClusterStatus(args, opts)
+}
+
+// clearScreen clears the terminal screen in a cross-platform way
+func clearScreen() {
+	switch runtime.GOOS {
+	case "windows":
+		cmd := exec.Command("cmd", "/c", "cls")
+		cmd.Stdout = os.Stdout
+		cmd.Run()
+	default:
+		// Unix-like systems (Linux, macOS, etc.)
+		fmt.Print("\033[H\033[2J")
+	}
 }
 
 // displayClusterStatus shows the actual cluster status
