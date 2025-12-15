@@ -14,7 +14,6 @@ services:
       seaweed-up-net:
         ipv4_address: 172.28.0.10
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host1-data:/opt/seaweed
       - host1-conf:/etc/seaweed
     stop_grace_period: 1s
@@ -28,7 +27,6 @@ services:
       seaweed-up-net:
         ipv4_address: 172.28.0.11
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host2-data:/opt/seaweed
       - host2-conf:/etc/seaweed
     stop_grace_period: 1s
@@ -42,7 +40,6 @@ services:
       seaweed-up-net:
         ipv4_address: 172.28.0.12
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host3-data:/opt/seaweed
       - host3-conf:/etc/seaweed
     stop_grace_period: 1s
