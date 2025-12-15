@@ -1,15 +1,16 @@
 # Docker Compose for seaweed-up integration testing
 # This provides target VMs (containers) that seaweed-up can deploy to
-# Uses systemd-enabled containers for proper service management
+# Uses geerlingguy's Ansible-compatible images with systemd
 
 services:
 
   # Target hosts for deployment - these simulate remote servers with systemd
   target-host-1:
-    image: jrei/systemd-ubuntu:22.04
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
     hostname: host1
     container_name: seaweed-up-host1
     privileged: true
+    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.10
@@ -20,15 +21,15 @@ services:
     tmpfs:
       - /run
       - /run/lock
-    environment:
-      - container=docker
+    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
   target-host-2:
-    image: jrei/systemd-ubuntu:22.04
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
     hostname: host2
     container_name: seaweed-up-host2
     privileged: true
+    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.11
@@ -39,15 +40,15 @@ services:
     tmpfs:
       - /run
       - /run/lock
-    environment:
-      - container=docker
+    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
   target-host-3:
-    image: jrei/systemd-ubuntu:22.04
+    image: geerlingguy/docker-ubuntu2204-ansible:latest
     hostname: host3
     container_name: seaweed-up-host3
     privileged: true
+    cgroupns: host
     networks:
       seaweed-up-net:
         ipv4_address: 172.28.0.12
@@ -58,8 +59,7 @@ services:
     tmpfs:
       - /run
       - /run/lock
-    environment:
-      - container=docker
+    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
 networks:
