@@ -98,12 +98,10 @@ func ValidateClusterName(name string) error {
 		return fmt.Errorf("cluster name cannot be empty")
 	}
 	
-	// Check for invalid characters
-	invalidChars := []string{" ", "\t", "\n", "/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
-	for _, char := range invalidChars {
-		if strings.Contains(name, char) {
-			return fmt.Errorf("cluster name contains invalid character: '%s'", char)
-		}
+	// Check for invalid characters using IndexAny for efficiency
+	invalidChars := " \t\n/\\:*?\"<>|"
+	if idx := strings.IndexAny(name, invalidChars); idx != -1 {
+		return fmt.Errorf("cluster name contains invalid character: '%c'", name[idx])
 	}
 	
 	return nil

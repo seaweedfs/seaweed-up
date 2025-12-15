@@ -106,9 +106,10 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	// Default identity file to ~/.ssh/id_rsa if not specified
 	if opts.IdentityFile == "" {
 		home, err := utils.UserHome()
-		if err == nil {
-			mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+		if err != nil {
+			return fmt.Errorf("failed to determine home directory for SSH identity file: %w", err)
 		}
+		mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
 	} else {
 		mgr.IdentityFile = opts.IdentityFile
 	}
@@ -178,7 +179,9 @@ func clearScreen() {
 	case "windows":
 		cmd := exec.Command("cmd", "/c", "cls")
 		cmd.Stdout = os.Stdout
-		cmd.Run()
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to clear screen: %v\n", err)
+		}
 	default:
 		// Unix-like systems (Linux, macOS, etc.)
 		fmt.Print("\033[H\033[2J")

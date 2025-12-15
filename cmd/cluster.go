@@ -41,18 +41,10 @@ This command group provides comprehensive cluster lifecycle management including
 }
 
 func newClusterDeployCmd() *cobra.Command {
-	var (
-		configFile      string
-		user            string
-		sshPort         int
-		identityFile    string
-		version         string
-		component       string
-		mountDisks      bool
-		forceRestart    bool
-		proxyUrl        string
-		skipConfirm     bool
-	)
+	opts := &ClusterDeployOptions{
+		SSHPort:    22,
+		MountDisks: true,
+	}
 	
 	cmd := &cobra.Command{
 		Use:   "deploy [cluster-name]",
@@ -72,31 +64,20 @@ SeaweedFS components across the target hosts using SSH.`,
   seaweed-up cluster deploy -f cluster.yaml --component=master`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterDeploy(cmd, args, &ClusterDeployOptions{
-				ConfigFile:   configFile,
-				User:         user,
-				SSHPort:      sshPort,
-				IdentityFile: identityFile,
-				Version:      version,
-				Component:    component,
-				MountDisks:   mountDisks,
-				ForceRestart: forceRestart,
-				ProxyUrl:     proxyUrl,
-				SkipConfirm:  skipConfirm,
-			})
+			return runClusterDeploy(cmd, args, opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "cluster configuration file (required)")
-	cmd.Flags().StringVarP(&user, "user", "u", "", "SSH user (default: current user)")
-	cmd.Flags().IntVarP(&sshPort, "port", "p", 22, "SSH port")
-	cmd.Flags().StringVarP(&identityFile, "identity", "i", "", "SSH identity file")
-	cmd.Flags().StringVar(&version, "version", "", "SeaweedFS version to deploy")
-	cmd.Flags().StringVarP(&component, "component", "c", "", "specific component to deploy [master|volume|filer|envoy]")
-	cmd.Flags().BoolVar(&mountDisks, "mount-disks", true, "auto mount disks on volume servers")
-	cmd.Flags().BoolVar(&forceRestart, "restart", false, "force restart services")
-	cmd.Flags().StringVarP(&proxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required)")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
+	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "SeaweedFS version to deploy")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|envoy]")
+	cmd.Flags().BoolVar(&opts.MountDisks, "mount-disks", true, "auto mount disks on volume servers")
+	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
+	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
 	cmd.MarkFlagRequired("file")
 	
@@ -104,12 +85,9 @@ SeaweedFS components across the target hosts using SSH.`,
 }
 
 func newClusterStatusCmd() *cobra.Command {
-	var (
-		jsonOutput bool
-		verbose    bool
-		timeout    string
-		refresh    int
-	)
+	opts := &ClusterStatusOptions{
+		Timeout: "30s",
+	}
 	
 	cmd := &cobra.Command{
 		Use:   "status [cluster-name]",
@@ -135,30 +113,20 @@ Shows real-time information about cluster components including:
   seaweed-up cluster status prod-cluster --refresh=5`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterStatus(args, &ClusterStatusOptions{
-				JSONOutput: jsonOutput,
-				Verbose:    verbose,
-				Timeout:    timeout,
-				Refresh:    refresh,
-			})
+			return runClusterStatus(args, opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "show detailed information")
-	cmd.Flags().StringVar(&timeout, "timeout", "30s", "timeout for status collection")
-	cmd.Flags().IntVar(&refresh, "refresh", 0, "auto-refresh interval in seconds")
+	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
+	cmd.Flags().StringVar(&opts.Timeout, "timeout", "30s", "timeout for status collection")
+	cmd.Flags().IntVar(&opts.Refresh, "refresh", 0, "auto-refresh interval in seconds")
 	
 	return cmd
 }
 
 func newClusterUpgradeCmd() *cobra.Command {
-	var (
-		version     string
-		configFile  string
-		skipConfirm bool
-		dryRun      bool
-	)
+	opts := &ClusterUpgradeOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "upgrade <cluster-name>",
@@ -182,19 +150,14 @@ This command safely upgrades cluster components with minimal downtime:
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterUpgrade(args[0], &ClusterUpgradeOptions{
-				Version:     version,
-				ConfigFile:  configFile,
-				SkipConfirm: skipConfirm,
-				DryRun:      dryRun,
-			})
+			return runClusterUpgrade(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVar(&version, "version", "", "target version to upgrade to (required)")
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "cluster configuration file")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without making changes")
+	cmd.Flags().StringVar(&opts.Version, "version", "", "target version to upgrade to (required)")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
 	
 	cmd.MarkFlagRequired("version")
 	
@@ -218,12 +181,7 @@ operations with automatic data rebalancing and health verification.`,
 }
 
 func newClusterScaleOutCmd() *cobra.Command {
-	var (
-		configFile   string
-		addVolume    int
-		addFiler     int
-		skipConfirm  bool
-	)
+	opts := &ClusterScaleOutOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "out <cluster-name>",
@@ -241,29 +199,20 @@ to increase cluster capacity and performance.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterScaleOut(args[0], &ClusterScaleOutOptions{
-				ConfigFile:  configFile,
-				AddVolume:   addVolume,
-				AddFiler:    addFiler,
-				SkipConfirm: skipConfirm,
-			})
+			return runClusterScaleOut(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "cluster configuration file")
-	cmd.Flags().IntVar(&addVolume, "add-volume", 0, "number of volume servers to add")
-	cmd.Flags().IntVar(&addFiler, "add-filer", 0, "number of filer servers to add")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().IntVar(&opts.AddVolume, "add-volume", 0, "number of volume servers to add")
+	cmd.Flags().IntVar(&opts.AddFiler, "add-filer", 0, "number of filer servers to add")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
 	return cmd
 }
 
 func newClusterScaleInCmd() *cobra.Command {
-	var (
-		configFile   string
-		removeNodes  []string
-		skipConfirm  bool
-	)
+	opts := &ClusterScaleInOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "in <cluster-name>",
@@ -278,27 +227,19 @@ properly migrated and cluster health is maintained.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterScaleIn(args[0], &ClusterScaleInOptions{
-				ConfigFile:  configFile,
-				RemoveNodes: removeNodes,
-				SkipConfirm: skipConfirm,
-			})
+			return runClusterScaleIn(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "cluster configuration file")
-	cmd.Flags().StringSliceVar(&removeNodes, "remove-node", nil, "nodes to remove (comma-separated)")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().StringSliceVar(&opts.RemoveNodes, "remove-node", nil, "nodes to remove (comma-separated)")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	
 	return cmd
 }
 
 func newClusterDestroyCmd() *cobra.Command {
-	var (
-		configFile    string
-		skipConfirm   bool
-		removeData    bool
-	)
+	opts := &ClusterDestroyOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "destroy <cluster-name>",
@@ -316,26 +257,19 @@ stopped and removed. Use --remove-data to also delete all stored data.`,
 		
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterDestroy(args[0], &ClusterDestroyOptions{
-				ConfigFile:  configFile,
-				SkipConfirm: skipConfirm,
-				RemoveData:  removeData,
-			})
+			return runClusterDestroy(args[0], opts)
 		},
 	}
 	
-	cmd.Flags().StringVarP(&configFile, "file", "f", "", "cluster configuration file")
-	cmd.Flags().BoolVarP(&skipConfirm, "yes", "y", false, "skip confirmation prompts")
-	cmd.Flags().BoolVar(&removeData, "remove-data", false, "remove all cluster data (WARNING: irreversible)")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.RemoveData, "remove-data", false, "remove all cluster data (WARNING: irreversible)")
 	
 	return cmd
 }
 
 func newClusterListCmd() *cobra.Command {
-	var (
-		jsonOutput bool
-		verbose    bool
-	)
+	opts := &ClusterListOptions{}
 	
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -354,15 +288,12 @@ Shows cluster names, status, versions, and basic configuration information.`,
   seaweed-up cluster list --json`,
 		
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterList(&ClusterListOptions{
-				JSONOutput: jsonOutput,
-				Verbose:    verbose,
-			})
+			return runClusterList(opts)
 		},
 	}
 	
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	cmd.Flags().BoolVar(&verbose, "verbose", false, "show detailed information")
+	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
+	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	
 	return cmd
 }
