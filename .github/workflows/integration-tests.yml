@@ -1,0 +1,242 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: test/integration
+
+jobs:
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build seaweed-up binary
+        working-directory: .
+        run: go build -v -o seaweed-up .
+
+      - name: Start Docker environment
+        run: |
+          docker compose up -d
+          
+          # Wait for containers to be healthy
+          echo "Waiting for containers to be ready..."
+          for i in {1..60}; do
+            if docker compose ps | grep -q "healthy"; then
+              echo "Containers are healthy"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Timeout waiting for containers"
+              docker compose ps
+              docker compose logs
+              exit 1
+            fi
+            echo "Waiting... ($i/60)"
+            sleep 2
+          done
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          
+          # Copy public key to all hosts
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker cp .ssh/id_rsa_test.pub $host:/root/.ssh/authorized_keys
+            docker exec $host chmod 600 /root/.ssh/authorized_keys
+          done
+
+      - name: Verify SSH connectivity
+        run: |
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            echo "Testing SSH to $ip..."
+            ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@$ip "echo 'SSH OK to $ip'"
+          done
+
+      - name: Run single-node deployment test
+        run: |
+          ../../seaweed-up cluster deploy test-single \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --skip-confirm
+          
+          # Wait for services to start
+          sleep 15
+          
+          # Verify master is running
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
+          echo "Master server verified running"
+
+      - name: Check cluster status
+        run: |
+          ../../seaweed-up cluster status test-single || true
+          ../../seaweed-up cluster list || true
+
+      - name: Run Go integration tests
+        working-directory: .
+        run: |
+          go test -v -tags=integration -timeout=15m ./test/integration/... || true
+
+      - name: Save logs
+        if: always()
+        run: |
+          docker compose logs > docker-compose.log 2>&1
+          
+          echo "=== Container Status ===" >> docker-compose.log
+          docker compose ps >> docker-compose.log
+          
+          echo "=== Host1 Processes ===" >> docker-compose.log
+          docker exec seaweed-up-host1 ps aux >> docker-compose.log 2>&1 || true
+          
+          echo "=== Host1 SeaweedFS Logs ===" >> docker-compose.log
+          docker exec seaweed-up-host1 cat /opt/seaweed/*.log >> docker-compose.log 2>&1 || true
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: test/integration/docker-compose.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v --remove-orphans
+          rm -rf .ssh
+
+  multi-node-test:
+    name: Multi-Node Deployment Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    needs: integration-tests  # Run after single-node test
+
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Start Docker environment
+        working-directory: test/integration
+        run: |
+          docker compose up -d
+          
+          echo "Waiting for containers to be ready..."
+          for i in {1..60}; do
+            if docker compose ps | grep -q "healthy"; then
+              echo "Containers are healthy"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Timeout waiting for containers"
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker cp .ssh/id_rsa_test.pub $host:/root/.ssh/authorized_keys
+            docker exec $host chmod 600 /root/.ssh/authorized_keys
+          done
+
+      - name: Run multi-node deployment test
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-multi \
+            -f testdata/cluster-multi.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --skip-confirm
+          
+          sleep 15
+          
+          # Verify all servers are running
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
+          echo "Master server verified"
+          
+          nc -z 172.28.0.11 8382 || (echo "Volume server 1 not running" && exit 1)
+          echo "Volume server 1 verified"
+          
+          nc -z 172.28.0.12 8382 || (echo "Volume server 2 not running" && exit 1)
+          echo "Volume server 2 verified"
+          
+          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
+          echo "Filer server verified"
+
+      - name: List clusters
+        working-directory: test/integration
+        run: ../../seaweed-up cluster list
+
+      - name: Archive logs
+        if: always()
+        working-directory: test/integration
+        run: docker compose logs > multi-node.log 2>&1
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multi-node-test-logs
+          path: test/integration/multi-node.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        working-directory: test/integration
+        run: |
+          docker compose down -v --remove-orphans
+          rm -rf .ssh
+
