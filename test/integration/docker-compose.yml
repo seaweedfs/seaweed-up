@@ -17,10 +17,6 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host1-data:/opt/seaweed
       - host1-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
-    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
   target-host-2:
@@ -35,10 +31,6 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host2-data:/opt/seaweed
       - host2-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
-    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
   target-host-3:
@@ -53,10 +45,6 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host3-data:/opt/seaweed
       - host3-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
-    command: /lib/systemd/systemd
     stop_grace_period: 1s
 
 networks:
