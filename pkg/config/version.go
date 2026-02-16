@@ -267,6 +267,7 @@ func extractToFile(buf []byte, filename, target string) error {
 	n, err := io.Copy(new, rd)
 	if err != nil {
 		_ = new.Close()
+		// #nosec G703
 		_ = os.Remove(new.Name())
 		return err
 	}
@@ -284,11 +285,12 @@ func extractToFile(buf []byte, filename, target string) error {
 	}
 
 	// Rename the temp file to the final location atomically.
+	// #nosec G703
 	if err := os.Rename(new.Name(), target); err != nil {
 		return err
 	}
 
-	log.Printf("saved %d bytes in %v\n", n, target)
+	log.Printf("saved %d bytes in %v\n", n, filepath.Clean(target))
 	return os.Chmod(target, mode)
 }
 

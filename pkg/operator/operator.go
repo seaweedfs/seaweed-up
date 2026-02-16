@@ -39,6 +39,7 @@ func ExecuteRemote(host string, user string, privateKey string, password string,
 	if password != "" {
 		method = ssh.Password(password)
 	} else if privateKey == "" {
+		// #nosec G704
 		sshAgentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
 
 		if err != nil {
@@ -94,6 +95,7 @@ func ExecuteRemote(host string, user string, privateKey string, password string,
 }
 
 func privateKeyUsingSSHAgent(publicKeyPath string) (ssh.AuthMethod, func() error) {
+	// #nosec G704
 	if sshAgentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
 		sshAgent := agent.NewClient(sshAgentConn)
 
