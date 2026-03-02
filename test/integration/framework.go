@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -209,7 +210,8 @@ func (e *TestEnvironment) waitForHosts() error {
 				return fmt.Errorf("timeout waiting for host %s (%s:%d)", host.Name, host.IP, host.Port)
 			}
 
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host.IP, host.Port), 5*time.Second)
+			addr := net.JoinHostPort(host.IP, strconv.Itoa(host.Port))
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 			if err == nil {
 				_ = conn.Close()
 				e.t.Logf("Host %s (%s) is ready", host.Name, host.IP)
@@ -313,7 +315,7 @@ func (e *TestEnvironment) RunSeaweedUp(args ...string) (string, error) {
 
 // VerifyMasterRunning checks if master server is running on a host
 func (e *TestEnvironment) VerifyMasterRunning(host HostInfo, port int) bool {
-	addr := fmt.Sprintf("%s:%d", host.IP, port)
+	addr := net.JoinHostPort(host.IP, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return false
@@ -324,7 +326,7 @@ func (e *TestEnvironment) VerifyMasterRunning(host HostInfo, port int) bool {
 
 // VerifyVolumeRunning checks if volume server is running on a host
 func (e *TestEnvironment) VerifyVolumeRunning(host HostInfo, port int) bool {
-	addr := fmt.Sprintf("%s:%d", host.IP, port)
+	addr := net.JoinHostPort(host.IP, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return false
@@ -335,7 +337,7 @@ func (e *TestEnvironment) VerifyVolumeRunning(host HostInfo, port int) bool {
 
 // VerifyFilerRunning checks if filer server is running on a host
 func (e *TestEnvironment) VerifyFilerRunning(host HostInfo, port int) bool {
-	addr := fmt.Sprintf("%s:%d", host.IP, port)
+	addr := net.JoinHostPort(host.IP, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
 		return false
@@ -382,4 +384,3 @@ func AssertContains(t *testing.T, s, substr, msg string) {
 		t.Errorf("%s: expected '%s' to contain '%s'", msg, s, substr)
 	}
 }
-
