@@ -6,7 +6,7 @@ require (
 	github.com/alexellis/go-execute v0.6.0
 	github.com/bramvdbogaerde/go-scp v1.6.0
 	github.com/cheggaaa/pb/v3 v3.1.7
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.2
