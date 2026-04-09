@@ -75,7 +75,7 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().StringVar(&opts.Version, "version", "", "SeaweedFS version to deploy")
-	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|envoy]")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|s3|envoy]")
 	cmd.Flags().BoolVar(&opts.MountDisks, "mount-disks", true, "auto mount disks on volume servers")
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
