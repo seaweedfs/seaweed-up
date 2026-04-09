@@ -19,10 +19,10 @@ func TestDashboardJSONIsValidGrafanaDashboard(t *testing.T) {
 		t.Fatalf("dashboard JSON does not parse: %v", err)
 	}
 	if _, ok := dash["title"]; !ok {
-		t.Error("dashboard missing required field: title")
+		t.Fatal("dashboard missing required field: title")
 	}
 	if _, ok := dash["schemaVersion"]; !ok {
-		t.Error("dashboard missing required field: schemaVersion")
+		t.Fatal("dashboard missing required field: schemaVersion")
 	}
 	panels, ok := dash["panels"].([]interface{})
 	if !ok {

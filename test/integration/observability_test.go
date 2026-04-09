@@ -65,8 +65,15 @@ func TestNodeExporterInstall(t *testing.T) {
 				time.Sleep(2 * time.Second)
 				continue
 			}
-			b, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
+			b, readErr := io.ReadAll(resp.Body)
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				t.Logf("resp.Body.Close() failed for %s: %v", url, closeErr)
+			}
+			if readErr != nil {
+				lastErr = readErr
+				time.Sleep(2 * time.Second)
+				continue
+			}
 			if resp.StatusCode == 200 {
 				body = string(b)
 				lastErr = nil
