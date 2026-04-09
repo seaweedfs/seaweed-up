@@ -120,7 +120,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	
 	// Run preflight checks first if requested
 	if opts.Check {
-		color.Cyan("🔍 Running preflight checks...")
+		color.Cyan("Running preflight checks...")
 		// TODO: plumb sudo password from deploy options once ClusterDeployOptions
 		// exposes a Password/SudoPass field so preflight sudo checks work on
 		// hosts that require a password.
@@ -132,7 +132,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		if preflight.HasFailure(results) {
 			return fmt.Errorf("preflight checks failed; aborting deploy")
 		}
-		color.Green("✅ Preflight checks passed")
+		color.Green("Preflight checks passed")
 	}
 
 	// Get latest version if not specified
