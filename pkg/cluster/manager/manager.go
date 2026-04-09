@@ -2,8 +2,17 @@ package manager
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
+
+// shellSingleQuote wraps s in single quotes so it is safe to embed in a POSIX
+// shell command. Any single quote inside s is escaped by closing the quoted
+// string, inserting an escaped quote, and reopening: ' -> '\''.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 type Manager struct {
 	User               string // username to login to the SSH server
@@ -47,5 +56,5 @@ func (m *Manager) sudo(op operator.CommandOperator, cmd string) error {
 		return op.Execute(cmd)
 	}
 	defer fmt.Println()
-	return op.Execute(fmt.Sprintf("echo '%s' | sudo -S %s", m.sudoPass, cmd))
+	return op.Execute(fmt.Sprintf("echo %s | sudo -S %s", shellSingleQuote(m.sudoPass), cmd))
 }
