@@ -107,7 +107,7 @@ func runClusterLifecycle(verb manager.LifecycleVerb, opts *ClusterLifecycleOptio
 		}
 		question := fmt.Sprintf("About to %s %s on cluster '%s'. Proceed?", verb, scope, clusterSpec.Name)
 		if !utils.PromptForConfirmation(question) {
-			color.Yellow("⚠️  %s cancelled by user", verb)
+			color.Yellow("WARN: %s cancelled by user", verb)
 			return nil
 		}
 	}
@@ -117,7 +117,7 @@ func runClusterLifecycle(verb manager.LifecycleVerb, opts *ClusterLifecycleOptio
 		return err
 	}
 
-	color.Cyan("🔧 Running systemctl %s across cluster...", verb)
+	color.Cyan("Running systemctl %s across cluster...", verb)
 	switch verb {
 	case manager.LifecycleStart:
 		err = mgr.StartCluster(clusterSpec, opts.Component)
@@ -129,9 +129,9 @@ func runClusterLifecycle(verb manager.LifecycleVerb, opts *ClusterLifecycleOptio
 		return fmt.Errorf("unknown lifecycle verb %q", verb)
 	}
 	if err != nil {
-		color.Red("❌ %s failed: %v", verb, err)
+		color.Red("FAIL: %s failed: %v", verb, err)
 		return err
 	}
-	color.Green("✅ %s complete", verb)
+	color.Green("%s complete", verb)
 	return nil
 }

@@ -271,10 +271,10 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 }
 
 func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
-	color.Red("💥 WARNING: This will destroy cluster '%s'", clusterName)
+	color.Red("WARNING: This will destroy cluster '%s'", clusterName)
 
 	if opts.RemoveData {
-		color.Red("⚠️  ALL DATA WILL BE PERMANENTLY DELETED!")
+		color.Red("WARN: ALL DATA WILL BE PERMANENTLY DELETED!")
 	}
 
 	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
@@ -290,7 +290,7 @@ func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 		confirmation := utils.PromptForInput(prompt)
 
 		if confirmation != clusterSpec.Name {
-			color.Yellow("⚠️  Destruction cancelled - cluster name didn't match")
+			color.Yellow("WARN: Destruction cancelled - cluster name didn't match")
 			return nil
 		}
 	}
@@ -300,15 +300,15 @@ func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 		return err
 	}
 
-	color.Yellow("🔻 Destroying cluster components...")
+	color.Yellow("Destroying cluster components...")
 	if err := mgr.DestroyCluster(clusterSpec, opts.RemoveData); err != nil {
-		color.Red("❌ Destroy failed: %v", err)
+		color.Red("FAIL: Destroy failed: %v", err)
 		return err
 	}
 
-	color.Green("✅ Cluster destroyed successfully")
+	color.Green("Cluster destroyed successfully")
 	if opts.RemoveData {
-		color.Green("🗑️  Data and configuration directories removed")
+		color.Green("Data and configuration directories removed")
 	}
 	return nil
 }
