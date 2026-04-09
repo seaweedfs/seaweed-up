@@ -264,7 +264,7 @@ func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error 
 }
 
 func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
-	color.Green("📉 Scaling in cluster: %s", clusterName)
+	color.Green("Scaling in cluster: %s", clusterName)
 
 	if len(opts.RemoveNodes) == 0 {
 		return fmt.Errorf("--remove-node is required")
@@ -322,7 +322,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 
 	if !opts.SkipConfirm {
 		if !utils.PromptForConfirmation("Proceed with scale-in and data drain?") {
-			color.Yellow("⚠️  Scale-in cancelled by user")
+			color.Yellow("WARN: Scale-in cancelled by user")
 			return nil
 		}
 	}
@@ -334,7 +334,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 
 	for _, t := range targets {
 		nodeAddr := fmt.Sprintf("%s:%d", t.spec.Ip, nonZero(t.spec.Port, 8080))
-		color.Cyan("🫧  Draining volumes from %s ...", nodeAddr)
+		color.Cyan("Draining volumes from %s ...", nodeAddr)
 
 		drainTimeout := opts.DrainTimeout
 		if drainTimeout <= 0 {
@@ -348,15 +348,15 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
 			}
 		}
-		color.Green("✅ Drain complete for %s", nodeAddr)
+		color.Green("Drain complete for %s", nodeAddr)
 
 		if err := removeVolumeNode(t.spec, t.index, sshUser, sshIdentity, sudoPass, opts.SSHPort, clusterSpec); err != nil {
 			return fmt.Errorf("remove node %s: %w", nodeAddr, err)
 		}
-		color.Green("✅ Removed seaweed-volume unit from %s", t.spec.Ip)
+		color.Green("Removed seaweed-volume unit from %s", t.spec.Ip)
 	}
 
-	color.Green("✅ Scale-in complete for cluster %s", clusterSpec.Name)
+	color.Green("Scale-in complete for cluster %s", clusterSpec.Name)
 	return nil
 }
 
