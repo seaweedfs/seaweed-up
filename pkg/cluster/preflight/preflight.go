@@ -745,7 +745,7 @@ func Pretty(w io.Writer, results []Result) {
 	}
 	sort.Strings(hosts)
 	for _, h := range hosts {
-		fmt.Fprintf(w, "Host %s\n", h)
+		_, _ = fmt.Fprintf(w, "Host %s\n", h)
 		for _, r := range byHost[h] {
 			var tag string
 			switch {
@@ -756,7 +756,7 @@ func Pretty(w io.Writer, results []Result) {
 			default:
 				tag = ok("OK  ")
 			}
-			fmt.Fprintf(w, "  [%s] %-12s %s\n", tag, r.Name, r.Detail)
+			_, _ = fmt.Fprintf(w, "  [%s] %-12s %s\n", tag, r.Name, r.Detail)
 		}
 	}
 }
