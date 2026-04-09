@@ -182,7 +182,7 @@ This command safely upgrades cluster components with minimal downtime:
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runClusterUpgrade(name, opts)
+			return runClusterUpgrade(cmd.Context(), name, opts)
 		},
 	}
 

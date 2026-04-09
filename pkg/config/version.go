@@ -1,20 +1,13 @@
 package config
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -178,57 +171,6 @@ func FetchReleaseBinary(ctx context.Context, owner, repo, ver, assetSuffix strin
 	return tarball, md5Data, assetName, rel.Version, nil
 }
 
-func DownloadRelease(ctx context.Context, os, arch string, isLargeDisk, isFull bool, destination string, ver string) (version string, err error) {
-	rel, err := GitHubLatestRelease(ctx, ver, "seaweedfs", "seaweedfs")
-	if err != nil {
-		return "", err
-	}
-
-	log.Printf("download version: %s", rel.Version)
-
-	largeDiskSuffix := ""
-	if isLargeDisk {
-		largeDiskSuffix = "_large_disk"
-	}
-
-	fullSuffix := ""
-	if isFull {
-		fullSuffix = "_full"
-	}
-
-	ext := "tar.gz"
-
-	suffix := fmt.Sprintf("%s_%s%s%s.%s", os, arch, fullSuffix, largeDiskSuffix, ext)
-	md5Filename := fmt.Sprintf("%s.md5", suffix)
-	_, md5Val, err := getGithubDataFile(ctx, rel.Assets, md5Filename)
-	if err != nil {
-		return "", err
-	}
-
-	downloadFilename, buf, err := getGithubDataFile(ctx, rel.Assets, suffix)
-	if err != nil {
-		return "", err
-	}
-
-	md5Ctx := md5.New()
-	md5Ctx.Write(buf)
-	binaryMd5 := md5Ctx.Sum(nil)
-	if hex.EncodeToString(binaryMd5) != string(md5Val[0:32]) {
-		log.Printf("md5:'%s' '%s'", hex.EncodeToString(binaryMd5), string(md5Val[0:32]))
-		err = fmt.Errorf("binary md5sum doesn't match")
-		return "", err
-	}
-
-	err = extractToFile(buf, downloadFilename, destination)
-	if err != nil {
-		return "", err
-	} else {
-		log.Printf("successfully updated weed to version %v", rel.Version)
-	}
-
-	return rel.Version, nil
-}
-
 func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -285,82 +227,6 @@ func getGithubDataFile(ctx context.Context, assets []Asset, suffix string) (file
 	}
 
 	return filename, data, nil
-}
-
-func extractToFile(buf []byte, filename, target string) error {
-	var rd io.Reader = bytes.NewReader(buf)
-
-	switch filepath.Ext(filename) {
-	case ".gz":
-		gr, err := gzip.NewReader(rd)
-		if err != nil {
-			return err
-		}
-		defer gr.Close()
-		trd := tar.NewReader(gr)
-		hdr, terr := trd.Next()
-		if terr != nil {
-			log.Printf("uncompress file(%s) failed:%s", hdr.Name, terr)
-			return terr
-		}
-		rd = trd
-	case ".zip":
-		zrd, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
-		if err != nil {
-			return err
-		}
-
-		if len(zrd.File) != 1 {
-			return fmt.Errorf("ZIP archive contains more than one file")
-		}
-
-		file, err := zrd.File[0].Open()
-		if err != nil {
-			return err
-		}
-
-		defer func() {
-			_ = file.Close()
-		}()
-
-		rd = file
-	}
-
-	// Write everything to a temp file
-	dir := filepath.Dir(target)
-	new, err := os.CreateTemp(dir, "weed")
-	if err != nil {
-		return err
-	}
-
-	n, err := io.Copy(new, rd)
-	if err != nil {
-		_ = new.Close()
-		// #nosec G703
-		_ = os.Remove(new.Name())
-		return err
-	}
-	if err = new.Sync(); err != nil {
-		return err
-	}
-	if err = new.Close(); err != nil {
-		return err
-	}
-
-	mode := os.FileMode(0755)
-	// attempt to find the original mode
-	if fi, err := os.Lstat(target); err == nil {
-		mode = fi.Mode()
-	}
-
-	// Rename the temp file to the final location atomically.
-	// #nosec G703
-	if err := os.Rename(new.Name(), target); err != nil {
-		return err
-	}
-
-	log.Printf("saved %d bytes in %v\n", n, filepath.Clean(target))
-	return os.Chmod(target, mode)
 }
 
 func withProgressBar(r io.ReadCloser, length int) io.ReadCloser {

@@ -194,6 +194,23 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		}
 		mgr.Version = latest.Version
 	}
+
+	// For enterprise deploys, pre-warm the binary cache here where we still
+	// hold cmd.Context(). The downstream per-host deploy loop no longer has
+	// a context in its signature, so fetching here ensures the GitHub API
+	// call honors Ctrl+C / deadline propagation from the cobra command.
+	if mgr.Enterprise {
+		if _, _, _, err := mgr.EnsureEnterpriseBinary(cmd.Context(), mgr.Version); err != nil {
+			return fmt.Errorf("prefetch enterprise binary: %w", err)
+		}
+		// If the caller asked for "latest", mgr.Version is already set
+		// above by the OSS/enterprise version lookup, so this is a no-op
+		// in practice — but keeping the assignment in sync with the
+		// resolved tag guards against any future divergence.
+		if resolved := mgr.EnterpriseResolvedVersion(); resolved != "" {
+			mgr.Version = resolved
+		}
+	}
 	
 	// Confirm deployment if not skipped
 	if !opts.SkipConfirm {
@@ -466,7 +483,7 @@ func orDash(s string) string {
 	return s
 }
 
-func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
+func runClusterUpgrade(ctx context.Context, clusterName string, opts *ClusterUpgradeOptions) error {
 	color.Green("Upgrading cluster: %s to version %s", clusterName, opts.Version)
 
 	if opts.Version == "" {
@@ -543,6 +560,17 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		RollbackOnFailure:     opts.RollbackOnFailure,
 		DryRun:                opts.DryRun,
 		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
+	}
+
+	// Pre-warm the enterprise binary cache while we still hold the cobra
+	// command context so cancellation propagates into the GitHub fetch.
+	// The *target* version is what we want staged on hosts, not the
+	// previously-probed running version held in mgr.Version. See
+	// runClusterDeploy for the matching call on the deploy path.
+	if mgr.Enterprise && !opts.DryRun {
+		if _, _, _, err := mgr.EnsureEnterpriseBinary(ctx, opts.Version); err != nil {
+			return fmt.Errorf("prefetch enterprise binary: %w", err)
+		}
 	}
 
 	if err := mgr.UpgradeCluster(clusterSpec, opts.Version, upgradeOpts); err != nil {

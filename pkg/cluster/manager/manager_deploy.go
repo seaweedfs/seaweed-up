@@ -426,7 +426,14 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		// against the private github.com/seaweedfs/artifactory repo) so
 		// that install.sh's [ ! -f ] guard short-circuits the curl step.
 		// This keeps GitHub tokens off the remote hosts entirely.
-		tarball, md5Data, assetName, err := m.ensureEnterpriseBinary(context.Background())
+		//
+		// The cache is expected to have been pre-warmed by the caller
+		// (runClusterDeploy/runClusterUpgrade) with cmd.Context() so that
+		// cancellation propagates; passing context.Background() here is a
+		// defense-in-depth fallback that only runs if pre-warming was
+		// skipped (in which case the sync.Once hit above would need to
+		// actually issue the GitHub API call).
+		tarball, md5Data, assetName, err := m.EnsureEnterpriseBinary(context.Background(), m.Version)
 		if err != nil {
 			return err
 		}

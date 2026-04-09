@@ -73,11 +73,12 @@ type Manager struct {
 	// enterpriseBinaryOnce guards a one-shot fetch of the enterprise
 	// binary + md5 so that concurrent per-host deploys share a single
 	// in-memory copy instead of each hitting the GitHub API.
-	enterpriseBinaryOnce sync.Once
-	enterpriseBinary     []byte
-	enterpriseBinaryMD5  []byte
-	enterpriseAssetName  string
-	enterpriseFetchErr   error
+	enterpriseBinaryOnce      sync.Once
+	enterpriseBinary          []byte
+	enterpriseBinaryMD5       []byte
+	enterpriseAssetName       string
+	enterpriseResolvedVersion string
+	enterpriseFetchErr        error
 
 	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
 	// PrepareAllHosts calls PrepareHostAddress directly.
@@ -107,21 +108,26 @@ func (m *Manager) sudo(op operator.CommandOperator, cmd string) error {
 	return op.Execute(fmt.Sprintf("echo %s | sudo -S %s", shellSingleQuote(m.sudoPass), cmd))
 }
 
-// ensureEnterpriseBinary fetches the enterprise tarball + md5 once and
+// EnsureEnterpriseBinary fetches the enterprise tarball + md5 once and
 // caches them on the Manager so that subsequent per-host deploys reuse the
 // same in-memory copies. Safe for concurrent callers.
+//
+// version selects the release to pull ("" or "0" means "latest"). Callers
+// that hold a request context (e.g. cmd.Context() from a cobra command)
+// should invoke this up front so that the GitHub API call honors
+// cancellation and deadlines; the per-host deploy loop below only ever
+// hits the sync.Once cache-hit path and never creates a new context.
 //
 // The asset suffix is derived from m.TargetArch (defaulting to amd64 if
 // unset) and the standard "_full_large_disk" build flavor used by the
 // install script.
-func (m *Manager) ensureEnterpriseBinary(ctx context.Context) (tarball, md5 []byte, assetName string, err error) {
+func (m *Manager) EnsureEnterpriseBinary(ctx context.Context, version string) (tarball, md5 []byte, assetName string, err error) {
 	m.enterpriseBinaryOnce.Do(func() {
 		arch := m.TargetArch
 		if arch == "" {
 			arch = "amd64"
 		}
 		suffix := config.BuildAssetSuffix("linux", arch, true, true)
-		version := m.Version
 		if version == "" {
 			version = "0" // GitHubLatestRelease: "0" means latest
 		}
@@ -133,9 +139,15 @@ func (m *Manager) ensureEnterpriseBinary(ctx context.Context) (tarball, md5 []by
 		m.enterpriseBinary = bin
 		m.enterpriseBinaryMD5 = sum
 		m.enterpriseAssetName = name
-		if m.Version == "" {
-			m.Version = resolved
-		}
+		m.enterpriseResolvedVersion = resolved
 	})
 	return m.enterpriseBinary, m.enterpriseBinaryMD5, m.enterpriseAssetName, m.enterpriseFetchErr
+}
+
+// EnterpriseResolvedVersion returns the release tag resolved by the last
+// successful EnsureEnterpriseBinary call, or "" if the cache has not been
+// populated. Useful when callers pass "latest" and need to know what they
+// actually got.
+func (m *Manager) EnterpriseResolvedVersion() string {
+	return m.enterpriseResolvedVersion
 }
