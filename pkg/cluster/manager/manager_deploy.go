@@ -65,6 +65,37 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
+	if m.shouldInstall("worker") && len(specification.WorkerServers) > 0 {
+		var admins []string
+		for _, w := range specification.WorkerServers {
+			if w.Admin != "" {
+				admins = append(admins, w.Admin)
+				break
+			}
+		}
+		if len(admins) == 0 {
+			// Default to the first master host on the standard admin port 23646.
+			for _, masterSpec := range specification.MasterServers {
+				admins = append(admins, fmt.Sprintf("%s:%d", masterSpec.Ip, 23646))
+				break
+			}
+		}
+		var workerWg sync.WaitGroup
+		for index, workerSpec := range specification.WorkerServers {
+			workerWg.Add(1)
+			go func(index int, workerSpec *spec.WorkerServerSpec) {
+				defer workerWg.Done()
+				if err := m.DeployWorkerServer(admins, workerSpec, index); err != nil {
+					deployErrors = append(deployErrors, fmt.Errorf("deploy to worker server %s:%d :%v", workerSpec.Ip, workerSpec.PortSsh, err))
+				}
+			}(index, workerSpec)
+		}
+		workerWg.Wait()
+		if len(deployErrors) > 0 {
+			return deployErrors[0]
+		}
+	}
+
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
@@ -100,6 +131,9 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, envoySpec := range specification.EnvoyServers {
 		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
+	}
+	for _, workerSpec := range specification.WorkerServers {
+		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
 	}
 }
 
