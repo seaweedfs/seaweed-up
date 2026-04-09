@@ -36,6 +36,9 @@ This command group provides comprehensive cluster lifecycle management including
 	cmd.AddCommand(newClusterScaleCmd())
 	cmd.AddCommand(newClusterDestroyCmd())
 	cmd.AddCommand(newClusterListCmd())
+	cmd.AddCommand(newClusterPrometheusConfigCmd())
+	cmd.AddCommand(newClusterDashboardCmd())
+	cmd.AddCommand(newClusterNodeExporterCmd())
 	
 	return cmd
 }
