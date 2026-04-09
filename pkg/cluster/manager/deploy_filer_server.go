@@ -15,7 +15,22 @@ func (m *Manager) DeployFilerServer(masters []string, f *spec.FilerServerSpec, i
 		var buf bytes.Buffer
 		f.WriteToBuffer(masters, &buf)
 
-		return m.deployComponentInstance(op, component, componentInstance, &buf)
+		// Resolve the typed filer.toml backend (leveldb2 by default) and
+		// stage it for deployComponentInstance, which ships everything in
+		// dir/config to the host's ConfigDir/<instance>.d directory.
+		backend, err := f.BackendFromConfig()
+		if err != nil {
+			return fmt.Errorf("filer backend config: %w", err)
+		}
+		tomlContent, err := backend.RenderTOML()
+		if err != nil {
+			return fmt.Errorf("render filer.toml: %w", err)
+		}
+
+		return m.deployComponentInstance(op, component, componentInstance, &buf, componentExtraFile{
+			Name:    "filer.toml",
+			Content: []byte(tomlContent),
+		})
 
 	})
 }

@@ -103,7 +103,20 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 }
 
-func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer) error {
+// componentExtraFile describes an additional configuration file staged
+// alongside the <component>.options file for a given component instance.
+// The contents are uploaded into the install script's staging config
+// directory so that create_user_and_config copies them into the host's
+// <ConfigDir>/<instance>.d directory before the service is started.
+type componentExtraFile struct {
+	// Name is the destination basename inside the staging config dir,
+	// e.g. "filer.toml".
+	Name string
+	// Content is the raw file content to upload.
+	Content []byte
+}
+
+func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer, extraFiles ...componentExtraFile) error {
 	info("Deploying " + componentInstance + "...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
@@ -146,6 +159,14 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 	err = op.Upload(cliOptions, fmt.Sprintf("%s/config/%s.options", dir, component), "0644")
 	if err != nil {
 		return fmt.Errorf("error received during upload %s.options: %s", component, err)
+	}
+
+	// Upload any per-component extra configuration files (e.g. filer.toml).
+	for _, extra := range extraFiles {
+		err = op.Upload(bytes.NewReader(extra.Content), fmt.Sprintf("%s/config/%s", dir, extra.Name), "0644")
+		if err != nil {
+			return fmt.Errorf("error received during upload %s: %s", extra.Name, err)
+		}
 	}
 
 	info("Installing " + componentInstance + "...")
