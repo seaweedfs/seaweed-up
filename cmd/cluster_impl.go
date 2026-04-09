@@ -293,8 +293,10 @@ func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose 
 	color.Green("Cluster Status: %s", name)
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "COMPONENT\tADDRESS\tHEALTHY\tVERSION\tDETAIL")
-	writeRow := func(r health.ProbeResult) {
+	if _, err := fmt.Fprintln(tw, "COMPONENT\tADDRESS\tHEALTHY\tVERSION\tDETAIL"); err != nil {
+		return fmt.Errorf("write status header: %w", err)
+	}
+	writeRow := func(r health.ProbeResult) error {
 		healthy := "NO"
 		if r.Healthy {
 			healthy = "OK"
@@ -315,16 +317,25 @@ func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose 
 		if detail == "" {
 			detail = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Kind, r.Address, healthy, orDash(r.Version), detail)
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Kind, r.Address, healthy, orDash(r.Version), detail); err != nil {
+			return fmt.Errorf("write status row: %w", err)
+		}
+		return nil
 	}
 	for _, r := range ch.Masters {
-		writeRow(r)
+		if err := writeRow(r); err != nil {
+			return err
+		}
 	}
 	for _, r := range ch.Volumes {
-		writeRow(r)
+		if err := writeRow(r); err != nil {
+			return err
+		}
 	}
 	for _, r := range ch.Filers {
-		writeRow(r)
+		if err := writeRow(r); err != nil {
+			return err
+		}
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("flush status table: %w", err)

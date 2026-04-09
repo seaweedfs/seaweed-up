@@ -129,7 +129,7 @@ func (p *Prober) fetchJSON(ctx context.Context, url string) (map[string]any, err
 		return nil, fmt.Errorf("response body exceeded %d bytes limit", maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d: %s...", resp.StatusCode, string(body[:min(len(body), 1024)]))
+		return nil, fmt.Errorf("status %d: %s (truncated)", resp.StatusCode, string(body[:min(len(body), 1024)]))
 	}
 	var out map[string]any
 	if len(body) == 0 {
