@@ -3,16 +3,18 @@ package manager
 import (
 	"bytes"
 	"context"
-	"errors"
+	stderrors "errors"
 	"fmt"
-	pkgerrors "github.com/pkg/errors"
+	"sync"
+
+	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
-	"sync"
+	"golang.org/x/sync/errgroup"
 )
 
 func (m *Manager) shouldInstall(c string) bool {
@@ -36,39 +38,59 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 
-	var wg sync.WaitGroup
-	var deployMu sync.Mutex
-	var deployErrors []error
+	// Fan out volume and filer server deploys using errgroup.
+	//
+	// Note: errgroup.Wait() only returns the first non-nil error. To ensure
+	// that operators see ALL per-host failures (not just the first), we
+	// collect every error into a mutex-guarded slice, log each of them, and
+	// build a combined error message that mentions every failing host.
+	var eg errgroup.Group
+	if m.Concurrency > 0 {
+		eg.SetLimit(m.Concurrency)
+	}
+
+	var (
+		errMu        sync.Mutex
+		deployErrors []error
+	)
+	recordErr := func(err error) {
+		errMu.Lock()
+		defer errMu.Unlock()
+		fmt.Printf("[ERROR] %v\n", err)
+		deployErrors = append(deployErrors, err)
+	}
 
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			wg.Add(1)
-			go func(index int, volumeSpec *spec.VolumeServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					deployMu.Lock()
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
-					deployMu.Unlock()
+					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, volumeSpec)
+				return nil
+			})
 		}
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
-			wg.Add(1)
-			go func(index int, filerSpec *spec.FilerServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-					deployMu.Lock()
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err))
-					deployMu.Unlock()
+					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, filerSpec)
+				return nil
+			})
 		}
 	}
-	wg.Wait()
+	// Wait for all goroutines to complete. We intentionally ignore
+	// eg.Wait()'s single-error return and build a combined error from the
+	// full slice so that every failing host is surfaced to the caller.
+	_ = eg.Wait()
 	if len(deployErrors) > 0 {
-		return errors.Join(deployErrors...)
+		if len(deployErrors) == 1 {
+			return deployErrors[0]
+		}
+		return fmt.Errorf("%d deploy errors: %w", len(deployErrors), stderrors.Join(deployErrors...))
 	}
 
 	if m.shouldInstall("worker") && len(specification.WorkerServers) > 0 {
@@ -90,30 +112,35 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			}
 		}
 
-		var workerWg sync.WaitGroup
-		var workerMu sync.Mutex
-		var workerErrors []error
-		for index, workerSpec := range specification.WorkerServers {
-			workerWg.Add(1)
-			go func(index int, workerSpec *spec.WorkerServerSpec) {
-				defer workerWg.Done()
-				if err := m.DeployWorkerServer(defaultAdmins, workerSpec, index); err != nil {
-					workerMu.Lock()
-					workerErrors = append(workerErrors, fmt.Errorf("deploy to worker server %s:%d :%v", workerSpec.Ip, workerSpec.PortSsh, err))
-					workerMu.Unlock()
-				}
-			}(index, workerSpec)
+		// Fan out worker deploys using the same errgroup + shared error
+		// slice pattern as the volume/filer phase above so that every
+		// failing host is surfaced to the caller.
+		var workerEg errgroup.Group
+		if m.Concurrency > 0 {
+			workerEg.SetLimit(m.Concurrency)
 		}
-		workerWg.Wait()
-		if len(workerErrors) > 0 {
-			return errors.Join(workerErrors...)
+		for index, workerSpec := range specification.WorkerServers {
+			workerEg.Go(func() error {
+				if err := m.DeployWorkerServer(defaultAdmins, workerSpec, index); err != nil {
+					wrapped := fmt.Errorf("deploy worker server %s:%d: %w", workerSpec.Ip, workerSpec.PortSsh, err)
+					recordErr(wrapped)
+				}
+				return nil
+			})
+		}
+		_ = workerEg.Wait()
+		if len(deployErrors) > 0 {
+			if len(deployErrors) == 1 {
+				return deployErrors[0]
+			}
+			return fmt.Errorf("%d deploy errors: %w", len(deployErrors), stderrors.Join(deployErrors...))
 		}
 	}
 
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
-			return pkgerrors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
 		}
 		for index, envoySpec := range specification.EnvoyServers {
 			envoySpec.Version = utils.Nvl(envoySpec.Version, latest.Version)
