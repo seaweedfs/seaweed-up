@@ -87,7 +87,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 func TestExistsAndDelete(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv(state.EnvHome, tmp)
-	s, _ := state.NewStore("")
+	s, err := state.NewStore("")
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
 
 	if s.Exists("ghost") {
 		t.Error("Exists reported true for missing cluster")
@@ -109,9 +112,16 @@ func TestExistsAndDelete(t *testing.T) {
 func TestList(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv(state.EnvHome, tmp)
-	s, _ := state.NewStore("")
+	s, err := state.NewStore("")
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
 
-	if got := s.List(); len(got) != 0 {
+	got, err := s.List()
+	if err != nil {
+		t.Fatalf("List empty store: %v", err)
+	}
+	if len(got) != 0 {
 		t.Errorf("List empty store = %d, want 0", len(got))
 	}
 
@@ -120,7 +130,10 @@ func TestList(t *testing.T) {
 			t.Fatalf("Save %s: %v", name, err)
 		}
 	}
-	got := s.List()
+	got, err = s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
 	if len(got) != 3 {
 		t.Fatalf("List = %d, want 3", len(got))
 	}

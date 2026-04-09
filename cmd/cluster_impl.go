@@ -327,7 +327,10 @@ func runClusterList(opts *ClusterListOptions) error {
 	if err != nil {
 		return fmt.Errorf("open state store: %w", err)
 	}
-	entries := store.List()
+	entries, err := store.List()
+	if err != nil {
+		return fmt.Errorf("list clusters: %w", err)
+	}
 
 	if opts.JSONOutput {
 		type jsonEntry struct {

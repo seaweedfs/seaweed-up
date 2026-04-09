@@ -158,11 +158,15 @@ func (s *Store) Exists(name string) bool {
 }
 
 // List returns all persisted clusters sorted by name. Clusters whose
-// files are unreadable or malformed are skipped.
-func (s *Store) List() []Entry {
+// files are unreadable or malformed are skipped. If the state directory
+// does not exist, List returns an empty slice and no error.
+func (s *Store) List() ([]Entry, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read state dir %q: %w", s.dir, err)
 	}
 	var result []Entry
 	for _, e := range entries {
@@ -178,7 +182,7 @@ func (s *Store) List() []Entry {
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Meta.Name < result[j].Meta.Name
 	})
-	return result
+	return result, nil
 }
 
 // Delete removes all persisted state for the given cluster.
