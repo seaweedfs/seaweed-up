@@ -369,10 +369,10 @@ func runClusterList(opts *ClusterListOptions) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tVERSION\tHOSTS\tMASTERS\tVOLUMES\tFILERS\tDEPLOYED")
+	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tHOSTS\tMASTERS\tVOLUMES\tFILERS\tDEPLOYED")
 	for _, e := range entries {
 		deployed := e.Meta.DeployedAt.Local().Format("2006-01-02 15:04:05")
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
 			e.Meta.Name,
 			e.Meta.Version,
 			len(e.Meta.Hosts),
@@ -382,7 +382,7 @@ func runClusterList(opts *ClusterListOptions) error {
 			deployed,
 		)
 		if opts.Verbose && len(e.Meta.Hosts) > 0 {
-			fmt.Fprintf(tw, "  hosts: %s\t\t\t\t\t\t\n", strings.Join(e.Meta.Hosts, ", "))
+			_, _ = fmt.Fprintf(tw, "  hosts: %s\t\t\t\t\t\t\n", strings.Join(e.Meta.Hosts, ", "))
 		}
 	}
 	return tw.Flush()
