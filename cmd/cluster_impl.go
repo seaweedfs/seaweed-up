@@ -31,6 +31,7 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
+	TLS          bool
 }
 
 type ClusterStatusOptions struct {
@@ -140,6 +141,24 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		}
 	}
 	
+	// Bootstrap TLS certificates if requested. We run this before the
+	// component deploy so that security.toml is already in place when
+	// seaweed binaries start on the remote hosts.
+	if opts.TLS {
+		clusterSpec.GlobalOptions.TLSEnabled = true
+		color.Cyan("🔐 Bootstrapping TLS for cluster %s", clusterSpec.Name)
+		certOpts := &ClusterCertOptions{
+			ConfigFile:   opts.ConfigFile,
+			User:         mgr.User,
+			SSHPort:      opts.SSHPort,
+			IdentityFile: mgr.IdentityFile,
+		}
+		if err := runClusterCertInit(clusterSpec.Name, certOpts); err != nil {
+			color.Red("❌ TLS bootstrap failed: %v", err)
+			return err
+		}
+	}
+
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
 		color.Red("❌ Deployment failed: %v", err)

@@ -36,6 +36,7 @@ This command group provides comprehensive cluster lifecycle management including
 	cmd.AddCommand(newClusterScaleCmd())
 	cmd.AddCommand(newClusterDestroyCmd())
 	cmd.AddCommand(newClusterListCmd())
+	cmd.AddCommand(newClusterCertCmd())
 	
 	return cmd
 }
@@ -78,7 +79,8 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
-	
+	cmd.Flags().BoolVar(&opts.TLS, "tls", false, "bootstrap TLS (generate CA + per-host certs) before deploy")
+
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
