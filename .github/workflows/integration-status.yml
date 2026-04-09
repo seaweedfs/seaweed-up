@@ -39,7 +39,10 @@ jobs:
 
       - name: Create Docker network
         run: |
-          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+          # Use a unique subnet (10.201.39.0/24) to avoid overlap with the
+          # default GitHub Actions docker bridge address pool and with the
+          # 172.28.0.0/16 subnet used by the main integration-tests workflow.
+          docker network create --driver bridge --subnet 10.201.39.0/24 seaweed-up-net
 
       - name: Start containers with docker run
         run: |
@@ -50,7 +53,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.28.0.10 \
+            --ip 10.201.39.10 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
 
@@ -97,8 +100,8 @@ jobs:
           # Wait for SSH
           sleep 5
           for j in {1..30}; do
-            if nc -z 172.28.0.10 22 2>/dev/null; then
-              echo "SSH ready on 172.28.0.10"
+            if nc -z 10.201.39.10 22 2>/dev/null; then
+              echo "SSH ready on 10.201.39.10"
               break
             fi
             if [ $j -eq 30 ]; then
@@ -120,12 +123,12 @@ jobs:
 
       - name: Verify SSH connectivity
         run: |
-          ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@172.28.0.10 "echo 'SSH OK'"
+          ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@10.201.39.10 "echo 'SSH OK'"
 
       - name: Deploy single-node cluster
         run: |
           ../../seaweed-up cluster deploy test-status \
-            -f testdata/cluster-single.yaml \
+            -f testdata/cluster-single-status.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
             --yes
@@ -138,20 +141,22 @@ jobs:
           docker exec seaweed-up-host1 ss -tlnp 2>&1 || true
 
           # Sanity checks
-          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
-          nc -z 172.28.0.10 8382 || (echo "Volume not running" && exit 1)
-          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
+          nc -z 10.201.39.10 9333 || (echo "Master not running" && exit 1)
+          nc -z 10.201.39.10 8382 || (echo "Volume not running" && exit 1)
+          nc -z 10.201.39.10 8888 || (echo "Filer not running" && exit 1)
           echo "All ports listening"
 
       - name: Run cluster status (table)
         run: |
-          ../../seaweed-up cluster status -f testdata/cluster-single.yaml
+          ../../seaweed-up cluster status -f testdata/cluster-single-status.yaml
 
       - name: Run cluster status (JSON)
         run: |
-          ../../seaweed-up cluster status -f testdata/cluster-single.yaml --json
+          ../../seaweed-up cluster status -f testdata/cluster-single-status.yaml --json
 
       - name: Run integration status Go test
+        env:
+          SEAWEED_UP_EXTERNAL_ENV: "1"
         run: |
           go test -tags integration -run TestClusterStatusReal -v -timeout 20m ./...
 

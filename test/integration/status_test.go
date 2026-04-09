@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,14 @@ func TestClusterStatusReal(t *testing.T) {
 		}
 	}()
 
-	configFile := env.GetClusterConfig("cluster-single.yaml")
+	// Use a status-specific cluster config so this test can run with a
+	// unique docker subnet in CI without touching the shared single-node
+	// testdata used by the main integration-tests workflow.
+	configName := "cluster-single.yaml"
+	if os.Getenv("SEAWEED_UP_EXTERNAL_ENV") == "1" {
+		configName = "cluster-single-status.yaml"
+	}
+	configFile := env.GetClusterConfig(configName)
 	sshKey := env.GetSSHKeyPath()
 
 	output, err := env.RunSeaweedUp(

@@ -56,6 +56,17 @@ func (e *TestEnvironment) SkipIfNotAvailable(t *testing.T) {
 
 // Setup starts the Docker environment
 func (e *TestEnvironment) Setup() error {
+	// When the test environment is managed externally (e.g. by a CI
+	// workflow that has already created the network, started containers,
+	// installed SSH and provisioned keys), skip the docker-compose path
+	// entirely. This lets CI jobs use a unique docker subnet without
+	// touching the shared docker-compose.yml file.
+	if os.Getenv("SEAWEED_UP_EXTERNAL_ENV") == "1" {
+		e.t.Log("SEAWEED_UP_EXTERNAL_ENV=1: using externally managed test environment")
+		e.dockerRunning = false
+		return nil
+	}
+
 	e.t.Log("Setting up Docker test environment...")
 
 	composeFile := filepath.Join(e.projectRoot, "test", "integration", "docker-compose.yml")
