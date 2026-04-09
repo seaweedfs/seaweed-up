@@ -121,10 +121,17 @@ jobs:
           # binary, then unpack the enterprise tarball for the same tag and
           # confirm the hashes match. If install.sh had pulled from the OSS
           # repo, the binary hash would not match the enterprise tarball.
-          VERSION=$(docker exec seaweed-up-host1 /usr/local/bin/weed version | awk '{print $3}')
-          echo "Deployed version: $VERSION"
-          URL="https://github.com/seaweedfs/artifactory/releases/download/${VERSION}/weed-enterprise-linux_amd64_large_disk.tar.gz"
-          curl -sfL -o /tmp/ent.tgz "$URL"
+          #
+          # Enterprise builds self-report as "<tag>-enterprise" (e.g.
+          # "4.19-enterprise") but the GitHub release is tagged as plain
+          # "<tag>" ("4.19"), so strip any "-enterprise" suffix before
+          # constructing the URL.
+          RAW_VERSION=$(docker exec seaweed-up-host1 /usr/local/bin/weed version | awk '{print $3}')
+          TAG=${RAW_VERSION%-enterprise}
+          echo "Binary reports: $RAW_VERSION (release tag: $TAG)"
+          URL="https://github.com/seaweedfs/artifactory/releases/download/${TAG}/weed-enterprise-linux_amd64_large_disk.tar.gz"
+          curl -sfL -o /tmp/ent.tgz "$URL" \
+            || (echo "failed to download enterprise tarball from $URL" && exit 1)
           mkdir -p /tmp/ent && tar xzf /tmp/ent.tgz -C /tmp/ent
           ENT_HASH=$(sha256sum /tmp/ent/weed | awk '{print $1}')
           HOST_HASH=$(docker exec seaweed-up-host1 sha256sum /usr/local/bin/weed | awk '{print $1}')
@@ -132,7 +139,7 @@ jobs:
           echo "installed /usr/local/bin/weed sha256: $HOST_HASH"
           test "$ENT_HASH" = "$HOST_HASH" \
             || (echo "installed binary does not match enterprise tarball" && exit 1)
-          echo "Enterprise binary verified for version $VERSION"
+          echo "Enterprise binary verified for tag $TAG"
 
       - name: Wait for services
         run: |
