@@ -52,6 +52,13 @@ type ClusterDeployOptions struct {
 	TLS          bool
 	Check        bool
 	Concurrency  int
+	// Enterprise selects the private SeaweedFS enterprise release repo
+	// (github.com/seaweedfs/artifactory) as the binary source. Requires
+	// $GITHUB_TOKEN or $GH_TOKEN with read access to that repo.
+	Enterprise bool
+	// TargetArch is the target binary architecture for enterprise downloads
+	// (e.g. "amd64", "arm64"). Defaults to "amd64".
+	TargetArch string
 }
 
 type ClusterStatusOptions struct {
@@ -72,6 +79,12 @@ type ClusterUpgradeOptions struct {
 	DryRun                bool
 	RollbackOnFailure     bool
 	InsecureSkipTLSVerify bool
+	// Enterprise pulls target binaries from the private SeaweedFS
+	// enterprise release repo (github.com/seaweedfs/artifactory).
+	Enterprise bool
+	// TargetArch is the target binary architecture for enterprise
+	// downloads (defaults to "amd64").
+	TargetArch string
 }
 
 type ClusterScaleOutOptions struct {
@@ -129,6 +142,8 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
 	mgr.Concurrency = opts.Concurrency
+	mgr.Enterprise = opts.Enterprise
+	mgr.TargetArch = opts.TargetArch
 	
 	// Default SSH user to current user if not specified
 	if opts.User == "" {
@@ -169,11 +184,13 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		color.Green("Preflight checks passed")
 	}
 
-	// Get latest version if not specified
+	// Get latest version if not specified. Enterprise deploys look up the
+	// version from the private artifactory repo instead of the OSS repo.
 	if mgr.Version == "" {
-		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", "seaweedfs", "seaweedfs")
+		owner, repo := mgr.ReleaseOwnerRepo()
+		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", owner, repo)
 		if err != nil {
-			return fmt.Errorf("unable to get latest version: %w", err)
+			return fmt.Errorf("unable to get latest version from %s/%s: %w", owner, repo, err)
 		}
 		mgr.Version = latest.Version
 	}
@@ -469,6 +486,8 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	if mgr.SshPort == 0 {
 		mgr.SshPort = 22
 	}
+	mgr.Enterprise = opts.Enterprise
+	mgr.TargetArch = opts.TargetArch
 
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()

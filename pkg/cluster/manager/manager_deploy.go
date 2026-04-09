@@ -412,6 +412,40 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"ForceRestart":      m.ForceRestart,
 		"Version":           m.Version,
 		"ProxyConfig":       "",
+		"Arch":              "",
+		// ReleaseOwner/ReleaseRepo drive the URL the OSS install path
+		// curls from. Enterprise deploys pre-stage the tarball on the
+		// remote host and never actually hit these URLs, but we still
+		// template them in for consistency.
+		"ReleaseOwner": ossReleaseOwner,
+		"ReleaseRepo":  ossReleaseRepo,
+	}
+
+	if m.Enterprise {
+		// Pre-stage the enterprise binary (downloaded by the controller
+		// against the private github.com/seaweedfs/artifactory repo) so
+		// that install.sh's [ ! -f ] guard short-circuits the curl step.
+		// This keeps GitHub tokens off the remote hosts entirely.
+		tarball, md5Data, assetName, err := m.ensureEnterpriseBinary(context.Background())
+		if err != nil {
+			return err
+		}
+		arch := m.TargetArch
+		if arch == "" {
+			arch = "amd64"
+		}
+		data["Arch"] = arch
+		data["ReleaseOwner"] = enterpriseReleaseOwner
+		data["ReleaseRepo"] = enterpriseReleaseRepo
+		data["Version"] = m.Version
+
+		stagedName := fmt.Sprintf("seaweed_%s_%s", m.Version, assetName)
+		if err := op.Upload(bytes.NewReader(tarball), fmt.Sprintf("%s/%s", dir, stagedName), "0644"); err != nil {
+			return fmt.Errorf("stage enterprise binary: %w", err)
+		}
+		if err := op.Upload(bytes.NewReader(md5Data), fmt.Sprintf("%s/%s.md5", dir, stagedName), "0644"); err != nil {
+			return fmt.Errorf("stage enterprise md5: %w", err)
+		}
 	}
 
 	// Configure proxy if specified
