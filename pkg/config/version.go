@@ -48,6 +48,30 @@ type githubError struct {
 	Message string
 }
 
+// githubToken returns a GitHub API token from the environment if one is set.
+// Checked in order: GITHUB_TOKEN (populated automatically in GitHub Actions),
+// then GH_TOKEN (used by the gh CLI). Returns "" when neither is set, in
+// which case API calls are made anonymously.
+func githubToken() string {
+	for _, env := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if v := strings.TrimSpace(os.Getenv(env)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// setGithubAuthHeaders adds an Authorization header to req when a GitHub
+// token is available in the environment. GitHub's anonymous rate limit is
+// 60 req/hour per IP, which is easily exhausted on shared CI runners;
+// authenticated requests get a much higher quota.
+func setGithubAuthHeaders(req *http.Request) {
+	if token := githubToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	}
+}
+
 // GitHubLatestRelease uses the GitHub API to get information about the specific
 // release of a repository.
 func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (Release, error) {
@@ -62,6 +86,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 
 	// pin API version 3
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	setGithubAuthHeaders(req)
 
 	res, err := ctxhttp.Do(ctx, http.DefaultClient, req)
 	if err != nil {
@@ -173,6 +198,11 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 
 	// request binary data
 	req.Header.Set("Accept", "application/octet-stream")
+	// Asset download URLs are served from api.github.com; authenticate when
+	// possible to avoid anonymous rate-limiting on shared CI runners.
+	if strings.Contains(url, "api.github.com") {
+		setGithubAuthHeaders(req)
+	}
 
 	res, err := ctxhttp.Do(ctx, http.DefaultClient, req)
 	if err != nil {

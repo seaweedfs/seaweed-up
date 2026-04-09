@@ -183,6 +183,11 @@ jobs:
           done
 
       - name: Run single-node deployment test
+        env:
+          # Authenticate GitHub API calls from the deploy step so that
+          # fetching the SeaweedFS release metadata does not hit the
+          # anonymous 60 req/hour rate limit shared across CI runners.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ../../seaweed-up cluster deploy test-single \
             -f testdata/cluster-single.yaml \
@@ -383,6 +388,11 @@ jobs:
 
       - name: Run multi-node deployment test
         working-directory: test/integration
+        env:
+          # Authenticate GitHub API calls from the deploy step so that
+          # fetching the SeaweedFS release metadata does not hit the
+          # anonymous 60 req/hour rate limit shared across CI runners.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ../../seaweed-up cluster deploy test-multi \
             -f testdata/cluster-multi.yaml \
