@@ -142,7 +142,7 @@ jobs:
           # The Go test uses docker-compose for setup; we already have the
           # host running via docker run. We still run the test for coverage
           # when docker-compose is not present it will skip gracefully.
-          go test -tags integration ./test/integration/ -run TestHostPrep -v || echo "Go integration test exited (may require docker-compose)"
+          go test -tags integration ./test/integration/ -run TestHostPrep -v
 
       - name: Save logs
         if: always()

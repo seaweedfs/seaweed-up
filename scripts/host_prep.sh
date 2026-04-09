@@ -114,6 +114,25 @@ setup_firewall() {
         $SUDO iptables -I INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || warn "iptables insert ${p} failed"
       fi
     done
+
+    # Persist iptables rules across reboots. Try known mechanisms in order;
+    # fail loudly if none are available, since an unpersisted firewall is
+    # a silent correctness hazard after reboot.
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+      info "Persisting iptables rules via netfilter-persistent"
+      $SUDO netfilter-persistent save >/dev/null 2>&1 || fatal "netfilter-persistent save failed"
+    elif command -v iptables-save >/dev/null 2>&1; then
+      info "Persisting iptables rules via iptables-save to /etc/iptables/rules.v4"
+      $SUDO mkdir -p /etc/iptables >/dev/null 2>&1 || fatal "failed to create /etc/iptables"
+      if ! $SUDO sh -c 'iptables-save > /etc/iptables/rules.v4' 2>/dev/null; then
+        fatal "iptables-save to /etc/iptables/rules.v4 failed"
+      fi
+    elif command -v service >/dev/null 2>&1 && $SUDO service iptables status >/dev/null 2>&1; then
+      info "Persisting iptables rules via 'service iptables save'"
+      $SUDO service iptables save >/dev/null 2>&1 || fatal "service iptables save failed"
+    else
+      fatal "iptables rules could not be persisted: install iptables-persistent/netfilter-persistent or iptables-save to keep rules across reboots"
+    fi
     return 0
   fi
 

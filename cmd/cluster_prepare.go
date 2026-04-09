@@ -36,6 +36,7 @@ This uploads and executes an idempotent script that:
   - Enables chrony or systemd-timesyncd for time sync`,
 		Example: `  seaweed-up cluster prepare -f cluster.yaml
   seaweed-up cluster host-prep -f cluster.yaml --yes`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterPrepare(cmd, args, opts)
 		},

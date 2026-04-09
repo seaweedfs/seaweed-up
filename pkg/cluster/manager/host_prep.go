@@ -37,7 +37,7 @@ func (m *Manager) PrepareHost(op operator.CommandOperator) error {
 		return fmt.Errorf("upload host_prep.sh: %w", err)
 	}
 
-	cmd := fmt.Sprintf("cat %s | SUDO_PASS=\"%s\" sh -", remotePath, m.sudoPass)
+	cmd := fmt.Sprintf("cat %s | SUDO_PASS=%s sh -", remotePath, shellSingleQuote(m.sudoPass))
 	if err := op.Execute(cmd); err != nil {
 		return fmt.Errorf("run host_prep.sh: %w", err)
 	}
@@ -112,7 +112,7 @@ func (m *Manager) PrepareHostAddress(ip string, sshPort int) error {
 		fmt.Sprintf("%s:%d", ip, sshPort),
 		m.User,
 		m.IdentityFile,
-		m.sudoPass,
+		"",
 		func(op operator.CommandOperator) error {
 			return m.PrepareHost(op)
 		},
