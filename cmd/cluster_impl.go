@@ -269,24 +269,79 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 
 func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 	color.Red("💥 WARNING: This will destroy cluster '%s'", clusterName)
-	
+
 	if opts.RemoveData {
 		color.Red("⚠️  ALL DATA WILL BE PERMANENTLY DELETED!")
 	}
-	
+
+	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to load cluster configuration: %w", err)
+	}
+	if clusterName != "" {
+		clusterSpec.Name = clusterName
+	}
+
 	if !opts.SkipConfirm {
-		confirmation := utils.PromptForInput("Type the cluster name to confirm destruction: ")
-		
-		if confirmation != clusterName {
+		prompt := fmt.Sprintf("Type the cluster name '%s' to confirm destruction: ", clusterSpec.Name)
+		confirmation := utils.PromptForInput(prompt)
+
+		if confirmation != clusterSpec.Name {
 			color.Yellow("⚠️  Destruction cancelled - cluster name didn't match")
 			return nil
 		}
 	}
-	
-	// TODO: Implement destroy logic
-	fmt.Printf("Destroy functionality not yet implemented\n")
-	
+
+	mgr, err := newManagerForLifecycle(0, "", "")
+	if err != nil {
+		return err
+	}
+
+	color.Yellow("🔻 Destroying cluster components...")
+	if err := mgr.DestroyCluster(clusterSpec, opts.RemoveData); err != nil {
+		color.Red("❌ Destroy failed: %v", err)
+		return err
+	}
+
+	color.Green("✅ Cluster destroyed successfully")
+	if opts.RemoveData {
+		color.Green("🗑️  Data and configuration directories removed")
+	}
 	return nil
+}
+
+// newManagerForLifecycle builds a manager.Manager populated with SSH
+// credentials suitable for lifecycle operations (start/stop/restart/destroy).
+// Zero/empty values fall back to sensible defaults.
+func newManagerForLifecycle(sshPort int, user, identityFile string) (*manager.Manager, error) {
+	mgr := manager.NewManager()
+
+	if sshPort == 0 {
+		sshPort = 22
+	}
+	mgr.SshPort = sshPort
+
+	if user == "" {
+		currentUser, err := utils.CurrentUser()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current user for SSH: %w", err)
+		}
+		mgr.User = currentUser
+	} else {
+		mgr.User = user
+	}
+
+	if identityFile == "" {
+		home, err := utils.UserHome()
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine home directory for SSH identity file: %w", err)
+		}
+		mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+	} else {
+		mgr.IdentityFile = identityFile
+	}
+
+	return mgr, nil
 }
 
 func runClusterList(opts *ClusterListOptions) error {

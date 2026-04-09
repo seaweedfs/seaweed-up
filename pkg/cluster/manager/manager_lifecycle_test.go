@@ -1,0 +1,119 @@
+package manager
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+)
+
+func sampleSpec() *spec.Specification {
+	return &spec.Specification{
+		Name: "test",
+		GlobalOptions: spec.GlobalOptions{
+			ConfigDir: "/etc/seaweed",
+			DataDir:   "/opt/seaweed",
+		},
+		MasterServers: []*spec.MasterServerSpec{
+			{Ip: "10.0.0.1", PortSsh: 22},
+		},
+		VolumeServers: []*spec.VolumeServerSpec{
+			{Ip: "10.0.0.1", PortSsh: 22},
+			{Ip: "10.0.0.2", PortSsh: 22},
+		},
+		FilerServers: []*spec.FilerServerSpec{
+			{Ip: "10.0.0.3", PortSsh: 22},
+		},
+	}
+}
+
+func TestUniqueHosts(t *testing.T) {
+	s := sampleSpec()
+	hosts := uniqueHosts(s, "")
+	if len(hosts) != 3 {
+		t.Fatalf("expected 3 unique hosts, got %d", len(hosts))
+	}
+
+	if got := uniqueHosts(s, "master"); len(got) != 1 || got[0].ip != "10.0.0.1" {
+		t.Errorf("master filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "volume"); len(got) != 2 {
+		t.Errorf("volume filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "filer"); len(got) != 1 || got[0].ip != "10.0.0.3" {
+		t.Errorf("filer filter wrong: %+v", got)
+	}
+}
+
+func TestServicesForHost(t *testing.T) {
+	s := sampleSpec()
+
+	svcs := servicesForHost(s, "10.0.0.1", "")
+	if len(svcs) != 2 {
+		t.Fatalf("expected 2 services for 10.0.0.1, got %v", svcs)
+	}
+	joined := strings.Join(svcs, ",")
+	if !strings.Contains(joined, "seaweed_master0.service") {
+		t.Errorf("missing master0: %s", joined)
+	}
+	if !strings.Contains(joined, "seaweed_volume0.service") {
+		t.Errorf("missing volume0: %s", joined)
+	}
+
+	if got := servicesForHost(s, "10.0.0.1", "master"); len(got) != 1 || got[0] != "seaweed_master0.service" {
+		t.Errorf("master filter: %v", got)
+	}
+
+	if got := servicesForHost(s, "10.0.0.2", ""); len(got) != 1 || got[0] != "seaweed_volume1.service" {
+		t.Errorf("10.0.0.2 volume1: %v", got)
+	}
+}
+
+func TestBuildLifecycleCommand(t *testing.T) {
+	cmd := buildLifecycleCommand(LifecycleStart, []string{"seaweed_master0.service", "seaweed_volume0.service"})
+	if !strings.HasPrefix(cmd, "systemctl start ") {
+		t.Errorf("expected systemctl start prefix: %s", cmd)
+	}
+	if !strings.Contains(cmd, "'seaweed_master0.service'") {
+		t.Errorf("service not quoted: %s", cmd)
+	}
+	if !strings.HasSuffix(cmd, "|| true") {
+		t.Errorf("expected error tolerance: %s", cmd)
+	}
+
+	if got := buildLifecycleCommand(LifecycleStop, nil); got != "true" {
+		t.Errorf("empty services should be no-op true, got %q", got)
+	}
+}
+
+func TestBuildDestroyCommand(t *testing.T) {
+	svcs := []string{"seaweed_master0.service"}
+	cmd := buildDestroyCommand(svcs, "/opt/seaweed", "/etc/seaweed", false)
+
+	for _, expect := range []string{
+		"systemctl stop 'seaweed_master0.service'",
+		"systemctl disable 'seaweed_master0.service'",
+		"rm -f /etc/systemd/system/seaweed_*.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(cmd, expect) {
+			t.Errorf("missing %q in %s", expect, cmd)
+		}
+	}
+	if strings.Contains(cmd, "rm -rf /opt/seaweed") {
+		t.Errorf("should not remove data without flag: %s", cmd)
+	}
+
+	cmd2 := buildDestroyCommand(svcs, "/opt/seaweed", "/etc/seaweed", true)
+	if !strings.Contains(cmd2, "rm -rf /opt/seaweed") {
+		t.Errorf("should remove data dir: %s", cmd2)
+	}
+	if !strings.Contains(cmd2, "rm -rf /etc/seaweed") {
+		t.Errorf("should remove config dir: %s", cmd2)
+	}
+
+	cmd3 := buildDestroyCommand(svcs, "/opt/seaweed", "/opt/seaweed", true)
+	if strings.Count(cmd3, "rm -rf /opt/seaweed") != 1 {
+		t.Errorf("should dedupe identical dirs: %s", cmd3)
+	}
+}
