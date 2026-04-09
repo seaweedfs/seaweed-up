@@ -146,11 +146,11 @@ func buildDestroyCommand(services []string, dataDir, confDir string, removeData 
 			unitPaths = append(unitPaths, shellSingleQuote("/etc/systemd/system/"+svc))
 		}
 		all := strings.Join(quoted, " ")
-		sb.WriteString(fmt.Sprintf("systemctl stop %s || true; ", all))
-		sb.WriteString(fmt.Sprintf("systemctl disable %s || true; ", all))
+		_, _ = fmt.Fprintf(&sb, "systemctl stop %s || true; ", all)
+		_, _ = fmt.Fprintf(&sb, "systemctl disable %s || true; ", all)
 		// Only remove the specific unit files we know belong to this cluster,
 		// avoiding wildcard matches that could delete unrelated units.
-		sb.WriteString(fmt.Sprintf("rm -f %s; ", strings.Join(unitPaths, " ")))
+		_, _ = fmt.Fprintf(&sb, "rm -f %s; ", strings.Join(unitPaths, " "))
 	}
 	sb.WriteString("systemctl daemon-reload || true")
 	if removeData {
@@ -161,10 +161,10 @@ func buildDestroyCommand(services []string, dataDir, confDir string, removeData 
 			return d != "" && d != "/"
 		}
 		if isSafeDir(dataDir) {
-			sb.WriteString(fmt.Sprintf("; rm -rf %s", shellSingleQuote(dataDir)))
+			_, _ = fmt.Fprintf(&sb, "; rm -rf %s", shellSingleQuote(dataDir))
 		}
 		if isSafeDir(confDir) && confDir != dataDir {
-			sb.WriteString(fmt.Sprintf("; rm -rf %s", shellSingleQuote(confDir)))
+			_, _ = fmt.Fprintf(&sb, "; rm -rf %s", shellSingleQuote(confDir))
 		}
 	}
 	return sb.String()
