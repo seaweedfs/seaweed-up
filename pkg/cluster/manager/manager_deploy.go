@@ -18,6 +18,26 @@ func (m *Manager) shouldInstall(c string) bool {
 	return m.ComponentToDeploy == "" || m.ComponentToDeploy == c
 }
 
+// validateSftpFilerPrerequisite ensures that any SFTP server can reach a
+// filer: either the spec defines at least one FilerServer (which prepare()
+// would wire in as the default), or every SftpServer declares an explicit
+// Filer endpoint. Otherwise deployment would produce a gateway with no
+// backing filer.
+func validateSftpFilerPrerequisite(specification *spec.Specification) error {
+	if len(specification.SftpServers) == 0 {
+		return nil
+	}
+	if len(specification.FilerServers) > 0 {
+		return nil
+	}
+	for _, sftpSpec := range specification.SftpServers {
+		if sftpSpec.Filer == "" {
+			return fmt.Errorf("sftp server %s has no filer configured: define at least one filer_servers entry or set an explicit 'filer' on each sftp_servers entry", sftpSpec.Ip)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	m.prepare(specification)
 
@@ -65,7 +85,10 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
-	if m.shouldInstall("sftp") {
+	if m.shouldInstall("sftp") && len(specification.SftpServers) > 0 {
+		if err := validateSftpFilerPrerequisite(specification); err != nil {
+			return err
+		}
 		for index, sftpSpec := range specification.SftpServers {
 			if err := m.DeploySftpServer(masters, sftpSpec, index); err != nil {
 				return fmt.Errorf("deploy to sftp server %s:%d :%v", sftpSpec.Ip, sftpSpec.PortSsh, err)

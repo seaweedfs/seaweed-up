@@ -52,8 +52,6 @@ func TestDeploySftpGateway(t *testing.T) {
 		t.Logf("Deploy output: %s", output)
 	})
 
-	time.Sleep(20 * time.Second)
-
 	host := env.hosts[0]
 	const sftpPort = 2022
 
