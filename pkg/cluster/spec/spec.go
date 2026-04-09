@@ -31,6 +31,7 @@ type (
 		SftpServers   []*SftpServerSpec   `yaml:"sftp_servers"`
 		AdminServers  []*AdminServerSpec  `yaml:"admin_servers"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
+		WorkerServers []*WorkerServerSpec `yaml:"worker_servers"`
 	}
 )
 

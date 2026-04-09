@@ -1,0 +1,186 @@
+name: Integration Tests - Filer Backends
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  filer-postgres:
+    name: Filer Postgres Backend
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start postgres service
+        run: |
+          docker run -d \
+            --name seaweed-up-postgres \
+            --network seaweed-up-net \
+            --ip 172.28.0.20 \
+            -e POSTGRES_USER=seaweed \
+            -e POSTGRES_PASSWORD=seaweedpw \
+            -e POSTGRES_DB=seaweedfs \
+            postgres:15
+
+          echo "Waiting for postgres to be ready..."
+          for i in {1..60}; do
+            if docker exec seaweed-up-postgres pg_isready -U seaweed -d seaweedfs >/dev/null 2>&1; then
+              echo "postgres ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "postgres failed to become ready"
+              docker logs seaweed-up-postgres
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Start systemd container
+        run: |
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          echo "Waiting for container to start..."
+          sleep 10
+          docker ps -a
+
+          echo "Waiting for systemd..."
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "systemd ready (state: $state)"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "systemd timeout"
+              docker logs seaweed-up-host1
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Install SSH on container
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+
+          sleep 5
+          for j in {1..30}; do
+            if nc -z 172.28.0.10 22 2>/dev/null; then
+              echo "SSH ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+
+      - name: Deploy cluster with postgres filer backend
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-filer-pg \
+            -f testdata/cluster-filer-postgres.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          echo "Waiting for services to initialize..."
+          sleep 30
+
+          echo "=== Services on host1 ==="
+          docker exec seaweed-up-host1 systemctl list-units 'seaweed*' --all --no-pager || true
+          docker exec seaweed-up-host1 journalctl -u 'seaweed*' --no-pager -n 80 || true
+
+          echo "=== Listening ports ==="
+          docker exec seaweed-up-host1 ss -tlnp || true
+
+          echo "=== filer.toml on host ==="
+          docker exec seaweed-up-host1 cat /etc/seaweed/filer0.d/filer.toml || true
+
+      - name: Write and read a file via filer
+        run: |
+          set -e
+          printf "hello from filer_postgres_test" > /tmp/seaweed-up-test.txt
+          curl -sS -F file=@/tmp/seaweed-up-test.txt \
+            http://172.28.0.10:8888/seaweed-up-test.txt
+          OUT=$(curl -sS http://172.28.0.10:8888/seaweed-up-test.txt)
+          echo "GET returned: $OUT"
+          if [ "$OUT" != "hello from filer_postgres_test" ]; then
+            echo "Unexpected filer response"
+            exit 1
+          fi
+
+      - name: Verify postgres received rows
+        run: |
+          docker exec seaweed-up-postgres psql -U seaweed -d seaweedfs -c "\dt" || true
+          docker exec seaweed-up-postgres psql -U seaweed -d seaweedfs -c "SELECT count(*) FROM filemeta;" || true
+
+      - name: Archive logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker ps -a > artifacts/docker-ps.log
+          docker logs seaweed-up-postgres > artifacts/postgres.log 2>&1 || true
+          docker logs seaweed-up-host1 > artifacts/host1.log 2>&1 || true
+          docker exec seaweed-up-host1 journalctl -u 'seaweed*' --no-pager > artifacts/host1-seaweed.log 2>&1 || true
+          docker exec seaweed-up-host1 cat /etc/seaweed/filer0.d/filer.toml > artifacts/filer.toml 2>&1 || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: filer-postgres-logs
+          path: artifacts/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 seaweed-up-postgres || true
+          docker rm seaweed-up-host1 seaweed-up-postgres || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh
