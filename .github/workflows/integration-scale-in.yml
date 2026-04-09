@@ -143,6 +143,7 @@ jobs:
           ../../seaweed-up cluster scale in test-scale-in \
             -f testdata/cluster-scale-in.yaml \
             --remove-node 172.28.0.13 \
+            -u root \
             --identity .ssh/id_rsa_test \
             --yes
 

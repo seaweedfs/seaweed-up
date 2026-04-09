@@ -62,6 +62,8 @@ type ClusterScaleOutOptions struct {
 type ClusterScaleInOptions struct {
 	ConfigFile   string
 	RemoveNodes  []string
+	User         string
+	SSHPort      int
 	Identity     string
 	SkipConfirm  bool
 	DrainTimeout time.Duration
@@ -325,7 +327,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		}
 	}
 
-	sshUser, sshIdentity, sudoPass, err := currentSSHCreds(opts.Identity)
+	sshUser, sshIdentity, sudoPass, err := currentSSHCreds(opts.User, opts.Identity)
 	if err != nil {
 		return err
 	}
@@ -341,13 +343,14 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		drainErr := scale.Drain(masterAddr, nodeAddr, drainTimeout)
 		if drainErr != nil {
 			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
-			if fbErr := drainViaWeedShell(master.Ip, master.PortSsh, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
+			masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
+			if fbErr := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
 				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
 			}
 		}
 		color.Green("✅ Drain complete for %s", nodeAddr)
 
-		if err := removeVolumeNode(t.spec, t.index, sshUser, sshIdentity, sudoPass, clusterSpec); err != nil {
+		if err := removeVolumeNode(t.spec, t.index, sshUser, sshIdentity, sudoPass, opts.SSHPort, clusterSpec); err != nil {
 			return fmt.Errorf("remove node %s: %w", nodeAddr, err)
 		}
 		color.Green("✅ Removed seaweed-volume unit from %s", t.spec.Ip)
@@ -408,14 +411,22 @@ func nonZero(v, fallback int) int {
 	return v
 }
 
-// currentSSHCreds returns the current user and identity file used
-// by the deploy path so scale-in can reuse the same connection model.
+// currentSSHCreds returns the user and identity file used by the deploy path
+// so scale-in can reuse the same connection model.
+//
+// If userOverride is non-empty, it is used instead of the current OS user.
 // If identityOverride is non-empty, it is used instead of the default
-// ~/.ssh/id_rsa path.
-func currentSSHCreds(identityOverride string) (user, identity, sudoPass string, err error) {
-	user, err = utils.CurrentUser()
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to get current user: %w", err)
+// ~/.ssh/id_rsa path. Relative identity paths are resolved to an absolute
+// path against the current working directory so later SSH calls (which may
+// run inside goroutines or after a chdir) all read the exact same key file.
+func currentSSHCreds(userOverride, identityOverride string) (user, identity, sudoPass string, err error) {
+	if userOverride != "" {
+		user = userOverride
+	} else {
+		user, err = utils.CurrentUser()
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to get current user: %w", err)
+		}
 	}
 	if identityOverride != "" {
 		identity = identityOverride
@@ -425,6 +436,13 @@ func currentSSHCreds(identityOverride string) (user, identity, sudoPass string, 
 			return "", "", "", fmt.Errorf("failed to determine home directory: %w", err)
 		}
 		identity = filepath.Join(home, ".ssh", "id_rsa")
+	}
+	// Resolve identity to absolute path when it is not already absolute and
+	// is not a ~-prefixed path (which operator.expandPath will handle).
+	if identity != "" && !filepath.IsAbs(identity) && !strings.HasPrefix(identity, "~") {
+		if abs, absErr := filepath.Abs(identity); absErr == nil {
+			identity = abs
+		}
 	}
 	if user != "root" {
 		sudoPass = utils.PromptForPassword("Input sudo password: ")
@@ -450,8 +468,10 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 // removeVolumeNode stops the systemd unit for the volume server, disables
 // it, and removes the data directory and unit file. Mirrors the install.sh
 // layout used by manager_deploy.go.
-func removeVolumeNode(vs *spec.VolumeServerSpec, index int, user, identity, sudoPass string, clusterSpec *spec.Specification) error {
-	host := fmt.Sprintf("%s:%d", vs.Ip, nonZero(vs.PortSsh, 22))
+func removeVolumeNode(vs *spec.VolumeServerSpec, index int, user, identity, sudoPass string, defaultSshPort int, clusterSpec *spec.Specification) error {
+	sshPort := nonZero(vs.PortSsh, defaultSshPort)
+	sshPort = nonZero(sshPort, 22)
+	host := fmt.Sprintf("%s:%d", vs.Ip, sshPort)
 	dataDir := clusterSpec.GlobalOptions.DataDir
 	if dataDir == "" {
 		dataDir = "/opt/seaweed"

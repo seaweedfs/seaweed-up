@@ -214,7 +214,7 @@ to increase cluster capacity and performance.`,
 }
 
 func newClusterScaleInCmd() *cobra.Command {
-	opts := &ClusterScaleInOptions{}
+	opts := &ClusterScaleInOptions{SSHPort: 22}
 	
 	cmd := &cobra.Command{
 		Use:   "in <cluster-name>",
@@ -235,6 +235,8 @@ properly migrated and cluster health is maintained.`,
 	
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
 	cmd.Flags().StringSliceVar(&opts.RemoveNodes, "remove-node", nil, "nodes to remove (comma-separated)")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.Identity, "identity", "i", "", "SSH identity file")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().DurationVar(&opts.DrainTimeout, "drain-timeout", 30*time.Minute, "maximum time to wait for a volume server to drain")
