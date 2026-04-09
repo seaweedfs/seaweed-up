@@ -157,7 +157,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
-		color.Red("Error: Deployment failed: %v", err)
+		color.Red("FAIL: Deployment failed: %v", err)
 		return err
 	}
 
