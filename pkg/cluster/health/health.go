@@ -7,11 +7,30 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
+
+// serverHeaderVersionRe matches "SeaweedFS <version>" in an HTTP Server header,
+// e.g. "SeaweedFS 3.75". The filer root response carries this header but has
+// no JSON body, so it is our only version signal.
+var serverHeaderVersionRe = regexp.MustCompile(`SeaweedFS[\s/]+([0-9][0-9A-Za-z._+\-]*)`)
+
+// parseServerHeaderVersion extracts a SeaweedFS version from a Server header
+// value. Returns "" when the header is absent or does not match.
+func parseServerHeaderVersion(h string) string {
+	if h == "" {
+		return ""
+	}
+	m := serverHeaderVersionRe.FindStringSubmatch(h)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
 
 // ComponentKind identifies the kind of SeaweedFS component probed.
 type ComponentKind string
@@ -208,17 +227,34 @@ func (p *Prober) ProbeVolume(ctx context.Context, ip string, port int) ProbeResu
 	return res
 }
 
-// ProbeFiler probes filer /status.
+// ProbeFiler probes the filer root endpoint. The SeaweedFS filer has no
+// /status endpoint; instead we GET / (which returns a directory listing) and
+// treat any 2xx as healthy. Version, when available, is parsed from the
+// "Server" response header (e.g. "SeaweedFS 3.75").
 func (p *Prober) ProbeFiler(ctx context.Context, ip string, port int) ProbeResult {
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	res := ProbeResult{Kind: KindFiler, Address: addr}
-	data, err := p.fetchJSON(ctx, fmt.Sprintf("http://%s/status", addr))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/", addr), nil)
 	if err != nil {
 		res.Err = err.Error()
 		return res
 	}
-	res.Raw = data
-	res.Version = extractVersion(data)
+	resp, err := p.Client.Do(req)
+	if err != nil {
+		res.Err = err.Error()
+		return res
+	}
+	defer resp.Body.Close()
+	// Drain (bounded) so the connection can be reused, but we don't require
+	// or parse the body — the filer root returns HTML/JSON directory listings
+	// that aren't relevant to health.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		res.Err = fmt.Sprintf("status %d", resp.StatusCode)
+		return res
+	}
+	res.Version = parseServerHeaderVersion(resp.Header.Get("Server"))
 	res.Healthy = true
 	return res
 }

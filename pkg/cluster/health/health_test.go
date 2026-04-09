@@ -55,8 +55,12 @@ func newVolumeServer(t *testing.T) *httptest.Server {
 
 func newFilerServer(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"Version":"3.75"}`))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Real SeaweedFS filer has no /status endpoint; the root returns a
+		// directory listing with a "Server: SeaweedFS <version>" header.
+		w.Header().Set("Server", "SeaweedFS 3.75")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Path":"/","Entries":[]}`))
 	})
 	return httptest.NewServer(mux)
 }
@@ -123,6 +127,60 @@ func TestProbeFiler(t *testing.T) {
 	res := p.ProbeFiler(context.Background(), ip, port)
 	if !res.Healthy {
 		t.Fatalf("unhealthy: %s", res.Err)
+	}
+	if res.Version != "3.75" {
+		t.Errorf("expected version 3.75 from Server header, got %q", res.Version)
+	}
+}
+
+func TestProbeFilerNoServerHeader(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`ok`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	ip, port := parseHostPort(t, srv.URL)
+	p := NewProber(2 * time.Second)
+	res := p.ProbeFiler(context.Background(), ip, port)
+	if !res.Healthy {
+		t.Fatalf("unhealthy: %s", res.Err)
+	}
+	if res.Version != "" {
+		t.Errorf("expected empty version, got %q", res.Version)
+	}
+}
+
+func TestProbeFilerNon2xx(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	ip, port := parseHostPort(t, srv.URL)
+	p := NewProber(2 * time.Second)
+	res := p.ProbeFiler(context.Background(), ip, port)
+	if res.Healthy {
+		t.Fatalf("expected unhealthy")
+	}
+	if !strings.Contains(res.Err, "500") {
+		t.Errorf("expected status 500 in err, got %q", res.Err)
+	}
+}
+
+func TestParseServerHeaderVersion(t *testing.T) {
+	cases := map[string]string{
+		"":                     "",
+		"nginx":                "",
+		"SeaweedFS 3.75":       "3.75",
+		"SeaweedFS/3.80":       "3.80",
+		"SeaweedFS 3.75-beta1": "3.75-beta1",
+	}
+	for in, want := range cases {
+		if got := parseServerHeaderVersion(in); got != want {
+			t.Errorf("parseServerHeaderVersion(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
