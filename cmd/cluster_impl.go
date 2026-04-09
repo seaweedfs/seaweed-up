@@ -24,9 +24,11 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/health"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/preflight"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/scale"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/state"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
+	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -76,9 +78,13 @@ type ClusterScaleOutOptions struct {
 }
 
 type ClusterScaleInOptions struct {
-	ConfigFile  string
-	RemoveNodes []string
-	SkipConfirm bool
+	ConfigFile   string
+	RemoveNodes  []string
+	User         string
+	SSHPort      int
+	Identity     string
+	SkipConfirm  bool
+	DrainTimeout time.Duration
 }
 
 type ClusterDestroyOptions struct {
@@ -669,15 +675,256 @@ func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error 
 
 func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 	color.Green("Scaling in cluster: %s", clusterName)
-	
-	if len(opts.RemoveNodes) > 0 {
-		fmt.Printf("Removing nodes: %v\n", opts.RemoveNodes)
+
+	if len(opts.RemoveNodes) == 0 {
+		return fmt.Errorf("--remove-node is required")
 	}
-	
-	// TODO: Implement scale in logic
-	fmt.Println("Scale in functionality not yet implemented")
-	
+	if opts.ConfigFile == "" {
+		return fmt.Errorf("--file/-f cluster configuration file is required")
+	}
+
+	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to load cluster configuration: %w", err)
+	}
+	if clusterName != "" {
+		clusterSpec.Name = clusterName
+	}
+	if len(clusterSpec.MasterServers) == 0 {
+		return fmt.Errorf("cluster has no master servers defined")
+	}
+
+	// Resolve each --remove-node (host or host:port) to a volume server spec.
+	targets, err := resolveRemoveNodes(clusterSpec, opts.RemoveNodes)
+	if err != nil {
+		return err
+	}
+
+	// Pick a healthy master as the drain coordinator. Iterate through all
+	// configured masters and use the first that responds to a quick health
+	// check, so scale-in still works when masters[0] is down.
+	scheme := "http://"
+	if clusterSpec.GlobalOptions.TLSEnabled {
+		scheme = "https://"
+	}
+	var master *spec.MasterServerSpec
+	var masterPort int
+	var masterAddr string
+	for _, candidate := range clusterSpec.MasterServers {
+		port := nonZero(candidate.Port, 9333)
+		addr := fmt.Sprintf("%s%s:%d", scheme, candidate.Ip, port)
+		if healthyMaster(addr) {
+			master = candidate
+			masterPort = port
+			masterAddr = addr
+			break
+		}
+		color.Yellow("master %s did not respond to health check; trying next", addr)
+	}
+	if master == nil {
+		return fmt.Errorf("no responsive master found among %d configured master(s)", len(clusterSpec.MasterServers))
+	}
+
+	fmt.Printf("Removing %d volume server(s) via master %s:\n", len(targets), masterAddr)
+	for _, t := range targets {
+		fmt.Printf("  - %s:%d (index %d)\n", t.spec.Ip, nonZero(t.spec.Port, 8080), t.index)
+	}
+
+	if !opts.SkipConfirm {
+		if !utils.PromptForConfirmation("Proceed with scale-in and data drain?") {
+			color.Yellow("WARN: Scale-in cancelled by user")
+			return nil
+		}
+	}
+
+	sshUser, sshIdentity, sudoPass, err := currentSSHCreds(opts.User, opts.Identity)
+	if err != nil {
+		return err
+	}
+
+	for _, t := range targets {
+		nodeAddr := fmt.Sprintf("%s:%d", t.spec.Ip, nonZero(t.spec.Port, 8080))
+		color.Cyan("Draining volumes from %s ...", nodeAddr)
+
+		drainTimeout := opts.DrainTimeout
+		if drainTimeout <= 0 {
+			drainTimeout = 30 * time.Minute
+		}
+		drainErr := scale.Drain(masterAddr, nodeAddr, drainTimeout)
+		if drainErr != nil {
+			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
+			masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
+			if fbErr := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
+				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
+			}
+		}
+		color.Green("Drain complete for %s", nodeAddr)
+
+		if err := removeVolumeNode(t.spec, t.index, sshUser, sshIdentity, sudoPass, opts.SSHPort, clusterSpec); err != nil {
+			return fmt.Errorf("remove node %s: %w", nodeAddr, err)
+		}
+		color.Green("Removed seaweed-volume unit from %s", t.spec.Ip)
+	}
+
+	color.Green("Scale-in complete for cluster %s", clusterSpec.Name)
 	return nil
+}
+
+type volumeTarget struct {
+	spec  *spec.VolumeServerSpec
+	index int
+}
+
+// resolveRemoveNodes matches each user-supplied entry against the cluster's
+// volume_servers by ip or ip:port.
+func resolveRemoveNodes(clusterSpec *spec.Specification, removeNodes []string) ([]volumeTarget, error) {
+	var out []volumeTarget
+	for _, raw := range removeNodes {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		host := raw
+		port := 0
+		if i := strings.LastIndex(raw, ":"); i > 0 {
+			if p, err := strconv.Atoi(raw[i+1:]); err == nil {
+				host = raw[:i]
+				port = p
+			}
+		}
+		var matched *volumeTarget
+		for idx, vs := range clusterSpec.VolumeServers {
+			if vs.Ip != host {
+				continue
+			}
+			if port != 0 && nonZero(vs.Port, 8080) != port {
+				continue
+			}
+			matched = &volumeTarget{spec: vs, index: idx}
+			break
+		}
+		if matched == nil {
+			return nil, fmt.Errorf("node %q not found in cluster volume_servers", raw)
+		}
+		out = append(out, *matched)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no valid --remove-node entries")
+	}
+	return out, nil
+}
+
+func nonZero(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
+}
+
+// currentSSHCreds returns the user and identity file used by the deploy path
+// so scale-in can reuse the same connection model.
+//
+// If userOverride is non-empty, it is used instead of the current OS user.
+// If identityOverride is non-empty, it is used instead of the default
+// ~/.ssh/id_rsa path. Relative identity paths are resolved to an absolute
+// path against the current working directory so later SSH calls (which may
+// run inside goroutines or after a chdir) all read the exact same key file.
+func currentSSHCreds(userOverride, identityOverride string) (user, identity, sudoPass string, err error) {
+	if userOverride != "" {
+		user = userOverride
+	} else {
+		user, err = utils.CurrentUser()
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to get current user: %w", err)
+		}
+	}
+	if identityOverride != "" {
+		identity = identityOverride
+	} else {
+		home, err := utils.UserHome()
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to determine home directory: %w", err)
+		}
+		identity = filepath.Join(home, ".ssh", "id_rsa")
+	}
+	// Resolve identity to absolute path when it is not already absolute and
+	// is not a ~-prefixed path (which operator.expandPath will handle).
+	if identity != "" && !filepath.IsAbs(identity) && !strings.HasPrefix(identity, "~") {
+		if abs, absErr := filepath.Abs(identity); absErr == nil {
+			identity = abs
+		}
+	}
+	if user != "root" {
+		sudoPass = utils.PromptForPassword("Input sudo password: ")
+	}
+	return user, identity, sudoPass, nil
+}
+
+// drainViaWeedShell runs `weed shell ... volume.evacuate -node=<target>`
+// on a master host via SSH, as a fallback when HTTP drain is unavailable.
+func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, identity, sudoPass, nodeAddr string) error {
+	if masterSshPort == 0 {
+		masterSshPort = 22
+	}
+	if masterPort == 0 {
+		masterPort = 9333
+	}
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterIp, masterSshPort), user, identity, sudoPass, func(op operator.CommandOperator) error {
+		cmd := fmt.Sprintf("echo 'volume.evacuate -node=%s' | weed shell -master=%s:%d", nodeAddr, masterIp, masterPort)
+		return op.Execute(cmd)
+	})
+}
+
+// removeVolumeNode stops the systemd unit for the volume server, disables
+// it, and removes the data directory and unit file. Mirrors the install.sh
+// layout used by manager_deploy.go.
+func removeVolumeNode(vs *spec.VolumeServerSpec, index int, user, identity, sudoPass string, defaultSshPort int, clusterSpec *spec.Specification) error {
+	sshPort := nonZero(vs.PortSsh, defaultSshPort)
+	sshPort = nonZero(sshPort, 22)
+	host := fmt.Sprintf("%s:%d", vs.Ip, sshPort)
+	dataDir := clusterSpec.GlobalOptions.DataDir
+	if dataDir == "" {
+		dataDir = "/opt/seaweed"
+	}
+	confDir := clusterSpec.GlobalOptions.ConfigDir
+	if confDir == "" {
+		confDir = "/etc/seaweed"
+	}
+	instance := fmt.Sprintf("volume%d", index)
+	unit := fmt.Sprintf("seaweed_%s.service", instance)
+
+	// Guard against catastrophic rm: never allow "/" or empty base dirs.
+	if !safeRemoveDir(dataDir) {
+		return fmt.Errorf("refusing to remove instance under unsafe data_dir %q", dataDir)
+	}
+	if !safeRemoveDir(confDir) {
+		return fmt.Errorf("refusing to remove options file under unsafe config_dir %q", confDir)
+	}
+
+	return operator.ExecuteRemote(host, user, identity, sudoPass, func(op operator.CommandOperator) error {
+		prefix := ""
+		if sudoPass != "" {
+			prefix = fmt.Sprintf("echo %s | sudo -S ", shellSingleQuote(sudoPass))
+		} else if user != "root" {
+			prefix = "sudo "
+		}
+		instanceDataPath := strings.TrimRight(dataDir, "/") + "/" + instance
+		instanceOptionsPath := strings.TrimRight(confDir, "/") + "/" + instance + ".options"
+		cmds := []string{
+			fmt.Sprintf("%ssystemctl stop %s || true", prefix, unit),
+			fmt.Sprintf("%ssystemctl disable %s || true", prefix, unit),
+			fmt.Sprintf("%srm -f /etc/systemd/system/%s", prefix, unit),
+			fmt.Sprintf("%ssystemctl daemon-reload || true", prefix),
+			fmt.Sprintf("%srm -rf %s", prefix, shellSingleQuote(instanceDataPath)),
+			fmt.Sprintf("%srm -f %s", prefix, shellSingleQuote(instanceOptionsPath)),
+		}
+		for _, c := range cmds {
+			if err := op.Execute(c); err != nil {
+				return fmt.Errorf("exec %q: %w", c, err)
+			}
+		}
+		return nil
+	})
 }
 
 func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
@@ -871,4 +1118,48 @@ func loadClusterSpec(configFile string) (*spec.Specification, error) {
 	}
 
 	return clusterSpec, nil
+}
+
+// shellSingleQuote safely wraps s for use as a single-quoted shell argument.
+// Any embedded single quote is escaped as '\'' (close-quote, literal quote,
+// reopen-quote). Duplicated from pkg/cluster/manager/manager_lifecycle.go to
+// avoid introducing an import cycle between cmd and manager.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// safeRemoveDir rejects obviously dangerous base directories so a misconfigured
+// data_dir/config_dir cannot turn scale-in into `rm -rf /...`.
+func safeRemoveDir(dir string) bool {
+	d := strings.TrimSpace(dir)
+	if d == "" {
+		return false
+	}
+	if d == "/" {
+		return false
+	}
+	// Require an absolute path with at least one non-empty segment.
+	if !strings.HasPrefix(d, "/") {
+		return false
+	}
+	trimmed := strings.Trim(d, "/")
+	return trimmed != ""
+}
+
+// healthyMaster performs a fast best-effort GET against a master's
+// /cluster/status endpoint. It returns true only if the endpoint responds
+// with a 2xx within a short timeout. This is used by scale-in to pick a
+// responsive master out of the configured list.
+func healthyMaster(masterURL string) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(masterURL, "/")+"/cluster/status", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
