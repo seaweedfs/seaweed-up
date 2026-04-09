@@ -50,8 +50,6 @@ func TestDeployAdminUI(t *testing.T) {
 	})
 
 	t.Run("VerifyAdminHTTP", func(t *testing.T) {
-		time.Sleep(15 * time.Second)
-
 		host := env.hosts[0]
 		url := fmt.Sprintf("http://%s:23646/", host.IP)
 
