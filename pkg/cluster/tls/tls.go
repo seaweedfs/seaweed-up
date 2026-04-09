@@ -1,0 +1,246 @@
+// Package tls provides TLS bootstrap utilities for SeaweedFS clusters:
+// generating a private CA, issuing per-component certificates, and
+// rendering the SeaweedFS security.toml used by master, volume, filer,
+// and client components.
+package tls
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
+	"strings"
+	"time"
+)
+
+const (
+	// DefaultRemoteCertDir is where certs are installed on remote hosts.
+	DefaultRemoteCertDir = "/etc/seaweed/certs"
+	// DefaultRemoteSecurityTOML is the security.toml path on remote hosts.
+	DefaultRemoteSecurityTOML = "/etc/seaweed/security.toml"
+
+	caCommonName = "SeaweedFS Root CA"
+	caValidYears = 10
+	certValidDay = 825 // days, matching common leaf cert limits
+)
+
+// GenerateCA generates a self-signed ECDSA P-256 CA and returns the
+// certificate and private key as PEM-encoded bytes.
+func GenerateCA() (caPEM, caKeyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate CA key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   caCommonName,
+			Organization: []string{"SeaweedFS"},
+		},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().AddDate(caValidYears, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        false,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create CA cert: %w", err)
+	}
+
+	caPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal CA key: %w", err)
+	}
+	caKeyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return caPEM, caKeyPEM, nil
+}
+
+// ParsedCA holds a decoded CA certificate and private key so that the
+// relatively expensive PEM/x509 parsing only needs to happen once per
+// cluster cert run instead of on every IssueCert call.
+type ParsedCA struct {
+	Cert *x509.Certificate
+	Key  *ecdsa.PrivateKey
+}
+
+// ParseCA decodes PEM-encoded CA certificate and key bytes into a
+// ParsedCA suitable for repeated use with IssueCertFromParsed.
+func ParseCA(caCertPEM, caKeyPEM []byte) (*ParsedCA, error) {
+	cert, key, err := parseCA(caCertPEM, caKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	return &ParsedCA{Cert: cert, Key: key}, nil
+}
+
+// IssueCert signs a leaf certificate using the given CA. The returned
+// cert has the given commonName and the provided SANs (which may be IPs
+// or DNS names). The leaf is valid for both client and server auth so
+// that SeaweedFS components can use a single cert for mTLS.
+func IssueCert(caCertPEM, caKeyPEM []byte, commonName string, sans []string) (certPEM, keyPEM []byte, err error) {
+	parsed, err := ParseCA(caCertPEM, caKeyPEM)
+	if err != nil {
+		return nil, nil, err
+	}
+	return IssueCertFromParsed(parsed, commonName, sans)
+}
+
+// IssueCertFromParsed signs a leaf certificate using a pre-parsed CA.
+// It avoids re-parsing the CA PEM on every invocation, which matters
+// when issuing multiple certs per host.
+func IssueCertFromParsed(ca *ParsedCA, commonName string, sans []string) (certPEM, keyPEM []byte, err error) {
+	caCert, caKey := ca.Cert, ca.Key
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate leaf key: %w", err)
+	}
+
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   commonName,
+			Organization: []string{"SeaweedFS"},
+		},
+		NotBefore:   time.Now().Add(-time.Minute),
+		NotAfter:    time.Now().AddDate(0, 0, certValidDay),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+
+	for _, s := range sans {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if ip := net.ParseIP(s); ip != nil {
+			tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
+		} else {
+			tmpl.DNSNames = append(tmpl.DNSNames, s)
+		}
+	}
+	// Ensure CN is present as a SAN if it wasn't already passed.
+	if ip := net.ParseIP(commonName); ip != nil {
+		tmpl.IPAddresses = append(tmpl.IPAddresses, ip)
+	} else if commonName != "" && !containsString(tmpl.DNSNames, commonName) {
+		tmpl.DNSNames = append(tmpl.DNSNames, commonName)
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sign leaf cert: %w", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+
+	keyDER, err := x509.MarshalECPrivateKey(leafKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal leaf key: %w", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
+}
+
+// RenderSecurityTOML returns the contents of a SeaweedFS security.toml
+// configured for the given component. The returned configuration always
+// references /etc/seaweed/certs/{master,volume,filer,client}.{crt,key}
+// plus the shared ca.crt.
+//
+// The component argument is recorded as a comment so operators can tell
+// which role a given host was provisioned for; the file itself enables
+// mutual TLS between all grpc components.
+func RenderSecurityTOML(component string) string {
+	if component == "" {
+		component = "all"
+	}
+	const tmpl = `# security.toml generated by seaweed-up for component: %s
+# See https://github.com/seaweedfs/seaweedfs/wiki/Security-Configuration
+
+[grpc]
+# gRPC mutual TLS: enable by providing per-component certs below.
+ca = "%[2]s/ca.crt"
+
+[grpc.master]
+cert = "%[2]s/master.crt"
+key  = "%[2]s/master.key"
+
+[grpc.volume]
+cert = "%[2]s/volume.crt"
+key  = "%[2]s/volume.key"
+
+[grpc.filer]
+cert = "%[2]s/filer.crt"
+key  = "%[2]s/filer.key"
+
+[grpc.client]
+cert = "%[2]s/client.crt"
+key  = "%[2]s/client.key"
+
+[https.client]
+enabled = true
+
+[https.volume]
+cert = "%[2]s/volume.crt"
+key  = "%[2]s/volume.key"
+ca   = "%[2]s/ca.crt"
+`
+	return fmt.Sprintf(tmpl, component, DefaultRemoteCertDir)
+}
+
+func parseCA(caCertPEM, caKeyPEM []byte) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	certBlock, _ := pem.Decode(caCertPEM)
+	if certBlock == nil {
+		return nil, nil, fmt.Errorf("decode CA cert PEM")
+	}
+	caCert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
+	}
+	keyBlock, _ := pem.Decode(caKeyPEM)
+	if keyBlock == nil {
+		return nil, nil, fmt.Errorf("decode CA key PEM")
+	}
+	caKey, err := x509.ParseECPrivateKey(keyBlock.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse CA key: %w", err)
+	}
+	return caCert, caKey, nil
+}
+
+func randomSerial() (*big.Int, error) {
+	limit := new(big.Int).Lsh(big.NewInt(1), 128)
+	n, err := rand.Int(rand.Reader, limit)
+	if err != nil {
+		return nil, fmt.Errorf("generate serial: %w", err)
+	}
+	return n, nil
+}
+
+func containsString(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

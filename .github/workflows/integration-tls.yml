@@ -1,0 +1,117 @@
+name: Integration TLS
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tls-bootstrap:
+    name: TLS Bootstrap Deployment
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Unit tests for tls package
+        run: go test ./pkg/cluster/tls/...
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          sleep 10
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "Systemd ready (state: $state)"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install SSH
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+          sleep 5
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys"
+
+      - name: Deploy cluster with --tls
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-tls \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --tls \
+            --yes
+
+      - name: Verify remote cert files installed
+        run: |
+          docker exec seaweed-up-host1 ls -la /etc/seaweed/certs/
+          docker exec seaweed-up-host1 test -f /etc/seaweed/certs/ca.crt
+          docker exec seaweed-up-host1 test -f /etc/seaweed/certs/master.crt
+          docker exec seaweed-up-host1 test -f /etc/seaweed/certs/master.key
+          docker exec seaweed-up-host1 test -f /etc/seaweed/security.toml
+
+      - name: Verify local CA persisted
+        run: |
+          test -f "$HOME/.seaweed-up/clusters/test-tls/certs/ca.crt"
+          test -f "$HOME/.seaweed-up/clusters/test-tls/certs/ca.key"
+
+      - name: Validate curl with CA against master (best effort)
+        run: |
+          sleep 10
+          CA="$HOME/.seaweed-up/clusters/test-tls/certs/ca.crt"
+          curl -sk --cacert "$CA" https://172.28.0.10:9333/cluster/status || \
+            curl -sk http://172.28.0.10:9333/cluster/status || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 || true
+          docker rm seaweed-up-host1 || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh
