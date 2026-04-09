@@ -43,7 +43,7 @@ the cluster specification.`,
 			if len(args) > 0 {
 				clusterSpec.Name = args[0]
 			}
-			fmt.Fprint(cmd.OutOrStdout(), observability.RenderPromConfig(clusterSpec))
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), observability.RenderPromConfig(clusterSpec))
 			return nil
 		},
 	}
@@ -202,7 +202,7 @@ func runNodeExporterInstall(cmd *cobra.Command, s *spec.Specification, opts *Obs
 		h := h
 		g.Go(func() error {
 			mu.Lock()
-			fmt.Fprintf(out, "Installing node_exporter on %s...\n", h.IP)
+			_, _ = fmt.Fprintf(out, "Installing node_exporter on %s...\n", h.IP)
 			mu.Unlock()
 			addr := fmt.Sprintf("%s:%d", h.IP, h.SSHPort)
 			err := operator.ExecuteRemote(addr, opts.User, opts.IdentityFile, "", func(op operator.CommandOperator) error {
