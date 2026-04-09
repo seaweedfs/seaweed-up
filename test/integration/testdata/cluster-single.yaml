@@ -13,7 +13,7 @@ volume_servers:
   - ip: 172.28.0.10
     port: 8382
     folders:
-      - folder: /opt/seaweed/vol1
+      - folder: /opt/seaweed/volume0
         disk: ""
 
 filer_servers:
