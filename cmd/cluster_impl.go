@@ -31,6 +31,7 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
+	Concurrency  int
 }
 
 type ClusterStatusOptions struct {
@@ -93,6 +94,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.PrepareVolumeDisks = opts.MountDisks
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
+	mgr.Concurrency = opts.Concurrency
 	
 	// Default SSH user to current user if not specified
 	if opts.User == "" {

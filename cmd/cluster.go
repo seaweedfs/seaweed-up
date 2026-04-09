@@ -78,7 +78,8 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
-	
+	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "max concurrent per-host deploys (0 = unlimited)")
+
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
