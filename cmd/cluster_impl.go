@@ -360,10 +360,16 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 				lastErr = err
 				continue
 			}
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				lastErr = fmt.Errorf("status %d from %s", resp.StatusCode, url)
+				_ = resp.Body.Close()
+				continue
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			serverHeader := resp.Header.Get("Server")
+			_ = resp.Body.Close()
+			if readErr != nil {
+				lastErr = fmt.Errorf("read body from %s: %w", url, readErr)
 				continue
 			}
 			// Try common JSON fields.
@@ -379,8 +385,8 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 				}
 			}
 			// Fall back to the Server response header.
-			if s := resp.Header.Get("Server"); s != "" {
-				if m := versionRegex.FindString(s); m != "" {
+			if serverHeader != "" {
+				if m := versionRegex.FindString(serverHeader); m != "" {
 					return m, nil
 				}
 			}
