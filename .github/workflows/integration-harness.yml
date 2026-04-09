@@ -42,8 +42,17 @@ jobs:
 
       - name: Run integration harness tests
         run: |
+          # Only exercise tests that use the new self-contained harness
+          # (test/integration/harness and TestDeployErrorAggregation). The
+          # legacy docker-compose based tests in test/integration (TestDeploy*,
+          # TestClusterDestroy) are covered by the separate integration-tests
+          # workflow and rely on docker-compose.yml which lacks the
+          # --cgroupns=host / /sys/fs/cgroup bind-mount required for systemd
+          # on GitHub Actions runners.
           go test -tags=integration -timeout=30m -v \
-            ./test/integration/harness/... \
+            ./test/integration/harness/...
+          go test -tags=integration -timeout=30m -v \
+            -run '^TestDeployErrorAggregation$' \
             ./test/integration/...
 
       - name: Dump docker state on failure

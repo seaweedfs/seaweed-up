@@ -16,6 +16,7 @@ package harness
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -29,6 +30,11 @@ import (
 	"testing"
 	"time"
 )
+
+// dockerImage is the pinned systemd-in-docker image used by the harness.
+// Pinning to a specific tag (instead of :latest) keeps the test environment
+// reproducible and guards against upstream regressions breaking CI.
+const dockerImage = "geerlingguy/docker-ubuntu2204-ansible:2024.04.01"
 
 // Harness owns a docker bridge network plus a set of Ubuntu+systemd containers
 // reachable via SSH. It is safe for a single test goroutine.
@@ -134,7 +140,7 @@ func New(t *testing.T, hostCount int) *Harness {
 			"--network", netName,
 			"--ip", host.IP,
 			"-v", "/sys/fs/cgroup:/sys/fs/cgroup:rw",
-			"geerlingguy/docker-ubuntu2204-ansible:latest",
+			dockerImage,
 		}
 		if err := runCmd("docker", args...); err != nil {
 			t.Fatalf("harness.New: docker run %s: %v", host.Container, err)
@@ -239,12 +245,35 @@ func (h *Harness) containerFor(name string) string {
 func (h *Harness) waitForSystemd(t *testing.T) error {
 	deadline := time.Now().Add(180 * time.Second)
 	for _, host := range h.hosts {
+		var lastState, lastInfraErr string
 		for {
 			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for systemd on %s", host.Container)
+				// Include the most recent observed state and any non-ExitError
+				// failure (docker not found, daemon down, container dead, etc.)
+				// so the test output points at the actual root cause instead
+				// of a bare "timeout".
+				msg := fmt.Sprintf("timeout waiting for systemd on %s (last state: %q)", host.Container, lastState)
+				if lastInfraErr != "" {
+					msg += "; last docker error: " + lastInfraErr
+				}
+				return errors.New(msg)
 			}
-			out, _ := exec.Command("docker", "exec", host.Container, "systemctl", "is-system-running").Output()
+			cmd := exec.Command("docker", "exec", host.Container, "systemctl", "is-system-running")
+			out, err := cmd.Output()
 			state := strings.TrimSpace(string(out))
+			lastState = state
+			if err != nil {
+				// systemctl returns non-zero while the system is still
+				// initializing ("starting") or in "degraded" state. Those
+				// surface as *exec.ExitError and are expected - we only log
+				// real infrastructure failures (docker missing, daemon down,
+				// container exited) loudly so CI output reveals the cause.
+				var exitErr *exec.ExitError
+				if !errors.As(err, &exitErr) {
+					lastInfraErr = err.Error()
+					t.Logf("waitForSystemd: docker exec on %s failed: %v (state=%q)", host.Container, err, state)
+				}
+			}
 			if state == "running" || state == "degraded" {
 				t.Logf("systemd ready on %s (%s)", host.Container, state)
 				break
