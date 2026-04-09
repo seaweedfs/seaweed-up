@@ -36,7 +36,6 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
-	TLS          bool
 }
 
 type ClusterStatusOptions struct {
@@ -148,23 +147,6 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		}
 	}
 	
-	// If --tls requested, bootstrap the CA and distribute certs BEFORE
-	// starting services so that the rendered security.toml is in place
-	// when seaweed processes come up.
-	if opts.TLS {
-		color.Cyan("🔐 Bootstrapping TLS for cluster %q", clusterSpec.Name)
-		certOpts := &ClusterCertOptions{
-			ConfigFile:   opts.ConfigFile,
-			User:         mgr.User,
-			SSHPort:      opts.SSHPort,
-			IdentityFile: mgr.IdentityFile,
-		}
-		if err := runClusterCertInit(clusterSpec.Name, certOpts, false); err != nil {
-			color.Red("❌ TLS bootstrap failed: %v", err)
-			return err
-		}
-	}
-
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
 		color.Red("❌ Deployment failed: %v", err)
