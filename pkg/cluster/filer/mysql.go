@@ -16,11 +16,11 @@ type MySQL struct {
 
 const mysqlTemplate = `[mysql2]
 enabled = true
-hostname = "{{.Hostname}}"
+hostname = {{tomlString .Hostname}}
 port = {{.Port}}
-username = "{{.Username}}"
-password = "{{.Password}}"
-database = "{{.Database}}"
+username = {{tomlString .Username}}
+password = {{tomlString .Password}}
+database = {{tomlString .Database}}
 connection_max_idle = {{.MaxIdleConns}}
 connection_max_open = {{.MaxOpenConns}}
 connection_max_lifetime_seconds = {{.ConnMaxLifetimeSeconds}}
@@ -57,6 +57,6 @@ func (m *MySQL) Validate() error {
 }
 
 // RenderTOML renders the mysql2 section of filer.toml.
-func (m *MySQL) RenderTOML() (string, error) {
+func (m *MySQL) RenderTOML(_ RenderOptions) (string, error) {
 	return render("mysql", mysqlTemplate, m)
 }

@@ -11,6 +11,19 @@ import (
 	"text/template"
 )
 
+// RenderOptions carries instance-scoped context used when materializing a
+// filer.toml file. Backends that own host-local default paths (for example
+// leveldb2's on-disk directory) derive those defaults from
+// InstanceDataDir so that multiple filer instances on the same host get
+// distinct directories.
+type RenderOptions struct {
+	// InstanceDataDir is the per-instance data directory for this filer,
+	// for example "/opt/seaweed/filer0". It may be empty when rendering
+	// outside of a deployment (for example in unit tests), in which case
+	// backends fall back to their historical host-global defaults.
+	InstanceDataDir string
+}
+
 // Backend represents a concrete filer storage backend that can render a
 // filer.toml configuration file.
 type Backend interface {
@@ -25,8 +38,10 @@ type Backend interface {
 
 	// RenderTOML returns the textual filer.toml contents corresponding to
 	// this backend. The output is deterministic and suitable for golden
-	// file comparisons.
-	RenderTOML() (string, error)
+	// file comparisons. opts supplies instance-scoped context such as the
+	// per-instance data directory used to derive host-local path
+	// defaults.
+	RenderTOML(opts RenderOptions) (string, error)
 }
 
 // FromConfig constructs a Backend from the free-form configuration map
@@ -98,7 +113,9 @@ func decodeInto(cfg map[string]interface{}, into interface{}) error {
 // render executes a template against the given data and returns the
 // resulting string, trimming trailing whitespace for stable output.
 func render(name, tmpl string, data interface{}) (string, error) {
-	t, err := template.New(name).Parse(tmpl)
+	t, err := template.New(name).Funcs(template.FuncMap{
+		"tomlString": tomlString,
+	}).Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("filer backend %s: parse template: %w", name, err)
 	}
@@ -108,5 +125,42 @@ func render(name, tmpl string, data interface{}) (string, error) {
 	}
 	out := strings.TrimRight(buf.String(), " \t\n") + "\n"
 	return out, nil
+}
+
+// tomlString renders s as a TOML basic string, including the surrounding
+// double quotes. Backslash, double quote and control characters are
+// escaped per the TOML 1.0 specification so that arbitrary user-supplied
+// values (passwords, hostnames, paths) can safely be embedded into a
+// quoted TOML value.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\f':
+			b.WriteString(`\f`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04X`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 

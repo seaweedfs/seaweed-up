@@ -3,6 +3,9 @@ package manager
 import (
 	"bytes"
 	"fmt"
+	"path"
+
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/filer"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
@@ -22,7 +25,14 @@ func (m *Manager) DeployFilerServer(masters []string, f *spec.FilerServerSpec, i
 		if err != nil {
 			return fmt.Errorf("filer backend config: %w", err)
 		}
-		tomlContent, err := backend.RenderTOML()
+		// Derive host-local path defaults (for example the leveldb2
+		// directory) from the per-instance data directory so that
+		// multiple filers co-located on the same host do not share a
+		// single metadata store.
+		renderOpts := filer.RenderOptions{
+			InstanceDataDir: path.Join(m.dataDir, componentInstance),
+		}
+		tomlContent, err := backend.RenderTOML(renderOpts)
 		if err != nil {
 			return fmt.Errorf("render filer.toml: %w", err)
 		}

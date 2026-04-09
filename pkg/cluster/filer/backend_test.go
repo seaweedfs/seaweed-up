@@ -95,7 +95,7 @@ func TestBackendFromConfigGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FromConfig: %v", err)
 			}
-			got, err := b.RenderTOML()
+			got, err := b.RenderTOML(RenderOptions{})
 			if err != nil {
 				t.Fatalf("RenderTOML: %v", err)
 			}

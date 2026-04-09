@@ -10,8 +10,8 @@ type Redis2 struct {
 
 const redis2Template = `[redis2]
 enabled = true
-address = "{{.Address}}"
-password = "{{.Password}}"
+address = {{tomlString .Address}}
+password = {{tomlString .Password}}
 database = {{.Database}}
 `
 
@@ -33,6 +33,6 @@ func (r *Redis2) Validate() error {
 }
 
 // RenderTOML renders the redis2 section of filer.toml.
-func (r *Redis2) RenderTOML() (string, error) {
+func (r *Redis2) RenderTOML(_ RenderOptions) (string, error) {
 	return render("redis2", redis2Template, r)
 }

@@ -29,13 +29,13 @@ createTable = """
     PRIMARY KEY (dirhash, name)
   );
 """
-hostname = "{{.Hostname}}"
+hostname = {{tomlString .Hostname}}
 port = {{.Port}}
-username = "{{.Username}}"
-password = "{{.Password}}"
-database = "{{.Database}}"
-schema = "{{.Schema}}"
-sslmode = "{{.SslMode}}"
+username = {{tomlString .Username}}
+password = {{tomlString .Password}}
+database = {{tomlString .Database}}
+schema = {{tomlString .Schema}}
+sslmode = {{tomlString .SslMode}}
 connection_max_idle = {{.MaxIdleConns}}
 connection_max_open = {{.MaxOpenConns}}
 connection_max_lifetime_seconds = {{.ConnMaxLifetimeSeconds}}
@@ -77,6 +77,6 @@ func (p *Postgres) Validate() error {
 }
 
 // RenderTOML renders the postgres2 section of filer.toml.
-func (p *Postgres) RenderTOML() (string, error) {
+func (p *Postgres) RenderTOML(_ RenderOptions) (string, error) {
 	return render("postgres", postgresTemplate, p)
 }

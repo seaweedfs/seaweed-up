@@ -16,10 +16,10 @@ type Cassandra struct {
 
 const cassandraTemplate = `[cassandra]
 enabled = true
-keyspace = "{{.Keyspace}}"
+keyspace = {{tomlString .Keyspace}}
 hosts = [{{.HostsLiteral}}]
-username = "{{.Username}}"
-password = "{{.Password}}"
+username = {{tomlString .Username}}
+password = {{tomlString .Password}}
 `
 
 type cassandraTmplData struct {
@@ -51,10 +51,10 @@ func (c *Cassandra) Validate() error {
 }
 
 // RenderTOML renders the cassandra section of filer.toml.
-func (c *Cassandra) RenderTOML() (string, error) {
+func (c *Cassandra) RenderTOML(_ RenderOptions) (string, error) {
 	quoted := make([]string, 0, len(c.Hosts))
 	for _, h := range c.Hosts {
-		quoted = append(quoted, "\""+h+"\"")
+		quoted = append(quoted, tomlString(h))
 	}
 	return render("cassandra", cassandraTemplate, cassandraTmplData{
 		Cassandra:    c,

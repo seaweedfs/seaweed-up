@@ -41,10 +41,10 @@ func (t *TiKV) Validate() error {
 }
 
 // RenderTOML renders the tikv section of filer.toml.
-func (t *TiKV) RenderTOML() (string, error) {
+func (t *TiKV) RenderTOML(_ RenderOptions) (string, error) {
 	quoted := make([]string, 0, len(t.PdAddrs))
 	for _, addr := range t.PdAddrs {
-		quoted = append(quoted, "\""+addr+"\"")
+		quoted = append(quoted, tomlString(addr))
 	}
 	return render("tikv", tikvTemplate, tikvTmplData{
 		TiKV:         t,
