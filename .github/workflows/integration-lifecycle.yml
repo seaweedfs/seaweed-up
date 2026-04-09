@@ -1,0 +1,251 @@
+name: Integration Lifecycle Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: test/integration
+
+jobs:
+  lifecycle:
+    name: Cluster Lifecycle Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        working-directory: .
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start containers with docker run
+        run: |
+          # Use docker run with --cgroupns=host which is required for systemd on GitHub Actions
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          docker run -d \
+            --name seaweed-up-host2 \
+            --hostname host2 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.11 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          docker run -d \
+            --name seaweed-up-host3 \
+            --hostname host3 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.12 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          echo "Waiting for containers to start..."
+          sleep 10
+
+          docker ps -a
+
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+            echo "Container $host status: $status"
+            if [ "$status" != "running" ]; then
+              docker logs $host 2>&1 || true
+              exit 1
+            fi
+          done
+
+          echo "Waiting for systemd to initialize..."
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            for i in {1..60}; do
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Timeout waiting for systemd on $host"
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Install SSH on containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+          done
+
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                echo "SSH ready on $ip"
+                break
+              fi
+              if [ $j -eq 30 ]; then
+                echo "SSH not ready on $ip"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+          done
+
+      - name: Deploy baseline single-node cluster
+        run: |
+          ../../seaweed-up cluster deploy test-lifecycle \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          sleep 15
+          nc -z 172.28.0.10 9333 || (echo "Master not up after deploy" && exit 1)
+          echo "Master running after deploy"
+
+      - name: Stop cluster
+        run: |
+          ../../seaweed-up cluster stop \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          sleep 5
+          if nc -z 172.28.0.10 9333 2>/dev/null; then
+            echo "Master still listening after stop"
+            exit 1
+          fi
+          echo "Master stopped"
+
+      - name: Start cluster
+        run: |
+          ../../seaweed-up cluster start \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          sleep 10
+          nc -z 172.28.0.10 9333 || (echo "Master not running after start" && exit 1)
+          echo "Master running after start"
+
+      - name: Restart cluster
+        run: |
+          ../../seaweed-up cluster restart \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          sleep 10
+          nc -z 172.28.0.10 9333 || (echo "Master not running after restart" && exit 1)
+          echo "Master running after restart"
+
+      - name: Destroy cluster with --remove-data
+        run: |
+          ../../seaweed-up cluster destroy test-lifecycle \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --remove-data \
+            --yes
+
+          # Verify no seaweed unit files remain.
+          REMAINING=$(docker exec seaweed-up-host1 bash -c "ls /etc/systemd/system/seaweed_*.service 2>/dev/null || true" | tr -d '[:space:]')
+          if [ -n "$REMAINING" ]; then
+            echo "Found leftover unit files: $REMAINING"
+            exit 1
+          fi
+
+          # Verify data dir is gone.
+          if docker exec seaweed-up-host1 bash -c "[ -d /opt/seaweed ]"; then
+            echo "Data dir /opt/seaweed still present after destroy --remove-data"
+            exit 1
+          fi
+
+          # Verify nothing is listening.
+          if nc -z 172.28.0.10 9333 2>/dev/null; then
+            echo "Master still listening after destroy"
+            exit 1
+          fi
+
+          echo "Destroy --remove-data verified"
+
+      - name: Save logs
+        if: always()
+        run: |
+          echo "=== Container Status ===" > lifecycle.log
+          docker ps -a >> lifecycle.log
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "=== Logs for $host ===" >> lifecycle.log
+            docker logs $host >> lifecycle.log 2>&1 || true
+          done
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-lifecycle-logs
+          path: test/integration/lifecycle.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker network rm seaweed-up-net || true
+          rm -rf .ssh
