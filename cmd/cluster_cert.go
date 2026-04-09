@@ -163,7 +163,7 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 
 			address := fmt.Sprintf("%s:%d", h.IP, port)
 			err = operator.ExecuteRemote(address, user, identity, sudoPass, func(op operator.CommandOperator) error {
-				return sutls.UploadBundle(op, h.Role, bundle, sudoPass)
+				return sutls.UploadBundle(op, h.Role, bundle, user, sudoPass)
 			})
 			if err != nil {
 				mu.Lock()

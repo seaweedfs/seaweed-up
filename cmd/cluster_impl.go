@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/scale"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/state"
+	sutls "github.com/seaweedfs/seaweed-up/pkg/cluster/tls"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
@@ -191,8 +193,12 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 
 	// If --tls requested, bootstrap the CA and distribute certs BEFORE
 	// starting services so that the rendered security.toml is in place
-	// when seaweed processes come up.
+	// when seaweed processes come up. We also stamp TLSEnabled=true on
+	// the in-memory spec so that it is persisted by state.Save below
+	// and picked up by later commands (status, upgrade, etc.) even if
+	// the source YAML omitted `global.enable_tls`.
 	if opts.TLS {
+		clusterSpec.GlobalOptions.TLSEnabled = true
 		color.Cyan("Bootstrapping TLS for cluster %q", clusterSpec.Name)
 		certOpts := &ClusterCertOptions{
 			ConfigFile:   opts.ConfigFile,
@@ -349,7 +355,10 @@ func displayClusterStatus(ctx context.Context, clusterSpec *spec.Specification, 
 	probeCtx, cancel := context.WithTimeout(ctx, timeout+2*time.Second)
 	defer cancel()
 
-	prober := health.NewProber(timeout)
+	// Derive the probe scheme and trust roots from the cluster spec so
+	// TLS-enabled clusters are probed over HTTPS with the cluster CA.
+	certDir, _ := sutls.LocalClusterDir(clusterSpec.Name)
+	prober := health.NewProberForSpec(timeout, clusterSpec, certDir)
 	ch := prober.Probe(probeCtx, clusterSpec)
 
 	if opts.JSONOutput {
@@ -591,7 +600,7 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 	}
 	client := &http.Client{
 		Timeout:   5 * time.Second,
-		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify),
+		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify, clusterSpec.Name),
 	}
 	var lastErr error
 	sawHealthyMasterWithoutVersion := false
@@ -663,14 +672,24 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 
 // newUpgradeHTTPTransport builds an http.Transport for upgrade probes.
 //
-// Default behavior uses the system cert pool (tls.Config{}). When
-// insecureSkipTLSVerify is true, certificate verification is disabled.
-//
-// TODO: use cluster CA once tls bootstrap PR lands.
-func newUpgradeHTTPTransport(insecureSkipTLSVerify bool) *http.Transport {
-	tlsConfig := &tls.Config{}
+// If the cluster has a CA at ~/.seaweed-up/clusters/<name>/certs/ca.crt
+// (produced by `cluster cert init` / `cluster deploy --tls`), that CA
+// is added as a trust root. If no CA is found, the transport falls back
+// to the system cert pool. InsecureSkipTLSVerify is honored only when
+// explicitly requested.
+func newUpgradeHTTPTransport(insecureSkipTLSVerify bool, clusterName string) *http.Transport {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if insecureSkipTLSVerify {
 		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
+	} else if clusterName != "" {
+		if dir, err := sutls.LocalClusterDir(clusterName); err == nil {
+			if pemBytes, rerr := os.ReadFile(filepath.Join(dir, "ca.crt")); rerr == nil && len(pemBytes) > 0 {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(pemBytes) {
+					tlsConfig.RootCAs = pool
+				}
+			}
+		}
 	}
 	return &http.Transport{TLSClientConfig: tlsConfig}
 }

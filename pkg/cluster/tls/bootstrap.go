@@ -144,8 +144,13 @@ func PersistHostBundle(clusterName, hostIP string, b *Bundle) error {
 // first uploaded into a temporary directory under /tmp (which the SSH
 // user can write to) and then moved into place via a sudo-wrapped
 // install script. sudoPass may be empty when the SSH user is root or
-// has passwordless sudo.
-func UploadBundle(op operator.CommandOperator, component string, b *Bundle, sudoPass string) error {
+// has passwordless sudo: in that case commands are executed directly
+// without any sudo wrapping.
+//
+// sshUser is the SSH login user; when it is "root" we skip the sudo
+// wrapping entirely because the SSH session already runs as root (and
+// the remote box may not even have sudo installed).
+func UploadBundle(op operator.CommandOperator, component string, b *Bundle, sshUser, sudoPass string) error {
 	tmpDir := "/tmp/seaweed-up-tls." + randstr.String(6)
 	defer func() { _ = op.Execute("rm -rf " + tmpDir) }()
 
@@ -196,29 +201,52 @@ func UploadBundle(op operator.CommandOperator, component string, b *Bundle, sudo
 	}
 	fmt.Fprintf(&script, "install -o root -g root -m 0644 %s %s\n", tomlPath, DefaultRemoteSecurityTOML)
 
-	if err := runSudoScript(op, script.String(), sudoPass); err != nil {
+	if err := runInstallScript(op, script.String(), sshUser, sudoPass); err != nil {
 		return fmt.Errorf("install cert bundle: %w", err)
 	}
 	return nil
 }
 
-// runSudoScript pipes the given shell script to `sudo -S sh` on the
-// remote host, supplying sudoPass on stdin when provided. When sudoPass
-// is empty (root or NOPASSWD), it falls back to `sudo -n sh`.
-func runSudoScript(op operator.CommandOperator, script, sudoPass string) error {
+// runInstallScript executes the given shell script on the remote host,
+// choosing between direct execution and a sudo wrapper based on the
+// SSH user and whether a sudo password was supplied.
+//
+//   - When the SSH user is root, the script is piped straight into `sh`:
+//     the session already has root privileges and the host may not even
+//     have sudo installed.
+//   - When sudoPass is empty, we assume NOPASSWD sudo is configured or
+//     the caller is running as root in another guise, and we execute
+//     without sudo. (The caller should pass a non-empty sudoPass only
+//     when sudo is actually required.)
+//   - Otherwise we pipe the password into `sudo -S`. sudoPass is
+//     single-quote-escaped via shellSingleQuote so passwords containing
+//     single quotes cannot break out of the quoted literal.
+func runInstallScript(op operator.CommandOperator, script, sshUser, sudoPass string) error {
 	// base64-encode the script so quoting is robust and we can embed it
 	// safely inside the remote shell command.
 	encoded := base64Encode([]byte(script))
-	if sudoPass == "" {
-		cmd := fmt.Sprintf("echo %s | base64 -d | sudo -n sh", encoded)
+
+	if sshUser == "root" || sudoPass == "" {
+		cmd := fmt.Sprintf("echo %s | base64 -d | sh", encoded)
 		return op.Execute(cmd)
 	}
-	// sudo -S reads the password from stdin; prepend it, then feed the
-	// decoded script on the same pipe. op.Execute does not expose a
-	// distinct stdin, so we compose the stream entirely in the remote
-	// shell command.
-	cmd := fmt.Sprintf("(echo '%s'; echo %s | base64 -d) | sudo -S -p '' sh", sudoPass, encoded)
+
+	// sudo -S reads the password from stdin; prepend it (safely quoted),
+	// then feed the decoded script on the same pipe. op.Execute does not
+	// expose a distinct stdin, so we compose the stream entirely in the
+	// remote shell command.
+	cmd := fmt.Sprintf("(echo %s; echo %s | base64 -d) | sudo -S -p '' sh",
+		shellSingleQuote(sudoPass), encoded)
 	return op.Execute(cmd)
+}
+
+// shellSingleQuote wraps s in single quotes so it is safe to embed in a
+// POSIX shell command. Any single quote inside s is escaped by closing
+// the quoted string, inserting an escaped quote, and reopening:
+// ' -> '\''. Mirrors the helper in pkg/cluster/manager so the two
+// deploy paths share the same quoting semantics.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func base64Encode(b []byte) string {
