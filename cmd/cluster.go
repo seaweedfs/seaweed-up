@@ -34,11 +34,15 @@ This command group provides comprehensive cluster lifecycle management including
 	
 	// Add cluster subcommands
 	cmd.AddCommand(newClusterDeployCmd())
+	cmd.AddCommand(newClusterCheckCmd())
 	cmd.AddCommand(newClusterStatusCmd())
 	cmd.AddCommand(newClusterUpgradeCmd())
 	cmd.AddCommand(newClusterScaleCmd())
 	cmd.AddCommand(newClusterDestroyCmd())
 	cmd.AddCommand(newClusterListCmd())
+	cmd.AddCommand(newClusterStartCmd())
+	cmd.AddCommand(newClusterStopCmd())
+	cmd.AddCommand(newClusterRestartCmd())
 
 	return cmd
 }
@@ -76,11 +80,12 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().StringVar(&opts.Version, "version", "", "SeaweedFS version to deploy")
-	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|envoy]")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|s3|envoy]")
 	cmd.Flags().BoolVar(&opts.MountDisks, "mount-disks", true, "auto mount disks on volume servers")
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().BoolVar(&opts.Check, "check", false, "run preflight checks before deploying and abort on failure")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "max concurrent per-host deploys (0 = unlimited)")
 
 	_ = cmd.MarkFlagRequired("file")
@@ -267,8 +272,8 @@ properly migrated and cluster health is maintained.`,
 }
 
 func newClusterDestroyCmd() *cobra.Command {
-	opts := &ClusterDestroyOptions{}
-	
+	opts := &ClusterDestroyOptions{SSHPort: 22}
+
 	cmd := &cobra.Command{
 		Use:   "destroy <cluster-name>",
 		Short: "Destroy a SeaweedFS cluster",
@@ -290,6 +295,9 @@ stopped and removed. Use --remove-data to also delete all stored data.`,
 	}
 	
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
+	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.RemoveData, "remove-data", false, "remove all cluster data (WARNING: irreversible)")
 	
