@@ -62,7 +62,6 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			index, volumeSpec := index, volumeSpec
 			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
@@ -74,7 +73,6 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
-			index, filerSpec := index, filerSpec
 			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
