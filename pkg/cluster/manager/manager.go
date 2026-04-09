@@ -23,6 +23,10 @@ type Manager struct {
 	sudoPass   string
 	confDir    string
 	dataDir    string
+
+	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
+	// PrepareAllHosts calls PrepareHostAddress directly.
+	prepareHostAddressFn func(ip string, sshPort int) error
 }
 
 func NewManager() *Manager {

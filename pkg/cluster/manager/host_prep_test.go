@@ -125,28 +125,51 @@ func TestPrepareHostUploadsAndRuns(t *testing.T) {
 }
 
 func TestPrepareAllHostsDeduplicatesByIP(t *testing.T) {
-	// We verify dedup logic by calling PrepareHostAddress indirectly would
-	// attempt SSH, so instead test PrepareAllHosts with zero hosts and with
-	// the dedup helper exposed via a spec that has colocated components.
+	// Spec has the same host colocated across master/volume/filer plus a
+	// distinct envoy host. PrepareAllHosts should invoke the prepare hook
+	// exactly once per unique ip:port.
 	s := &spec.Specification{
 		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
 		VolumeServers: []*spec.VolumeServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
 		FilerServers:  []*spec.FilerServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		EnvoyServers:  []*spec.EnvoyServerSpec{{Ip: "10.0.0.2", PortSsh: 2222}},
 	}
 
-	// Ensure dedup key set construction matches expected single host.
-	// Reimplement the same dedup to assert: one unique host.
-	seen := map[string]bool{}
-	for _, x := range s.MasterServers {
-		seen[x.Ip] = true
+	m := NewManager()
+	type call struct {
+		ip   string
+		port int
 	}
-	for _, x := range s.VolumeServers {
-		seen[x.Ip] = true
+	var calls []call
+	m.prepareHostAddressFn = func(ip string, sshPort int) error {
+		calls = append(calls, call{ip: ip, port: sshPort})
+		return nil
 	}
-	for _, x := range s.FilerServers {
-		seen[x.Ip] = true
+
+	if err := m.PrepareAllHosts(s); err != nil {
+		t.Fatalf("PrepareAllHosts returned error: %v", err)
 	}
-	if len(seen) != 1 {
-		t.Fatalf("expected 1 unique host, got %d", len(seen))
+
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 unique host prepare calls, got %d: %+v", len(calls), calls)
+	}
+	if calls[0] != (call{ip: "10.0.0.1", port: 22}) {
+		t.Errorf("first call = %+v, want {10.0.0.1 22}", calls[0])
+	}
+	if calls[1] != (call{ip: "10.0.0.2", port: 2222}) {
+		t.Errorf("second call = %+v, want {10.0.0.2 2222}", calls[1])
+	}
+}
+
+func TestPrepareAllHostsPropagatesError(t *testing.T) {
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+	}
+	m := NewManager()
+	m.prepareHostAddressFn = func(ip string, sshPort int) error {
+		return io.EOF
+	}
+	if err := m.PrepareAllHosts(s); err == nil {
+		t.Fatal("expected error from PrepareAllHosts, got nil")
 	}
 }

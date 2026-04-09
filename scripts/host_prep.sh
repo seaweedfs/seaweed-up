@@ -39,10 +39,10 @@ seaweed soft nofile 1048576
 seaweed hard nofile 1048576
 '
   $SUDO mkdir -p /etc/security/limits.d
-  if [ -f "$LIMITS_FILE" ] && [ "$($SUDO cat $LIMITS_FILE)" = "$LIMITS_CONTENT" ]; then
+  if [ -f "$LIMITS_FILE" ] && [ "$($SUDO cat "$LIMITS_FILE")" = "$(printf '%s' "$LIMITS_CONTENT")" ]; then
     info "limits already up to date"
   else
-    echo "$LIMITS_CONTENT" | $SUDO tee "$LIMITS_FILE" >/dev/null
+    printf '%s' "$LIMITS_CONTENT" | $SUDO tee "$LIMITS_FILE" >/dev/null
     $SUDO chmod 0644 "$LIMITS_FILE"
     info "wrote $LIMITS_FILE"
   fi
@@ -58,10 +58,10 @@ net.core.somaxconn=4096
 fs.file-max=2097152
 '
   $SUDO mkdir -p /etc/sysctl.d
-  if [ -f "$SYSCTL_FILE" ] && [ "$($SUDO cat $SYSCTL_FILE)" = "$SYSCTL_CONTENT" ]; then
+  if [ -f "$SYSCTL_FILE" ] && [ "$($SUDO cat "$SYSCTL_FILE")" = "$(printf '%s' "$SYSCTL_CONTENT")" ]; then
     info "sysctl file already up to date"
   else
-    echo "$SYSCTL_CONTENT" | $SUDO tee "$SYSCTL_FILE" >/dev/null
+    printf '%s' "$SYSCTL_CONTENT" | $SUDO tee "$SYSCTL_FILE" >/dev/null
     $SUDO chmod 0644 "$SYSCTL_FILE"
     info "wrote $SYSCTL_FILE"
   fi
