@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -12,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
 
 // ObservabilityOptions collects shared flags for observability subcommands
@@ -190,15 +192,33 @@ func runNodeExporterInstall(cmd *cobra.Command, s *spec.Specification, opts *Obs
 		return fmt.Errorf("no hosts found in cluster specification")
 	}
 	out := cmd.OutOrStdout()
+	var g errgroup.Group
+	g.SetLimit(8)
+	var (
+		mu      sync.Mutex
+		errList []error
+	)
 	for _, h := range hosts {
-		fmt.Fprintf(out, "Installing node_exporter on %s...\n", h.IP)
-		addr := fmt.Sprintf("%s:%d", h.IP, h.SSHPort)
-		err := operator.ExecuteRemote(addr, opts.User, opts.IdentityFile, "", func(op operator.CommandOperator) error {
-			return observability.InstallNodeExporter(op)
+		h := h
+		g.Go(func() error {
+			mu.Lock()
+			fmt.Fprintf(out, "Installing node_exporter on %s...\n", h.IP)
+			mu.Unlock()
+			addr := fmt.Sprintf("%s:%d", h.IP, h.SSHPort)
+			err := operator.ExecuteRemote(addr, opts.User, opts.IdentityFile, "", func(op operator.CommandOperator) error {
+				return observability.InstallNodeExporter(op)
+			})
+			if err != nil {
+				mu.Lock()
+				errList = append(errList, fmt.Errorf("install node_exporter on %s: %w", h.IP, err))
+				mu.Unlock()
+			}
+			return nil
 		})
-		if err != nil {
-			return fmt.Errorf("install node_exporter on %s: %w", h.IP, err)
-		}
+	}
+	_ = g.Wait()
+	if len(errList) > 0 {
+		return errList[0]
 	}
 	color.Green("node_exporter installed on %d host(s)", len(hosts))
 	return nil

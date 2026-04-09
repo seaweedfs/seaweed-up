@@ -61,7 +61,10 @@ func (g *GrafanaClient) InstallDashboard(ctx context.Context, clusterName string
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("grafana: POST %s: status %d, read body: %w", url, resp.StatusCode, readErr)
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("grafana: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}

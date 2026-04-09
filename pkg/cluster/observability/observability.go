@@ -71,7 +71,6 @@ func InstallNodeExporter(op operator.CommandOperator) error {
 
 	script := strings.Join([]string{
 		"set -e",
-		"mkdir -p /opt/node_exporter",
 		"cd /tmp",
 		fmt.Sprintf("curl -fsSL -o %s %q", tarball, url),
 		fmt.Sprintf("tar -xzf %s", tarball),
