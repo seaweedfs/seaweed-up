@@ -41,10 +41,14 @@ type ClusterStatusOptions struct {
 }
 
 type ClusterUpgradeOptions struct {
-	Version     string
-	ConfigFile  string
-	SkipConfirm bool
-	DryRun      bool
+	Version           string
+	ConfigFile        string
+	User              string
+	SSHPort           int
+	IdentityFile      string
+	SkipConfirm       bool
+	DryRun            bool
+	RollbackOnFailure bool
 }
 
 type ClusterScaleOutOptions struct {
@@ -227,14 +231,76 @@ func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
 
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	color.Green("⬆️  Upgrading cluster: %s to version %s", clusterName, opts.Version)
-	
+
+	if opts.Version == "" {
+		return fmt.Errorf("--version is required")
+	}
+
+	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to load cluster configuration: %w", err)
+	}
+	if clusterName != "" {
+		clusterSpec.Name = clusterName
+	}
+
+	mgr := manager.NewManager()
+	mgr.SshPort = opts.SSHPort
+	if mgr.SshPort == 0 {
+		mgr.SshPort = 22
+	}
+
+	if opts.User == "" {
+		currentUser, err := utils.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("failed to get current user for SSH: %w", err)
+		}
+		mgr.User = currentUser
+	} else {
+		mgr.User = opts.User
+	}
+
+	if opts.IdentityFile == "" {
+		home, err := utils.UserHome()
+		if err != nil {
+			return fmt.Errorf("failed to determine home directory for SSH identity file: %w", err)
+		}
+		mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+	} else {
+		mgr.IdentityFile = opts.IdentityFile
+	}
+
 	if opts.DryRun {
 		color.Yellow("🔍 Dry run mode - no changes will be made")
+	} else if !opts.SkipConfirm {
+		color.Yellow("📋 Upgrade Summary:")
+		fmt.Printf("  Cluster: %s\n", clusterSpec.Name)
+		fmt.Printf("  Target Version: %s\n", opts.Version)
+		fmt.Printf("  Masters: %d\n", len(clusterSpec.MasterServers))
+		fmt.Printf("  Volumes: %d\n", len(clusterSpec.VolumeServers))
+		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
+		fmt.Printf("  Rollback on failure: %v\n", opts.RollbackOnFailure)
+		if !utils.PromptForConfirmation("Proceed with rolling upgrade?") {
+			color.Yellow("⚠️  Upgrade cancelled by user")
+			return nil
+		}
 	}
-	
-	// TODO: Implement upgrade logic
-	fmt.Println("Upgrade functionality not yet implemented")
-	
+
+	upgradeOpts := manager.UpgradeOptions{
+		RollbackOnFailure: opts.RollbackOnFailure,
+		DryRun:            opts.DryRun,
+	}
+
+	if err := mgr.UpgradeCluster(clusterSpec, opts.Version, upgradeOpts); err != nil {
+		color.Red("❌ Upgrade failed: %v", err)
+		return err
+	}
+
+	if opts.DryRun {
+		color.Green("✅ Dry-run complete.")
+	} else {
+		color.Green("✅ Cluster upgraded to %s", opts.Version)
+	}
 	return nil
 }
 
