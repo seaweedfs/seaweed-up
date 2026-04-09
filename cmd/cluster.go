@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -111,13 +113,19 @@ Shows real-time information about cluster components including:
   
   # Auto-refresh status every 5 seconds
   seaweed-up cluster status prod-cluster --refresh=5`,
-		
+
+		// Accept at most one positional cluster-name. When no positional is
+		// given, -f/--file must be provided (enforced in resolveStatusSpec).
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.ConfigFile == "" && len(args) == 0 {
+				return fmt.Errorf("either a cluster-name positional argument or -f/--file is required")
+			}
 			return runClusterStatus(args, opts)
 		},
 	}
-	
-	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required if no cluster-name positional)")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
 	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	cmd.Flags().StringVar(&opts.Timeout, "timeout", "30s", "timeout for status collection")

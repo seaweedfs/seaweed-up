@@ -43,8 +43,32 @@ func TestClusterStatusReal(t *testing.T) {
 		t.Fatalf("Failed to deploy cluster: %v", err)
 	}
 
-	// Give services time to come up fully.
-	time.Sleep(20 * time.Second)
+	// Poll `cluster status` until every component reports healthy, rather
+	// than sleeping for a fixed duration. This is faster on a happy path
+	// and avoids flakiness when services take longer than expected to
+	// come up.
+	const (
+		pollInterval = 2 * time.Second
+		pollTimeout  = 60 * time.Second
+	)
+	var (
+		lastOutput string
+		lastErr    error
+		healthy    bool
+		deadline   = time.Now().Add(pollTimeout)
+	)
+	for time.Now().Before(deadline) {
+		lastOutput, lastErr = env.RunSeaweedUp("cluster", "status", "-f", configFile)
+		if lastErr == nil && strings.Contains(lastOutput, "OK") && !strings.Contains(lastOutput, "UNHEALTHY") {
+			healthy = true
+			break
+		}
+		time.Sleep(pollInterval)
+	}
+	if !healthy {
+		t.Logf("Final status output: %s", lastOutput)
+		t.Fatalf("cluster did not become healthy within %s: %v", pollTimeout, lastErr)
+	}
 
 	t.Run("StatusTable", func(t *testing.T) {
 		output, err := env.RunSeaweedUp("cluster", "status", "-f", configFile)

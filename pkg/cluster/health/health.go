@@ -22,6 +22,14 @@ const (
 	KindFiler  ComponentKind = "filer"
 )
 
+// maxResponseBytes caps the amount of data we will read from a probed
+// component's HTTP response. The SeaweedFS master /cluster/status and
+// /dir/status endpoints can return sizable topology documents on large
+// clusters (many volume servers, thousands of volumes), so we pick a
+// generous 10 MiB ceiling: large enough for realistic production clusters
+// while still bounding memory usage from a single misbehaving endpoint.
+const maxResponseBytes int64 = 10 << 20
+
 // ProbeResult is the result of probing a single component endpoint.
 type ProbeResult struct {
 	Kind    ComponentKind  `json:"kind"`
@@ -113,7 +121,7 @@ func (p *Prober) fetchJSON(ctx context.Context, url string) (map[string]any, err
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, err
 	}

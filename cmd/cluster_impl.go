@@ -254,11 +254,12 @@ func clearScreen() {
 // displayClusterStatus probes the cluster and prints the result, returning
 // the aggregated health so callers can decide on process exit status.
 func displayClusterStatus(clusterSpec *spec.Specification, opts *ClusterStatusOptions) (*health.ClusterHealth, error) {
+	// Parse the user-configured timeout (Cobra flag, default "30s"). Fall
+	// back to a 5s safety default only if parsing fails or the value is
+	// empty / non-positive.
 	timeout := 5 * time.Second
-	if opts.Timeout != "" {
-		if d, err := time.ParseDuration(opts.Timeout); err == nil && d > 0 {
-			timeout = d
-		}
+	if d, err := time.ParseDuration(opts.Timeout); err == nil && d > 0 {
+		timeout = d
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+2*time.Second)
@@ -296,10 +297,17 @@ func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose 
 		if r.Healthy {
 			healthy = "OK"
 		}
+		// In verbose mode show the error (if any) followed by the raw
+		// response body, so users can diagnose failures without losing
+		// context. In non-verbose mode we only surface the error string.
 		detail := r.Err
-		if detail == "" && verbose && r.Raw != nil {
+		if verbose && r.Raw != nil {
 			if b, err := json.Marshal(r.Raw); err == nil {
-				detail = string(b)
+				if detail != "" {
+					detail = detail + " | " + string(b)
+				} else {
+					detail = string(b)
+				}
 			}
 		}
 		if detail == "" {
