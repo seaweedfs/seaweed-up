@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -80,6 +81,7 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
+	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "max concurrent per-host deploys (0 = unlimited)")
 
 	_ = cmd.MarkFlagRequired("file")
 
@@ -113,12 +115,19 @@ Shows real-time information about cluster components including:
   
   # Auto-refresh status every 5 seconds
   seaweed-up cluster status prod-cluster --refresh=5`,
-		
+
+		// Accept at most one positional cluster-name. When no positional is
+		// given, -f/--file must be provided (enforced in resolveStatusSpec).
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterStatus(args, opts)
+			if opts.ConfigFile == "" && len(args) == 0 {
+				return fmt.Errorf("either a cluster-name positional argument or -f/--file is required")
+			}
+			return runClusterStatus(cmd, args, opts)
 		},
 	}
-	
+
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required if no cluster-name positional)")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
 	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	cmd.Flags().StringVar(&opts.Timeout, "timeout", "30s", "timeout for status collection")

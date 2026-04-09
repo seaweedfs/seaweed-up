@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -16,9 +17,11 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/health"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/scale"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -41,9 +44,11 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
+	Concurrency  int
 }
 
 type ClusterStatusOptions struct {
+	ConfigFile string
 	JSONOutput bool
 	Verbose    bool
 	Timeout    string
@@ -112,6 +117,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.PrepareVolumeDisks = opts.MountDisks
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
+	mgr.Concurrency = opts.Concurrency
 	
 	// Default SSH user to current user if not specified
 	if opts.User == "" {
@@ -154,14 +160,14 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
 		
 		if !utils.PromptForConfirmation("Proceed with deployment?") {
-			color.Yellow("WARN: Deployment cancelled by user")
+			color.Yellow("Deployment cancelled by user")
 			return nil
 		}
 	}
-	
+
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
-		color.Red("Error: Deployment failed: %v", err)
+		color.Red("Deployment failed: %v", err)
 		return err
 	}
 	
@@ -173,7 +179,14 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	return nil
 }
 
-func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
+func runClusterStatus(cmd *cobra.Command, args []string, opts *ClusterStatusOptions) error {
+	clusterSpec, err := resolveStatusSpec(args, opts)
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+
 	// Handle auto-refresh mode with proper signal handling
 	if opts.Refresh > 0 {
 		ticker := time.NewTicker(time.Duration(opts.Refresh) * time.Second)
@@ -186,29 +199,63 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 
 		// Show initial status
 		clearScreen()
-		if err := displayClusterStatus(args, opts); err != nil {
-			return err
+		if _, derr := displayClusterStatus(ctx, clusterSpec, opts); derr != nil {
+			return derr
 		}
 		color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 
 		for {
 			select {
 			case <-sigChan:
-				// Graceful shutdown on interrupt
 				fmt.Println()
 				color.Yellow("Refresh stopped by user")
 				return nil
 			case <-ticker.C:
 				clearScreen()
-				if err := displayClusterStatus(args, opts); err != nil {
-					return err
+				if _, derr := displayClusterStatus(ctx, clusterSpec, opts); derr != nil {
+					return derr
 				}
 				color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 			}
 		}
 	}
 
-	return displayClusterStatus(args, opts)
+	ch, err := displayClusterStatus(ctx, clusterSpec, opts)
+	if err != nil {
+		return err
+	}
+	if !ch.AllHealthy() {
+		unhealthy := ch.UnhealthyCount()
+		return fmt.Errorf("%d component(s) unhealthy", unhealthy)
+	}
+	return nil
+}
+
+// resolveStatusSpec loads the topology either from -f or by looking up a
+// positional cluster-name file next to the binary's working directory.
+func resolveStatusSpec(args []string, opts *ClusterStatusOptions) (*spec.Specification, error) {
+	configFile := opts.ConfigFile
+	if configFile == "" && len(args) > 0 {
+		// Positional-name fallback: try <name>.yaml / <name>.yml
+		candidates := []string{args[0] + ".yaml", args[0] + ".yml", args[0]}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				configFile = c
+				break
+			}
+		}
+	}
+	if configFile == "" {
+		return nil, fmt.Errorf("cluster configuration file is required (use -f)")
+	}
+	s, err := loadClusterSpec(configFile)
+	if err != nil {
+		return nil, err
+	}
+	if s.Name == "" && len(args) > 0 {
+		s.Name = args[0]
+	}
+	return s, nil
 }
 
 // clearScreen clears the terminal screen in a cross-platform way
@@ -226,22 +273,107 @@ func clearScreen() {
 	}
 }
 
-// displayClusterStatus shows the actual cluster status
-func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
-	// TODO: Implement actual status collection
-	color.Green("Cluster Status")
-	
-	if len(args) == 0 {
-		color.Yellow("All Clusters:")
-		// Show all clusters
-		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
-	} else {
-		clusterName := args[0]
-		color.Yellow("Cluster: %s", clusterName)
-		fmt.Println("Status collection not yet implemented")
+// displayClusterStatus probes the cluster and prints the result, returning
+// the aggregated health so callers can decide on process exit status.
+func displayClusterStatus(ctx context.Context, clusterSpec *spec.Specification, opts *ClusterStatusOptions) (*health.ClusterHealth, error) {
+	// Parse the user-configured timeout (Cobra flag, default "30s"). Fall
+	// back to a 5s safety default only if parsing fails or the value is
+	// empty / non-positive.
+	timeout := 5 * time.Second
+	if d, err := time.ParseDuration(opts.Timeout); err == nil && d > 0 {
+		timeout = d
 	}
-	
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout+2*time.Second)
+	defer cancel()
+
+	prober := health.NewProber(timeout)
+	ch := prober.Probe(probeCtx, clusterSpec)
+
+	if opts.JSONOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(ch); err != nil {
+			return ch, err
+		}
+		return ch, nil
+	}
+
+	if err := renderStatusTable(clusterSpec, ch, opts.Verbose); err != nil {
+		return ch, err
+	}
+	return ch, nil
+}
+
+func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose bool) error {
+	name := s.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	color.Green("Cluster Status: %s", name)
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "COMPONENT\tADDRESS\tHEALTHY\tVERSION\tDETAIL"); err != nil {
+		return fmt.Errorf("write status header: %w", err)
+	}
+	writeRow := func(r health.ProbeResult) error {
+		healthy := "NO"
+		if r.Healthy {
+			healthy = "OK"
+		}
+		// In verbose mode show the error (if any) followed by the raw
+		// response body, so users can diagnose failures without losing
+		// context. In non-verbose mode we only surface the error string.
+		detail := r.Err
+		if verbose && r.Raw != nil {
+			if b, err := json.Marshal(r.Raw); err == nil {
+				if detail != "" {
+					detail = detail + " | " + string(b)
+				} else {
+					detail = string(b)
+				}
+			}
+		}
+		if detail == "" {
+			detail = "-"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Kind, r.Address, healthy, orDash(r.Version), detail); err != nil {
+			return fmt.Errorf("write status row: %w", err)
+		}
+		return nil
+	}
+	for _, r := range ch.Masters {
+		if err := writeRow(r); err != nil {
+			return err
+		}
+	}
+	for _, r := range ch.Volumes {
+		if err := writeRow(r); err != nil {
+			return err
+		}
+	}
+	for _, r := range ch.Filers {
+		if err := writeRow(r); err != nil {
+			return err
+		}
+	}
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("flush status table: %w", err)
+	}
+
+	if !ch.AllHealthy() {
+		color.Red("Cluster is UNHEALTHY")
+	} else {
+		color.Green("Cluster is healthy")
+	}
 	return nil
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
@@ -753,16 +885,16 @@ func removeVolumeNode(vs *spec.VolumeServerSpec, index int, user, identity, sudo
 
 func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 	color.Red("WARNING: This will destroy cluster '%s'", clusterName)
-	
+
 	if opts.RemoveData {
-		color.Red("WARN: ALL DATA WILL BE PERMANENTLY DELETED!")
+		color.Red("ALL DATA WILL BE PERMANENTLY DELETED!")
 	}
 	
 	if !opts.SkipConfirm {
 		confirmation := utils.PromptForInput("Type the cluster name to confirm destruction: ")
 		
 		if confirmation != clusterName {
-			color.Yellow("WARN: Destruction cancelled - cluster name didn't match")
+			color.Yellow("Destruction cancelled - cluster name didn't match")
 			return nil
 		}
 	}
