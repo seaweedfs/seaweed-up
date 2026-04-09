@@ -193,7 +193,6 @@ jobs:
             -f testdata/cluster-single.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
-            --version 4.19 \
             --yes
           
           # Wait for services to start
@@ -399,7 +398,6 @@ jobs:
             -f testdata/cluster-multi.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
-            --version 4.19 \
             --yes
           
           # Debug: show systemd service status on each host
