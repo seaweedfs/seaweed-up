@@ -183,11 +183,17 @@ jobs:
           done
 
       - name: Run single-node deployment test
+        env:
+          # Authenticate GitHub API calls from the deploy step so that
+          # fetching the SeaweedFS release metadata does not hit the
+          # anonymous 60 req/hour rate limit shared across CI runners.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ../../seaweed-up cluster deploy test-single \
             -f testdata/cluster-single.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
+            --version 4.19 \
             --yes
           
           # Wait for services to start
@@ -383,11 +389,17 @@ jobs:
 
       - name: Run multi-node deployment test
         working-directory: test/integration
+        env:
+          # Authenticate GitHub API calls from the deploy step so that
+          # fetching the SeaweedFS release metadata does not hit the
+          # anonymous 60 req/hour rate limit shared across CI runners.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ../../seaweed-up cluster deploy test-multi \
             -f testdata/cluster-multi.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
+            --version 4.19 \
             --yes
           
           # Debug: show systemd service status on each host
