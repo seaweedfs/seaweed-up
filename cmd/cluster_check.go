@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/fatih/color"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/preflight"
@@ -67,15 +66,11 @@ func runClusterCheck(cmd *cobra.Command, opts *ClusterCheckOptions) error {
 		user = u
 	}
 
-	identity := opts.IdentityFile
-	if identity == "" && opts.Password == "" {
-		home, err := utils.UserHome()
-		if err == nil {
-			identity = filepath.Join(home, ".ssh", "id_rsa")
-		}
-	}
-
-	factory := preflight.OperatorSSHFactory(user, identity, opts.Password)
+	// Only pass an identity file if the operator explicitly provided one.
+	// Leaving it empty lets the SSH layer fall back to ssh-agent or its
+	// default key search (e.g. ~/.ssh/id_rsa, id_ed25519, id_ecdsa), which
+	// is what most operators expect when they simply run `cluster check`.
+	factory := preflight.OperatorSSHFactory(user, opts.IdentityFile, opts.Password)
 	results := preflight.RunWithOptions(cmd.Context(), clusterSpec, factory, preflight.Options{
 		DefaultSSHPort: opts.SSHPort,
 	})

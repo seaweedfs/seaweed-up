@@ -121,6 +121,9 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	// Run preflight checks first if requested
 	if opts.Check {
 		color.Cyan("🔍 Running preflight checks...")
+		// TODO: plumb sudo password from deploy options once ClusterDeployOptions
+		// exposes a Password/SudoPass field so preflight sudo checks work on
+		// hosts that require a password.
 		factory := preflight.OperatorSSHFactory(mgr.User, mgr.IdentityFile, "")
 		results := preflight.RunWithOptions(cmd.Context(), clusterSpec, factory, preflight.Options{
 			DefaultSSHPort: opts.SSHPort,

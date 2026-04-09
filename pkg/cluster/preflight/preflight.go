@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -368,22 +369,150 @@ func (portsFreeCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
 		return Result{Name: "ports-free", Host: plan.Host, OK: false, Detail: err.Error()}
 	}
 	busy := ParseListeningPorts(string(out))
-	var conflicts []string
+	var busyPorts []int
 	for _, p := range plan.Ports {
 		if busy[p] {
-			conflicts = append(conflicts, strconv.Itoa(p))
+			busyPorts = append(busyPorts, p)
 		}
 	}
-	if len(conflicts) > 0 {
+	if len(busyPorts) == 0 {
 		return Result{
-			Name: "ports-free", Host: plan.Host, OK: false,
-			Detail: fmt.Sprintf("ports in use: %s", strings.Join(conflicts, ",")),
+			Name: "ports-free", Host: plan.Host, OK: true,
+			Detail: fmt.Sprintf("%d ports free", len(plan.Ports)),
 		}
+	}
+
+	// Try to identify the process(es) holding each busy port. We prefer
+	// `ss -tlnp` (requires root for the comm/PID columns but still emits
+	// the rows for non-matching processes), and fall back to lsof. The
+	// output may be empty on hosts where neither tool exposes the owner,
+	// in which case we just report the port numbers.
+	owners := map[int]portOwner{}
+	if pout, perr := r.Output("ss -tlnp 2>/dev/null"); perr == nil && len(pout) > 0 {
+		for k, v := range ParseListeningPortOwners(string(pout)) {
+			owners[k] = v
+		}
+	}
+	for _, p := range busyPorts {
+		if _, ok := owners[p]; ok {
+			continue
+		}
+		// Fall back to lsof for this specific port.
+		cmd := fmt.Sprintf("lsof -nP -iTCP:%d -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print $1\" \"$2; exit}'", p)
+		if lo, lerr := r.Output(cmd); lerr == nil {
+			line := strings.TrimSpace(string(lo))
+			if line != "" {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					owners[p] = portOwner{Process: parts[0], PID: parts[1]}
+				}
+			}
+		}
+	}
+
+	// Split conflicts into "weed" holders (stale processes that the deploy
+	// will replace - WARN) and genuine conflicts with other processes (FAIL).
+	var weedDetails, otherDetails []string
+	for _, p := range busyPorts {
+		o, known := owners[p]
+		switch {
+		case known && isWeedProcess(o.Process):
+			weedDetails = append(weedDetails,
+				fmt.Sprintf("%d (weed pid %s)", p, o.PID))
+		case known:
+			otherDetails = append(otherDetails,
+				fmt.Sprintf("%d (%s pid %s)", p, o.Process, o.PID))
+		default:
+			otherDetails = append(otherDetails, strconv.Itoa(p))
+		}
+	}
+
+	if len(otherDetails) == 0 {
+		// Only stale weed processes. Deploy will replace them, so WARN.
+		return Result{
+			Name: "ports-free", Host: plan.Host, OK: true, Warn: true,
+			Detail: "stale weed holding ports: " + strings.Join(weedDetails, ", "),
+		}
+	}
+	detail := "ports in use: " + strings.Join(otherDetails, ", ")
+	if len(weedDetails) > 0 {
+		detail += "; stale weed: " + strings.Join(weedDetails, ", ")
 	}
 	return Result{
-		Name: "ports-free", Host: plan.Host, OK: true,
-		Detail: fmt.Sprintf("%d ports free", len(plan.Ports)),
+		Name: "ports-free", Host: plan.Host, OK: false,
+		Detail: detail,
 	}
+}
+
+// portOwner identifies the process listening on a TCP port.
+type portOwner struct {
+	Process string
+	PID     string
+}
+
+func isWeedProcess(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "weed"
+}
+
+// ParseListeningPortOwners parses the output of `ss -tlnp` and returns a
+// map from port number to the first process observed holding it. The
+// owner column from ss looks like:
+//
+//	users:(("weed",pid=1234,fd=7))
+//
+// We extract the command name and pid.
+func ParseListeningPortOwners(out string) map[int]portOwner {
+	owners := map[int]portOwner{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(strings.ToLower(line), "state") {
+			continue
+		}
+		fields := strings.Fields(line)
+		// ss -tlnp columns: State Recv-Q Send-Q Local-Address:Port Peer-Address:Port [users:(...)]
+		if len(fields) < 4 {
+			continue
+		}
+		local := fields[3]
+		idx := strings.LastIndex(local, ":")
+		if idx < 0 {
+			continue
+		}
+		port, err := strconv.Atoi(local[idx+1:])
+		if err != nil {
+			continue
+		}
+		if _, exists := owners[port]; exists {
+			continue
+		}
+		// Find the users:((...)) blob anywhere in the line.
+		usersIdx := strings.Index(line, "users:((")
+		if usersIdx < 0 {
+			owners[port] = portOwner{}
+			continue
+		}
+		blob := line[usersIdx+len("users:(("):]
+		end := strings.Index(blob, "))")
+		if end >= 0 {
+			blob = blob[:end]
+		}
+		// blob is like: "weed",pid=1234,fd=7
+		parts := strings.Split(blob, ",")
+		var proc, pid string
+		if len(parts) > 0 {
+			proc = strings.Trim(parts[0], `"`)
+		}
+		for _, p := range parts[1:] {
+			p = strings.TrimSpace(p)
+			if strings.HasPrefix(p, "pid=") {
+				pid = strings.TrimPrefix(p, "pid=")
+				break
+			}
+		}
+		owners[port] = portOwner{Process: proc, PID: pid}
+	}
+	return owners
 }
 
 type timeSkewCheck struct{}
@@ -646,7 +775,7 @@ func shellQuote(s string) string {
 // Each host connection uses the provided credentials.
 func OperatorSSHFactory(user, identityFile, password string) SSHFactory {
 	return func(ctx context.Context, host string, port int, fn func(Runner) error) error {
-		address := fmt.Sprintf("%s:%d", host, port)
+		address := net.JoinHostPort(host, strconv.Itoa(port))
 		return operator.ExecuteRemote(address, user, identityFile, password, func(op operator.CommandOperator) error {
 			return fn(runnerFromOperator{op})
 		})
