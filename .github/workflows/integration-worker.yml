@@ -14,6 +14,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Authenticate GitHub API calls so release metadata lookups
+  # dont hit the anonymous 60 req/hour rate limit shared
+  # across CI runners.
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
   worker-test:
     name: Worker Deployment Test

@@ -111,18 +111,35 @@ install_dependencies() {
 }
 
 download_and_install() {
-  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$(${BIN_DIR}/${BINARY} version | cut -d' ' -f3)" = "${SEAWEED_VERSION}" ]; then
+  # Enterprise weed builds self-report as "<tag>-enterprise" while the
+  # release is tagged as plain "<tag>", so strip any "-enterprise" suffix
+  # before comparing against the target version — otherwise every deploy
+  # to an enterprise host re-downloads the tarball needlessly.
+  installedVersion=""
+  if [ -x "${BIN_DIR}/${BINARY}" ]; then
+    installedVersion=$(${BIN_DIR}/${BINARY} version | cut -d' ' -f3)
+    installedVersion=${installedVersion%-enterprise}
+  fi
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$installedVersion" = "${SEAWEED_VERSION}" ]; then
     info "Seaweed binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
   else
     OS="linux"
-    FULL_SUFIX="_full"
-    LARGE_SUFIX="_large_disk"
-    assetFileName="${OS}_${SUFFIX}${FULL_SUFIX}${LARGE_SUFIX}.tar.gz"
+    # OSS builds publish a "_full" variant; enterprise builds are
+    # already full and have no _full segment. FULL_SUFFIX comes from
+    # the Go side so install.sh stays agnostic to release source.
+    FULL_SUFFIX="{{.FullSuffix}}"
+    LARGE_SUFFIX="_large_disk"
+    # ASSET_PREFIX is "" for OSS and "weed-enterprise-" for enterprise.
+    ASSET_PREFIX="{{.AssetPrefix}}"
+    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
+    RELEASE_OWNER="{{.ReleaseOwner}}"
+    RELEASE_REPO="{{.ReleaseRepo}}"
+
     info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"
 
     info "Downloading ${SEAWEED_VERSION} ${assetFileName} md5"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
     info "Verifying downloaded ${SEAWEED_VERSION} ${assetFileName}"
     md5Value=`cat $TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5`
     echo "${md5Value}  seaweed_${SEAWEED_VERSION}_${assetFileName}" | md5sum -c

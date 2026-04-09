@@ -94,6 +94,7 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().BoolVar(&opts.TLS, "tls", false, "generate and install TLS CA + certs as part of deploy")
 	cmd.Flags().BoolVar(&opts.Check, "check", false, "run preflight checks before deploying and abort on failure")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "max concurrent per-host deploys (0 = unlimited)")
+	cmd.Flags().BoolVar(&opts.Enterprise, "enterprise", false, "pull SeaweedFS binaries from the enterprise release repo (github.com/seaweedfs/artifactory) instead of the OSS repo")
 
 	_ = cmd.MarkFlagRequired("file")
 
@@ -193,6 +194,7 @@ This command safely upgrades cluster components with minimal downtime:
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
 	cmd.Flags().BoolVar(&opts.RollbackOnFailure, "rollback-on-failure", true, "reinstall previous version on a host if its post-upgrade health check fails")
 	cmd.Flags().BoolVar(&opts.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "skip TLS certificate verification for upgrade health probes")
+	cmd.Flags().BoolVar(&opts.Enterprise, "enterprise", false, "pull SeaweedFS binaries from the enterprise release repo (github.com/seaweedfs/artifactory) instead of the OSS repo")
 
 	_ = cmd.MarkFlagRequired("version")
 	_ = cmd.MarkFlagRequired("file")

@@ -401,6 +401,26 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		return fmt.Errorf("error received during installation: %s", err)
 	}
 
+	// Pick the release source (OSS vs enterprise) and compute the matching
+	// asset naming pieces. The enterprise repo (seaweedfs/artifactory) is
+	// public and uses a different asset naming scheme:
+	//
+	//	OSS:         ${OS}_${ARCH}_full_large_disk.tar.gz
+	//	Enterprise:  weed-enterprise-${OS}_${ARCH}_large_disk.tar.gz
+	//
+	// Both are delivered via github.com release download URLs, so the
+	// remote host can curl them directly; no controller-side pre-stage is
+	// needed. Arch detection still happens on the remote via uname -m.
+	releaseOwner, releaseRepo := m.ReleaseOwnerRepo()
+	assetPrefix := ""
+	// fullSuffix selects the "_full" OSS variant; the enterprise build is
+	// already a full flavor and has no "_full" segment in its asset name.
+	fullSuffix := "_full"
+	if m.Enterprise {
+		assetPrefix = enterpriseAssetPrefix
+		fullSuffix = ""
+	}
+
 	data := map[string]interface{}{
 		"Component":         component,
 		"ComponentInstance": componentInstance,
@@ -412,6 +432,10 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"ForceRestart":      m.ForceRestart,
 		"Version":           m.Version,
 		"ProxyConfig":       "",
+		"ReleaseOwner":      releaseOwner,
+		"ReleaseRepo":       releaseRepo,
+		"AssetPrefix":       assetPrefix,
+		"FullSuffix":        fullSuffix,
 	}
 
 	// Configure proxy if specified

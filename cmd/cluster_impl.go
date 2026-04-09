@@ -52,6 +52,13 @@ type ClusterDeployOptions struct {
 	TLS          bool
 	Check        bool
 	Concurrency  int
+	// Enterprise selects the public SeaweedFS enterprise release repo
+	// (github.com/seaweedfs/artifactory) as the binary source instead of
+	// the OSS repo. No authentication is required — both repos are
+	// public, though $GITHUB_TOKEN / $GH_TOKEN is still honored on the
+	// release metadata lookup to dodge the 60 req/hr anonymous rate
+	// limit on shared CI runners.
+	Enterprise bool
 }
 
 type ClusterStatusOptions struct {
@@ -72,6 +79,9 @@ type ClusterUpgradeOptions struct {
 	DryRun                bool
 	RollbackOnFailure     bool
 	InsecureSkipTLSVerify bool
+	// Enterprise pulls target binaries from the public SeaweedFS
+	// enterprise release repo (github.com/seaweedfs/artifactory).
+	Enterprise bool
 }
 
 type ClusterScaleOutOptions struct {
@@ -129,7 +139,8 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
 	mgr.Concurrency = opts.Concurrency
-	
+	mgr.Enterprise = opts.Enterprise
+
 	// Default SSH user to current user if not specified
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()
@@ -169,15 +180,17 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		color.Green("Preflight checks passed")
 	}
 
-	// Get latest version if not specified
+	// Get latest version if not specified. Enterprise deploys look up the
+	// version from the public artifactory repo instead of the OSS repo.
 	if mgr.Version == "" {
-		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", "seaweedfs", "seaweedfs")
+		owner, repo := mgr.ReleaseOwnerRepo()
+		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", owner, repo)
 		if err != nil {
-			return fmt.Errorf("unable to get latest version: %w", err)
+			return fmt.Errorf("unable to get latest version from %s/%s: %w", owner, repo, err)
 		}
 		mgr.Version = latest.Version
 	}
-	
+
 	// Confirm deployment if not skipped
 	if !opts.SkipConfirm {
 		color.Yellow("Deployment Summary:")
@@ -469,6 +482,7 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	if mgr.SshPort == 0 {
 		mgr.SshPort = 22
 	}
+	mgr.Enterprise = opts.Enterprise
 
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()
