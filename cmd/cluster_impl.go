@@ -61,9 +61,12 @@ type ClusterScaleInOptions struct {
 }
 
 type ClusterDestroyOptions struct {
-	ConfigFile  string
-	SkipConfirm bool
-	RemoveData  bool
+	ConfigFile   string
+	User         string
+	SSHPort      int
+	IdentityFile string
+	SkipConfirm  bool
+	RemoveData   bool
 }
 
 type ClusterListOptions struct {
@@ -292,7 +295,7 @@ func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 		}
 	}
 
-	mgr, err := newManagerForLifecycle(0, "", "")
+	mgr, err := newManagerForLifecycle(opts.SSHPort, opts.User, opts.IdentityFile)
 	if err != nil {
 		return err
 	}
