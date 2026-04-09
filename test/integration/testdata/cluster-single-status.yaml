@@ -1,0 +1,23 @@
+# Single-node test cluster configuration for the cluster status CI job.
+# Uses a unique docker subnet (10.201.39.0/24) to avoid pool overlap with
+# the default GitHub Actions docker bridge address pool.
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+master_servers:
+  - ip: 10.201.39.10
+    port: 9333
+
+volume_servers:
+  - ip: 10.201.39.10
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/volume0
+        disk: ""
+
+filer_servers:
+  - ip: 10.201.39.10
+    port: 8888

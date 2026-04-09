@@ -27,9 +27,9 @@ func (m *Manager) DeployFilerServer(masters []string, f *spec.FilerServerSpec, i
 			return fmt.Errorf("render filer.toml: %w", err)
 		}
 
-		return m.deployComponentInstance(op, component, componentInstance, &buf, componentExtraFile{
+		return m.deployComponentInstance(op, component, componentInstance, &buf, extraConfigFile{
 			Name:    "filer.toml",
-			Content: []byte(tomlContent),
+			Content: bytes.NewBufferString(tomlContent),
 		})
 
 	})

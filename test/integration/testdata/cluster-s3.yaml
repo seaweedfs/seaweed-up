@@ -1,0 +1,26 @@
+# Cluster with a standalone S3 gateway.
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+master_servers:
+  - ip: 172.28.0.10
+    port: 9333
+
+volume_servers:
+  - ip: 172.28.0.10
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/volume0
+        disk: ""
+
+filer_servers:
+  - ip: 172.28.0.10
+    port: 8888
+
+s3_servers:
+  - ip: 172.28.0.10
+    port: 8333
+    filer: 172.28.0.10:8888
