@@ -10,12 +10,6 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
-// shellSingleQuote wraps s in single quotes, escaping any embedded single
-// quotes so the result is safe to use as a single shell argument.
-func shellSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // LifecycleVerb represents a systemctl verb applied to seaweed units.
 type LifecycleVerb string
 
