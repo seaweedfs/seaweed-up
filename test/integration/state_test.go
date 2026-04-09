@@ -89,7 +89,7 @@ func TestPersistedStateSingleNode(t *testing.T) {
 				continue
 			}
 			found = true
-			// cluster-single.yaml uses a single host (172.28.0.10)
+			// cluster-single.yaml uses a single host (172.29.41.10)
 			// across master, volume, and filer. After de-dupe the
 			// store should report exactly one host.
 			if len(e.Hosts) != 1 {

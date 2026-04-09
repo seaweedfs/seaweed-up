@@ -39,7 +39,7 @@ jobs:
 
       - name: Create Docker network
         run: |
-          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+          docker network create --driver bridge --subnet 172.29.41.0/24 seaweed-up-net
 
       - name: Start containers with docker run
         run: |
@@ -50,7 +50,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.28.0.10 \
+            --ip 172.29.41.10 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
 
@@ -60,7 +60,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.28.0.11 \
+            --ip 172.29.41.11 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
 
@@ -70,7 +70,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.28.0.12 \
+            --ip 172.29.41.12 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
 
@@ -131,7 +131,7 @@ jobs:
 
           echo "Waiting for SSH to be ready..."
           sleep 5
-          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+          for ip in 172.29.41.10 172.29.41.11 172.29.41.12; do
             for j in {1..30}; do
               if nc -z $ip 22 2>/dev/null; then
                 echo "SSH ready on $ip"
@@ -161,7 +161,7 @@ jobs:
 
       - name: Verify SSH connectivity
         run: |
-          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+          for ip in 172.29.41.10 172.29.41.11 172.29.41.12; do
             echo "Testing SSH to $ip..."
             ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@$ip "echo 'SSH OK to $ip'"
           done

@@ -49,9 +49,9 @@ The Docker Compose setup creates three systemd-enabled Ubuntu containers:
 
 | Host   | IP Address    | Purpose                           |
 |--------|---------------|-----------------------------------|
-| host1  | 172.28.0.10   | Master, Filer (single-node tests) |
-| host2  | 172.28.0.11   | Volume server                     |
-| host3  | 172.28.0.12   | Volume server                     |
+| host1  | 172.29.41.10   | Master, Filer (single-node tests) |
+| host2  | 172.29.41.11   | Volume server                     |
+| host3  | 172.29.41.12   | Volume server                     |
 
 ### Container Configuration
 
@@ -189,7 +189,7 @@ The CI workflow (`.github/workflows/integration-tests.yml`) automatically:
 ## Known Limitations
 
 1. **Systemd initialization time**: Containers take 30-60 seconds for systemd to fully initialize. The tests include appropriate waits.
-2. **Network**: Containers use a custom bridge network (172.28.0.0/16). This may conflict with existing Docker networks.
+2. **Network**: Containers use a custom bridge network (172.29.41.0/24). This may conflict with existing Docker networks.
 3. **Privileged mode**: Containers run in privileged mode to support systemd, which has security implications.
 4. **Resource usage**: Each container with systemd uses more memory than a minimal container (~200-300MB per container).
 
