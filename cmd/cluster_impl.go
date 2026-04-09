@@ -159,11 +159,13 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	return nil
 }
 
-func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
+func runClusterStatus(cmd *cobra.Command, args []string, opts *ClusterStatusOptions) error {
 	clusterSpec, err := resolveStatusSpec(args, opts)
 	if err != nil {
 		return err
 	}
+
+	ctx := cmd.Context()
 
 	// Handle auto-refresh mode with proper signal handling
 	if opts.Refresh > 0 {
@@ -177,7 +179,7 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 
 		// Show initial status
 		clearScreen()
-		if _, derr := displayClusterStatus(clusterSpec, opts); derr != nil {
+		if _, derr := displayClusterStatus(ctx, clusterSpec, opts); derr != nil {
 			return derr
 		}
 		color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
@@ -190,7 +192,7 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 				return nil
 			case <-ticker.C:
 				clearScreen()
-				if _, derr := displayClusterStatus(clusterSpec, opts); derr != nil {
+				if _, derr := displayClusterStatus(ctx, clusterSpec, opts); derr != nil {
 					return derr
 				}
 				color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
@@ -198,7 +200,7 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 		}
 	}
 
-	ch, err := displayClusterStatus(clusterSpec, opts)
+	ch, err := displayClusterStatus(ctx, clusterSpec, opts)
 	if err != nil {
 		return err
 	}
@@ -253,7 +255,7 @@ func clearScreen() {
 
 // displayClusterStatus probes the cluster and prints the result, returning
 // the aggregated health so callers can decide on process exit status.
-func displayClusterStatus(clusterSpec *spec.Specification, opts *ClusterStatusOptions) (*health.ClusterHealth, error) {
+func displayClusterStatus(ctx context.Context, clusterSpec *spec.Specification, opts *ClusterStatusOptions) (*health.ClusterHealth, error) {
 	// Parse the user-configured timeout (Cobra flag, default "30s"). Fall
 	// back to a 5s safety default only if parsing fails or the value is
 	// empty / non-positive.
@@ -262,11 +264,11 @@ func displayClusterStatus(clusterSpec *spec.Specification, opts *ClusterStatusOp
 		timeout = d
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout+2*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, timeout+2*time.Second)
 	defer cancel()
 
 	prober := health.NewProber(timeout)
-	ch := prober.Probe(ctx, clusterSpec)
+	ch := prober.Probe(probeCtx, clusterSpec)
 
 	if opts.JSONOutput {
 		enc := json.NewEncoder(os.Stdout)

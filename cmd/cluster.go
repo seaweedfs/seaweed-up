@@ -121,7 +121,7 @@ Shows real-time information about cluster components including:
 			if opts.ConfigFile == "" && len(args) == 0 {
 				return fmt.Errorf("either a cluster-name positional argument or -f/--file is required")
 			}
-			return runClusterStatus(args, opts)
+			return runClusterStatus(cmd, args, opts)
 		},
 	}
 

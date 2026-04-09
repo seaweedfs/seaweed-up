@@ -121,12 +121,15 @@ func (p *Prober) fetchJSON(ctx context.Context, url string) (map[string]any, err
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(body)) > maxResponseBytes {
+		return nil, fmt.Errorf("response body exceeded %d bytes limit", maxResponseBytes)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("status %d: %s...", resp.StatusCode, string(body[:min(len(body), 1024)]))
 	}
 	var out map[string]any
 	if len(body) == 0 {
@@ -222,7 +225,7 @@ func (p *Prober) ProbeFiler(ctx context.Context, ip string, port int) ProbeResul
 
 // Probe runs probes for every component in the cluster spec in parallel.
 func (p *Prober) Probe(ctx context.Context, s *spec.Specification) *ClusterHealth {
-	health := &ClusterHealth{
+	h := &ClusterHealth{
 		Masters: make([]ProbeResult, len(s.MasterServers)),
 		Volumes: make([]ProbeResult, len(s.VolumeServers)),
 		Filers:  make([]ProbeResult, len(s.FilerServers)),
@@ -237,7 +240,7 @@ func (p *Prober) Probe(ctx context.Context, s *spec.Specification) *ClusterHealt
 			if port == 0 {
 				port = 9333
 			}
-			health.Masters[i] = p.ProbeMaster(ctx, m.Ip, port)
+			h.Masters[i] = p.ProbeMaster(ctx, m.Ip, port)
 		}(i, m)
 	}
 	for i, v := range s.VolumeServers {
@@ -248,7 +251,7 @@ func (p *Prober) Probe(ctx context.Context, s *spec.Specification) *ClusterHealt
 			if port == 0 {
 				port = 8080
 			}
-			health.Volumes[i] = p.ProbeVolume(ctx, v.Ip, port)
+			h.Volumes[i] = p.ProbeVolume(ctx, v.Ip, port)
 		}(i, v)
 	}
 	for i, f := range s.FilerServers {
@@ -259,9 +262,9 @@ func (p *Prober) Probe(ctx context.Context, s *spec.Specification) *ClusterHealt
 			if port == 0 {
 				port = 8888
 			}
-			health.Filers[i] = p.ProbeFiler(ctx, f.Ip, port)
+			h.Filers[i] = p.ProbeFiler(ctx, f.Ip, port)
 		}(i, f)
 	}
 	wg.Wait()
-	return health
+	return h
 }
