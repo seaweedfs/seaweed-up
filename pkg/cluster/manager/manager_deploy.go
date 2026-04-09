@@ -3,7 +3,10 @@ package manager
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
+	"sync"
+
 	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
@@ -11,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
-	"sync"
+	"golang.org/x/sync/errgroup"
 )
 
 func (m *Manager) shouldInstall(c string) bool {
@@ -35,34 +38,59 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 
-	var wg sync.WaitGroup
-	var deployErrors []error
+	// Fan out volume and filer server deploys using errgroup.
+	//
+	// Note: errgroup.Wait() only returns the first non-nil error. To ensure
+	// that operators see ALL per-host failures (not just the first), we
+	// collect every error into a mutex-guarded slice, log each of them, and
+	// build a combined error message that mentions every failing host.
+	var eg errgroup.Group
+	if m.Concurrency > 0 {
+		eg.SetLimit(m.Concurrency)
+	}
+
+	var (
+		errMu        sync.Mutex
+		deployErrors []error
+	)
+	recordErr := func(err error) {
+		errMu.Lock()
+		defer errMu.Unlock()
+		fmt.Printf("[ERROR] %v\n", err)
+		deployErrors = append(deployErrors, err)
+	}
 
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			wg.Add(1)
-			go func(index int, volumeSpec *spec.VolumeServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
+					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, volumeSpec)
+				return nil
+			})
 		}
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
-			wg.Add(1)
-			go func(index int, filerSpec *spec.FilerServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err))
+					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, filerSpec)
+				return nil
+			})
 		}
 	}
-	wg.Wait()
+	// Wait for all goroutines to complete. We intentionally ignore
+	// eg.Wait()'s single-error return and build a combined error from the
+	// full slice so that every failing host is surfaced to the caller.
+	_ = eg.Wait()
 	if len(deployErrors) > 0 {
-		return deployErrors[0]
+		if len(deployErrors) == 1 {
+			return deployErrors[0]
+		}
+		return fmt.Errorf("%d deploy errors: %w", len(deployErrors), stderrors.Join(deployErrors...))
 	}
 
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
