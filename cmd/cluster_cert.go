@@ -1,15 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	"github.com/fatih/color"
 	sutls "github.com/seaweedfs/seaweed-up/pkg/cluster/tls"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
 
 // ClusterCertOptions is shared by `cluster cert init` and `cluster cert rotate`.
@@ -111,36 +114,70 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 		return fmt.Errorf("no hosts found in cluster spec")
 	}
 
-	// Collect errors across all hosts so that a single bad host does not
-	// abort cert distribution for the rest of the cluster.
-	var hostErrs []error
-	var okCount int
-	for _, h := range hosts {
-		port := h.SSHPort
-		if port == 0 {
-			port = opts.SSHPort
-		}
-		color.Yellow("  -> %s (%s)", h.IP, h.Role)
-		bundle, err := sutls.BuildHostBundle(caPEM, caKeyPEM, h.IP)
-		if err != nil {
-			hostErrs = append(hostErrs, fmt.Errorf("build bundle for %s: %w", h.IP, err))
-			continue
-		}
-		if err := sutls.PersistHostBundle(clusterName, h.IP, bundle); err != nil {
-			hostErrs = append(hostErrs, fmt.Errorf("persist bundle for %s: %w", h.IP, err))
-			continue
-		}
-
-		address := fmt.Sprintf("%s:%d", h.IP, port)
-		err = operator.ExecuteRemote(address, user, identity, "", func(op operator.CommandOperator) error {
-			return sutls.UploadBundle(op, h.Role, bundle)
-		})
-		if err != nil {
-			hostErrs = append(hostErrs, fmt.Errorf("upload bundle to %s: %w", h.IP, err))
-			continue
-		}
-		okCount++
+	// Parse the CA once so each host goroutine can reuse it without
+	// re-decoding PEM / x509 on every cert issuance.
+	parsedCA, err := sutls.ParseCA(caPEM, caKeyPEM)
+	if err != nil {
+		return fmt.Errorf("parse CA: %w", err)
 	}
+
+	// Prompt for sudo password up-front when the SSH user isn't root;
+	// UploadBundle needs it to install certs under /etc/seaweed.
+	var sudoPass string
+	if user != "root" {
+		sudoPass = utils.PromptForPassword("Input sudo password: ")
+	}
+
+	// Collect errors across all hosts so that a single bad host does not
+	// abort cert distribution for the rest of the cluster. Run up to 8
+	// hosts in parallel.
+	var (
+		mu       sync.Mutex
+		hostErrs []error
+		okCount  int
+	)
+	g, _ := errgroup.WithContext(context.Background())
+	g.SetLimit(8)
+
+	for _, h := range hosts {
+		h := h
+		g.Go(func() error {
+			port := h.SSHPort
+			if port == 0 {
+				port = opts.SSHPort
+			}
+			color.Yellow("  -> %s (%s)", h.IP, h.Role)
+			bundle, err := sutls.BuildHostBundleFromParsed(caPEM, parsedCA, h.IP)
+			if err != nil {
+				mu.Lock()
+				hostErrs = append(hostErrs, fmt.Errorf("build bundle for %s: %w", h.IP, err))
+				mu.Unlock()
+				return nil
+			}
+			if err := sutls.PersistHostBundle(clusterName, h.IP, bundle); err != nil {
+				mu.Lock()
+				hostErrs = append(hostErrs, fmt.Errorf("persist bundle for %s: %w", h.IP, err))
+				mu.Unlock()
+				return nil
+			}
+
+			address := fmt.Sprintf("%s:%d", h.IP, port)
+			err = operator.ExecuteRemote(address, user, identity, sudoPass, func(op operator.CommandOperator) error {
+				return sutls.UploadBundle(op, h.Role, bundle, sudoPass)
+			})
+			if err != nil {
+				mu.Lock()
+				hostErrs = append(hostErrs, fmt.Errorf("upload bundle to %s: %w", h.IP, err))
+				mu.Unlock()
+				return nil
+			}
+			mu.Lock()
+			okCount++
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = g.Wait()
 
 	if len(hostErrs) > 0 {
 		color.Red("TLS bootstrap finished with errors: %d/%d hosts succeeded", okCount, len(hosts))

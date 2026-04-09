@@ -71,15 +71,41 @@ func GenerateCA() (caPEM, caKeyPEM []byte, err error) {
 	return caPEM, caKeyPEM, nil
 }
 
+// ParsedCA holds a decoded CA certificate and private key so that the
+// relatively expensive PEM/x509 parsing only needs to happen once per
+// cluster cert run instead of on every IssueCert call.
+type ParsedCA struct {
+	Cert *x509.Certificate
+	Key  *ecdsa.PrivateKey
+}
+
+// ParseCA decodes PEM-encoded CA certificate and key bytes into a
+// ParsedCA suitable for repeated use with IssueCertFromParsed.
+func ParseCA(caCertPEM, caKeyPEM []byte) (*ParsedCA, error) {
+	cert, key, err := parseCA(caCertPEM, caKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	return &ParsedCA{Cert: cert, Key: key}, nil
+}
+
 // IssueCert signs a leaf certificate using the given CA. The returned
 // cert has the given commonName and the provided SANs (which may be IPs
 // or DNS names). The leaf is valid for both client and server auth so
 // that SeaweedFS components can use a single cert for mTLS.
 func IssueCert(caCertPEM, caKeyPEM []byte, commonName string, sans []string) (certPEM, keyPEM []byte, err error) {
-	caCert, caKey, err := parseCA(caCertPEM, caKeyPEM)
+	parsed, err := ParseCA(caCertPEM, caKeyPEM)
 	if err != nil {
 		return nil, nil, err
 	}
+	return IssueCertFromParsed(parsed, commonName, sans)
+}
+
+// IssueCertFromParsed signs a leaf certificate using a pre-parsed CA.
+// It avoids re-parsing the CA PEM on every invocation, which matters
+// when issuing multiple certs per host.
+func IssueCertFromParsed(ca *ParsedCA, commonName string, sans []string) (certPEM, keyPEM []byte, err error) {
+	caCert, caKey := ca.Cert, ca.Key
 
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
