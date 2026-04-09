@@ -24,14 +24,17 @@ func sampleSpec() *spec.Specification {
 		FilerServers: []*spec.FilerServerSpec{
 			{Ip: "10.0.0.3", PortSsh: 22},
 		},
+		EnvoyServers: []*spec.EnvoyServerSpec{
+			{Ip: "10.0.0.4", PortSsh: 22},
+		},
 	}
 }
 
 func TestUniqueHosts(t *testing.T) {
 	s := sampleSpec()
 	hosts := uniqueHosts(s, "")
-	if len(hosts) != 3 {
-		t.Fatalf("expected 3 unique hosts, got %d", len(hosts))
+	if len(hosts) != 4 {
+		t.Fatalf("expected 4 unique hosts, got %d", len(hosts))
 	}
 
 	if got := uniqueHosts(s, "master"); len(got) != 1 || got[0].ip != "10.0.0.1" {
@@ -42,6 +45,28 @@ func TestUniqueHosts(t *testing.T) {
 	}
 	if got := uniqueHosts(s, "filer"); len(got) != 1 || got[0].ip != "10.0.0.3" {
 		t.Errorf("filer filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "envoy"); len(got) != 1 || got[0].ip != "10.0.0.4" {
+		t.Errorf("envoy filter wrong: %+v", got)
+	}
+}
+
+func TestUniqueHostsEnvoyOnlyHost(t *testing.T) {
+	// A host that exclusively runs envoy must still be enumerated for
+	// cluster-wide lifecycle operations.
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		EnvoyServers:  []*spec.EnvoyServerSpec{{Ip: "10.0.0.9", PortSsh: 22}},
+	}
+	hosts := uniqueHosts(s, "")
+	found := false
+	for _, h := range hosts {
+		if h.ip == "10.0.0.9" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("envoy-only host 10.0.0.9 missing from uniqueHosts: %+v", hosts)
 	}
 }
 
@@ -66,6 +91,13 @@ func TestServicesForHost(t *testing.T) {
 
 	if got := servicesForHost(s, "10.0.0.2", ""); len(got) != 1 || got[0] != "seaweed_volume1.service" {
 		t.Errorf("10.0.0.2 volume1: %v", got)
+	}
+
+	if got := servicesForHost(s, "10.0.0.4", ""); len(got) != 1 || got[0] != "seaweed_envoy0.service" {
+		t.Errorf("10.0.0.4 envoy0: %v", got)
+	}
+	if got := servicesForHost(s, "10.0.0.4", "envoy"); len(got) != 1 || got[0] != "seaweed_envoy0.service" {
+		t.Errorf("envoy filter: %v", got)
 	}
 }
 

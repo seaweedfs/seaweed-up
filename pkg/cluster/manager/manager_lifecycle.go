@@ -55,15 +55,21 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 				names = append(names, fmt.Sprintf("seaweed_filer%d.service", i))
 			}
 		}
+	case "envoy":
+		for i, e := range s.EnvoyServers {
+			if e.Ip == ip {
+				names = append(names, fmt.Sprintf("seaweed_envoy%d.service", i))
+			}
+		}
 	}
 	return names
 }
 
 // servicesForHost returns all seaweed_* systemd unit names for a host,
-// optionally filtered by component ("" / "master" / "volume" / "filer").
+// optionally filtered by component ("" / "master" / "volume" / "filer" / "envoy").
 func servicesForHost(s *spec.Specification, ip, component string) []string {
 	var names []string
-	comps := []string{"master", "volume", "filer"}
+	comps := []string{"master", "volume", "filer", "envoy"}
 	if component != "" {
 		comps = []string{component}
 	}
@@ -102,6 +108,11 @@ func uniqueHosts(s *spec.Specification, component string) []hostEntry {
 	if component == "" || component == "filer" {
 		for _, f := range s.FilerServers {
 			add(f.Ip, f.PortSsh)
+		}
+	}
+	if component == "" || component == "envoy" {
+		for _, e := range s.EnvoyServers {
+			add(e.Ip, e.PortSsh)
 		}
 	}
 
