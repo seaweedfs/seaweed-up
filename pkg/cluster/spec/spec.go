@@ -28,6 +28,7 @@ type (
 		VolumeServers []*VolumeServerSpec `yaml:"volume_servers"`
 		FilerServers  []*FilerServerSpec  `yaml:"filer_servers"`
 		S3Servers     []*S3ServerSpec     `yaml:"s3_servers"`
+		AdminServers  []*AdminServerSpec  `yaml:"admin_servers"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
 	}
 )
