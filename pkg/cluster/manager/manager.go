@@ -24,6 +24,9 @@ type Manager struct {
 	SshPort            int
 	PrepareVolumeDisks bool
 	ForceRestart       bool
+	// Concurrency limits the number of concurrent per-host deploy goroutines.
+	// If <=0, deploys run with unlimited concurrency (default behavior).
+	Concurrency int
 
 	skipConfig bool
 	skipEnable bool

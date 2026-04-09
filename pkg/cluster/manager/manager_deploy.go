@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
+	"golang.org/x/sync/errgroup"
 )
 
 // extraConfigFile describes an additional file to upload into the per-instance
@@ -72,59 +73,94 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 
-	var wg sync.WaitGroup
-	var deployErrMu sync.Mutex
-	var deployErrors []error
+	// Fan out volume and filer server deploys using errgroup.
+	//
+	// Note: errgroup.Wait() only returns the first non-nil error. To ensure
+	// that operators see ALL per-host failures (not just the first), we
+	// collect every error into a mutex-guarded slice, log each of them, and
+	// build a combined error message that mentions every failing host.
+	var eg errgroup.Group
+	if m.Concurrency > 0 {
+		eg.SetLimit(m.Concurrency)
+	}
+
+	var (
+		errMu        sync.Mutex
+		deployErrors []error
+	)
+	recordErr := func(err error) {
+		errMu.Lock()
+		defer errMu.Unlock()
+		fmt.Printf("[ERROR] %v\n", err)
+		deployErrors = append(deployErrors, err)
+	}
 
 	if m.shouldInstall("volume") {
 		for index, volumeSpec := range specification.VolumeServers {
-			wg.Add(1)
-			go func(index int, volumeSpec *spec.VolumeServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					deployErrMu.Lock()
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%w", volumeSpec.Ip, volumeSpec.PortSsh, err))
-					deployErrMu.Unlock()
+					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, volumeSpec)
+				return nil
+			})
 		}
 	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
-			wg.Add(1)
-			go func(index int, filerSpec *spec.FilerServerSpec) {
-				defer wg.Done()
+			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-					deployErrMu.Lock()
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%w", filerSpec.Ip, filerSpec.PortSsh, err))
-					deployErrMu.Unlock()
+					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
+					recordErr(wrapped)
 				}
-			}(index, filerSpec)
+				return nil
+			})
 		}
 	}
-	wg.Wait()
-	if err := stderrors.Join(deployErrors...); err != nil {
-		return err
+	// Wait for all goroutines to complete. We intentionally ignore
+	// eg.Wait()'s single-error return and build a combined error from the
+	// full slice so that every failing host is surfaced to the caller.
+	_ = eg.Wait()
+	if len(deployErrors) > 0 {
+		if len(deployErrors) == 1 {
+			return deployErrors[0]
+		}
+		return fmt.Errorf("%d deploy errors: %w", len(deployErrors), stderrors.Join(deployErrors...))
 	}
 
-	if m.shouldInstall("s3") {
-		var s3wg sync.WaitGroup
-		var s3ErrMu sync.Mutex
-		var s3Errors []error
-		for index, s3Spec := range specification.S3Servers {
-			s3wg.Add(1)
-			go func(index int, s3Spec *spec.S3ServerSpec) {
-				defer s3wg.Done()
-				if err := m.DeployS3Server(s3Spec, index); err != nil {
-					s3ErrMu.Lock()
-					s3Errors = append(s3Errors, fmt.Errorf("deploy to s3 server %s:%d :%w", s3Spec.Ip, s3Spec.PortSsh, err))
-					s3ErrMu.Unlock()
-				}
-			}(index, s3Spec)
+	// S3 gateways depend on filers being up, so they are deployed as a
+	// separate phase after volume/filer. Use the same errgroup pattern
+	// with a mutex-guarded error slice so all failing hosts are surfaced.
+	if m.shouldInstall("s3") && len(specification.S3Servers) > 0 {
+		var s3eg errgroup.Group
+		if m.Concurrency > 0 {
+			s3eg.SetLimit(m.Concurrency)
 		}
-		s3wg.Wait()
-		if err := stderrors.Join(s3Errors...); err != nil {
-			return err
+		var (
+			s3ErrMu  sync.Mutex
+			s3Errors []error
+		)
+		recordS3Err := func(err error) {
+			s3ErrMu.Lock()
+			defer s3ErrMu.Unlock()
+			fmt.Printf("[ERROR] %v\n", err)
+			s3Errors = append(s3Errors, err)
+		}
+		for index, s3Spec := range specification.S3Servers {
+			s3eg.Go(func() error {
+				if err := m.DeployS3Server(s3Spec, index); err != nil {
+					wrapped := fmt.Errorf("deploy s3 server %s:%d: %w", s3Spec.Ip, s3Spec.PortSsh, err)
+					recordS3Err(wrapped)
+				}
+				return nil
+			})
+		}
+		_ = s3eg.Wait()
+		if len(s3Errors) > 0 {
+			if len(s3Errors) == 1 {
+				return s3Errors[0]
+			}
+			return fmt.Errorf("%d deploy errors: %w", len(s3Errors), stderrors.Join(s3Errors...))
 		}
 	}
 
