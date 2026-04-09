@@ -53,6 +53,26 @@ func validateS3Prerequisites(specification *spec.Specification) error {
 	return nil
 }
 
+// validateSftpFilerPrerequisite ensures that any SFTP server can reach a
+// filer: either the spec defines at least one FilerServer (which prepare()
+// would wire in as the default), or every SftpServer declares an explicit
+// Filer endpoint. Otherwise deployment would produce a gateway with no
+// backing filer.
+func validateSftpFilerPrerequisite(specification *spec.Specification) error {
+	if len(specification.SftpServers) == 0 {
+		return nil
+	}
+	if len(specification.FilerServers) > 0 {
+		return nil
+	}
+	for _, sftpSpec := range specification.SftpServers {
+		if sftpSpec.Filer == "" {
+			return fmt.Errorf("sftp server %s has no filer configured: define at least one filer_servers entry or set an explicit 'filer' on each sftp_servers entry", sftpSpec.Ip)
+		}
+	}
+	return nil
+}
+
 // resolveWorkerDefaultAdmins returns the default admin endpoint(s) used when
 // an individual WorkerServerSpec does not supply its own Admin field.
 //
@@ -88,6 +108,9 @@ func resolveWorkerDefaultAdmins(specification *spec.Specification) ([]string, er
 
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateS3Prerequisites(specification); err != nil {
+		return err
+	}
+	if err := validateSftpFilerPrerequisite(specification); err != nil {
 		return err
 	}
 	m.prepare(specification)
@@ -194,6 +217,17 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 				return s3Errors[0]
 			}
 			return fmt.Errorf("%d deploy errors: %w", len(s3Errors), stderrors.Join(s3Errors...))
+		}
+	}
+
+	if m.shouldInstall("sftp") && len(specification.SftpServers) > 0 {
+		if err := validateSftpFilerPrerequisite(specification); err != nil {
+			return err
+		}
+		for index, sftpSpec := range specification.SftpServers {
+			if err := m.DeploySftpServer(masters, sftpSpec, index); err != nil {
+				return fmt.Errorf("deploy to sftp server %s:%d :%v", sftpSpec.Ip, sftpSpec.PortSsh, err)
+			}
 		}
 	}
 
@@ -327,6 +361,15 @@ func (m *Manager) prepare(specification *spec.Specification) {
 		}
 		if s3Spec.Port == 0 {
 			s3Spec.Port = 8333
+		}
+	}
+	for _, sftpSpec := range specification.SftpServers {
+		sftpSpec.PortSsh = utils.NvlInt(sftpSpec.PortSsh, m.SshPort, 22)
+		if sftpSpec.Port == 0 {
+			sftpSpec.Port = 2022
+		}
+		if sftpSpec.Filer == "" {
+			sftpSpec.Filer = defaultFiler
 		}
 	}
 	for _, envoySpec := range specification.EnvoyServers {
