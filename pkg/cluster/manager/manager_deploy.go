@@ -5,6 +5,8 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -15,6 +17,18 @@ import (
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
 )
+
+// extraConfigFile describes an additional file to upload into the per-instance
+// config dir during deployComponentInstance. Used for things like the S3 IAM
+// config (s3.json) that are component-specific.
+type extraConfigFile struct {
+	// Name is the base name written under <tmp>/config/<Name>.
+	Name string
+	// Content is the file body.
+	Content *bytes.Buffer
+	// Mode is the octal mode string passed to Upload (e.g. "0600").
+	Mode string
+}
 
 func (m *Manager) shouldInstall(c string) bool {
 	return m.ComponentToDeploy == "" || m.ComponentToDeploy == c
@@ -155,7 +169,7 @@ func (m *Manager) prepare(specification *spec.Specification) {
 		if port == 0 {
 			port = 8888
 		}
-		defaultFiler = fmt.Sprintf("%s:%d", f.Ip, port)
+		defaultFiler = net.JoinHostPort(f.Ip, strconv.Itoa(port))
 	}
 	for _, s3Spec := range specification.S3Servers {
 		s3Spec.PortSsh = utils.NvlInt(s3Spec.PortSsh, m.SshPort, 22)
@@ -171,7 +185,7 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 }
 
-func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer) error {
+func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {
 	info("Deploying " + componentInstance + "...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
@@ -216,8 +230,21 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		return fmt.Errorf("error received during upload %s.options: %s", component, err)
 	}
 
+	for _, extra := range extras {
+		if extra.Content == nil {
+			continue
+		}
+		mode := extra.Mode
+		if mode == "" {
+			mode = "0644"
+		}
+		if err := op.Upload(extra.Content, fmt.Sprintf("%s/config/%s", dir, extra.Name), mode); err != nil {
+			return fmt.Errorf("error received during upload %s: %w", extra.Name, err)
+		}
+	}
+
 	info("Installing " + componentInstance + "...")
-	err = op.Execute(fmt.Sprintf("cat %s/install_%s.sh | SUDO_PASS=\"%s\" sh -\n", dir, componentInstance, m.sudoPass))
+	err = op.Execute(fmt.Sprintf("cat %s/install_%s.sh | SUDO_PASS=%s sh -\n", dir, componentInstance, shellSingleQuote(m.sudoPass)))
 	if err != nil {
 		return fmt.Errorf("error received during installation: %s", err)
 	}
