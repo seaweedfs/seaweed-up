@@ -29,6 +29,7 @@ type (
 		FilerServers  []*FilerServerSpec  `yaml:"filer_servers"`
 		S3Servers     []*S3ServerSpec     `yaml:"s3_servers"`
 		SftpServers   []*SftpServerSpec   `yaml:"sftp_servers"`
+		AdminServers  []*AdminServerSpec  `yaml:"admin_servers"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
 	}
 )

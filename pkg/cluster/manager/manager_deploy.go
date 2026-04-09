@@ -198,6 +198,42 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 
+	// Admin servers depend on masters being up, so they are deployed as a
+	// separate phase after volume/filer. Use the same errgroup pattern
+	// with a mutex-guarded error slice so all failing hosts are surfaced.
+	if m.shouldInstall("admin") && len(specification.AdminServers) > 0 {
+		var adminEg errgroup.Group
+		if m.Concurrency > 0 {
+			adminEg.SetLimit(m.Concurrency)
+		}
+		var (
+			adminErrMu  sync.Mutex
+			adminErrors []error
+		)
+		recordAdminErr := func(err error) {
+			adminErrMu.Lock()
+			defer adminErrMu.Unlock()
+			fmt.Printf("[ERROR] %v\n", err)
+			adminErrors = append(adminErrors, err)
+		}
+		for index, adminSpec := range specification.AdminServers {
+			adminEg.Go(func() error {
+				if err := m.DeployAdminServer(masters, adminSpec, index); err != nil {
+					wrapped := fmt.Errorf("deploy admin server %s:%d: %w", adminSpec.Ip, adminSpec.PortSsh, err)
+					recordAdminErr(wrapped)
+				}
+				return nil
+			})
+		}
+		_ = adminEg.Wait()
+		if len(adminErrors) > 0 {
+			if len(adminErrors) == 1 {
+				return adminErrors[0]
+			}
+			return fmt.Errorf("%d deploy errors: %w", len(adminErrors), stderrors.Join(adminErrors...))
+		}
+	}
+
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
@@ -261,6 +297,9 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, envoySpec := range specification.EnvoyServers {
 		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
+	}
+	for _, adminSpec := range specification.AdminServers {
+		adminSpec.PortSsh = utils.NvlInt(adminSpec.PortSsh, m.SshPort, 22)
 	}
 }
 
