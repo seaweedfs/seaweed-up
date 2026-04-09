@@ -49,12 +49,31 @@ func TestDeployFilerPostgres(t *testing.T) {
 		t.Fatalf("Failed to deploy cluster: %v", err)
 	}
 
-	// Give the filer a chance to connect to postgres and bring up its
-	// HTTP listener before poking at it.
-	time.Sleep(20 * time.Second)
-
-	filerURL := "http://172.28.0.10:8888/seaweed-up-test.txt"
+	filerBase := "http://172.28.0.10:8888/"
+	filerURL := filerBase + "seaweed-up-test.txt"
 	content := "hello from filer_postgres_test"
+
+	// Poll the filer until it is ready to serve requests. The filer needs
+	// a moment after deploy to connect to postgres and bring up its HTTP
+	// listener; a fixed sleep is flaky, so retry a simple GET every 2s
+	// for up to 60s before giving up.
+	waitDeadline := time.Now().Add(60 * time.Second)
+	for {
+		readyResp, readyErr := http.Get(filerBase)
+		if readyErr == nil {
+			readyResp.Body.Close()
+			if readyResp.StatusCode < 500 {
+				break
+			}
+		}
+		if time.Now().After(waitDeadline) {
+			if readyErr != nil {
+				t.Fatalf("filer did not become ready within 60s: %v", readyErr)
+			}
+			t.Fatalf("filer did not become ready within 60s: status %d", readyResp.StatusCode)
+		}
+		time.Sleep(2 * time.Second)
+	}
 
 	req, err := http.NewRequest(http.MethodPost, filerURL, strings.NewReader(content))
 	if err != nil {
