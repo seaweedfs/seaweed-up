@@ -2,13 +2,19 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -46,10 +52,15 @@ type ClusterStatusOptions struct {
 }
 
 type ClusterUpgradeOptions struct {
-	Version     string
-	ConfigFile  string
-	SkipConfirm bool
-	DryRun      bool
+	Version               string
+	ConfigFile            string
+	User                  string
+	SSHPort               int
+	IdentityFile          string
+	SkipConfirm           bool
+	DryRun                bool
+	RollbackOnFailure     bool
+	InsecureSkipTLSVerify bool
 }
 
 type ClusterScaleOutOptions struct {
@@ -144,7 +155,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 			return nil
 		}
 	}
-	
+
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
 		color.Red("Deployment failed: %v", err)
@@ -359,14 +370,238 @@ func orDash(s string) string {
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	color.Green("Upgrading cluster: %s to version %s", clusterName, opts.Version)
 
+	if opts.Version == "" {
+		return fmt.Errorf("--version is required")
+	}
+
+	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to load cluster configuration: %w", err)
+	}
+	if clusterName != "" {
+		clusterSpec.Name = clusterName
+	}
+
+	mgr := manager.NewManager()
+	mgr.SshPort = opts.SSHPort
+	if mgr.SshPort == 0 {
+		mgr.SshPort = 22
+	}
+
+	if opts.User == "" {
+		currentUser, err := utils.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("failed to get current user for SSH: %w", err)
+		}
+		mgr.User = currentUser
+	} else {
+		mgr.User = opts.User
+	}
+
+	if opts.IdentityFile == "" {
+		home, err := utils.UserHome()
+		if err != nil {
+			return fmt.Errorf("failed to determine home directory for SSH identity file: %w", err)
+		}
+		mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+	} else {
+		mgr.IdentityFile = opts.IdentityFile
+	}
+
 	if opts.DryRun {
 		color.Yellow("Dry run mode - no changes will be made")
+	} else if !opts.SkipConfirm {
+		color.Yellow("Upgrade Summary:")
+		fmt.Printf("  Cluster: %s\n", clusterSpec.Name)
+		fmt.Printf("  Target Version: %s\n", opts.Version)
+		fmt.Printf("  Masters: %d\n", len(clusterSpec.MasterServers))
+		fmt.Printf("  Volumes: %d\n", len(clusterSpec.VolumeServers))
+		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
+		fmt.Printf("  Rollback on failure: %v\n", opts.RollbackOnFailure)
+		if !utils.PromptForConfirmation("Proceed with rolling upgrade?") {
+			color.Yellow("WARN: Upgrade cancelled by user")
+			return nil
+		}
 	}
-	
-	// TODO: Implement upgrade logic
-	fmt.Println("Upgrade functionality not yet implemented")
-	
+
+	// Probe the currently-running cluster version so that rollback has a target
+	// to restore to. If probing fails we proceed with previousVersion="" and
+	// rollback will be disabled for this run.
+	if current, err := probeCurrentClusterVersion(clusterSpec, opts.InsecureSkipTLSVerify); err != nil {
+		color.Yellow("WARN: Could not determine current cluster version (%v); rollback will be disabled.", err)
+		mgr.Version = ""
+	} else if current == "" {
+		color.Yellow("WARN: Current cluster version could not be parsed from master response; rollback will be disabled.")
+		mgr.Version = ""
+	} else {
+		color.Cyan("Current cluster version detected: %s", current)
+		mgr.Version = current
+	}
+
+	upgradeOpts := manager.UpgradeOptions{
+		RollbackOnFailure:     opts.RollbackOnFailure,
+		DryRun:                opts.DryRun,
+		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
+	}
+
+	if err := mgr.UpgradeCluster(clusterSpec, opts.Version, upgradeOpts); err != nil {
+		color.Red("Error: Upgrade failed: %v", err)
+		return err
+	}
+
+	if opts.DryRun {
+		color.Green("Dry-run complete.")
+	} else {
+		color.Green("Cluster upgraded to %s", opts.Version)
+	}
 	return nil
+}
+
+// seaweedVersionRegexes are ordered-by-preference patterns used to extract a
+// SeaweedFS version from a master's /dir/status or /cluster/status response.
+//
+// SeaweedFS versions look like "30GB 3.85 b2f34c..." (disk-unit, version,
+// commit) or "seaweedfs 3.85". We deliberately avoid a bare `\d+\.\d+` match
+// because the master's response can legitimately contain IP addresses (e.g.
+// "172.28.0.10") which would otherwise be mis-parsed as versions — that caused
+// a rolling upgrade rollback to try to reinstall "172.28.0" and fail.
+var seaweedVersionRegexes = []*regexp.Regexp{
+	// "30GB 3.85 abcd1234" — the canonical /dir/status Version field.
+	regexp.MustCompile(`\b\d+\s*[KMGT]B\s+(\d+\.\d+(?:\.\d+)?)\b`),
+	// "seaweedfs 3.85" or "weed 3.85".
+	regexp.MustCompile(`(?i)\b(?:seaweedfs|weed)\s+v?(\d+\.\d+(?:\.\d+)?)\b`),
+	// "seaweedfs/3.85" (e.g. Server header).
+	regexp.MustCompile(`(?i)\b(?:seaweedfs|weed)/v?(\d+\.\d+(?:\.\d+)?)\b`),
+}
+
+// extractSeaweedVersion returns a version token from s, or "" if nothing
+// plausible is found. Matches must come from the Seaweed-specific patterns
+// above; a raw IP address like "172.28.0.10" will never match.
+func extractSeaweedVersion(s string) string {
+	if s == "" {
+		return ""
+	}
+	for _, re := range seaweedVersionRegexes {
+		if m := re.FindStringSubmatch(s); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// dirStatusPayload is the minimal subset of SeaweedFS's /dir/status response
+// we care about for version probing.
+type dirStatusPayload struct {
+	Version string `json:"Version"`
+}
+
+// probeCurrentClusterVersion asks the master hosts for their running version.
+// It tries /dir/status first and falls back to /cluster/status, preferring a
+// typed JSON Version field and then falling back to the Server response header.
+//
+// The parser is strict: it only accepts tokens that match a Seaweed-specific
+// version pattern. An IP-like substring ("172.28.0.10") will never be returned.
+// If a master responds 2xx but no version could be extracted, probing
+// continues with the remaining masters; "" + nil is returned only when all
+// masters responded successfully without a recognizable version.
+//
+// When the cluster is TLS-enabled, the default http.Client uses the system
+// cert pool. Pass insecureSkipTLSVerify=true to disable certificate
+// verification (for self-signed dev clusters).
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLSVerify bool) (string, error) {
+	if len(clusterSpec.MasterServers) == 0 {
+		return "", fmt.Errorf("no master servers in spec")
+	}
+	scheme := "http"
+	if clusterSpec.GlobalOptions.TLSEnabled {
+		scheme = "https"
+	}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify),
+	}
+	var lastErr error
+	sawHealthyMasterWithoutVersion := false
+	for _, ms := range clusterSpec.MasterServers {
+		for _, path := range []string{"/dir/status", "/cluster/status"} {
+			addr := net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port))
+			url := fmt.Sprintf("%s://%s%s", scheme, addr, path)
+			req, err := http.NewRequest(http.MethodGet, url, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				lastErr = fmt.Errorf("status %d from %s", resp.StatusCode, url)
+				_ = resp.Body.Close()
+				continue
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			serverHeader := resp.Header.Get("Server")
+			_ = resp.Body.Close()
+			if readErr != nil {
+				lastErr = fmt.Errorf("read body from %s: %w", url, readErr)
+				continue
+			}
+			// Prefer the typed JSON Version field.
+			var typed dirStatusPayload
+			if jsonErr := json.Unmarshal(body, &typed); jsonErr == nil && typed.Version != "" {
+				if v := extractSeaweedVersion(typed.Version); v != "" {
+					return v, nil
+				}
+			}
+			// Generic map lookup covers responses that use lowercase "version".
+			var payload map[string]interface{}
+			if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
+				for _, key := range []string{"Version", "version"} {
+					if raw, ok := payload[key].(string); ok && raw != "" {
+						if v := extractSeaweedVersion(raw); v != "" {
+							return v, nil
+						}
+					}
+				}
+			}
+			// Fall back to the Server response header.
+			if v := extractSeaweedVersion(serverHeader); v != "" {
+				return v, nil
+			}
+			// Nothing matched on this endpoint. Remember that this master
+			// responded 2xx but didn't yield a recognizable version, and
+			// keep probing other masters/endpoints.
+			sawHealthyMasterWithoutVersion = true
+		}
+	}
+	if sawHealthyMasterWithoutVersion {
+		// All reachable masters responded but none exposed a parseable
+		// version. Return empty + nil so the caller proceeds with rollback
+		// disabled rather than treating this as a hard error.
+		return "", nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no master responded")
+	}
+	return "", lastErr
+}
+
+// newUpgradeHTTPTransport builds an http.Transport for upgrade probes.
+//
+// Default behavior uses the system cert pool (tls.Config{}). When
+// insecureSkipTLSVerify is true, certificate verification is disabled.
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func newUpgradeHTTPTransport(insecureSkipTLSVerify bool) *http.Transport {
+	tlsConfig := &tls.Config{}
+	if insecureSkipTLSVerify {
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
+	}
+	return &http.Transport{TLSClientConfig: tlsConfig}
 }
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {

@@ -135,8 +135,11 @@ Shows real-time information about cluster components including:
 }
 
 func newClusterUpgradeCmd() *cobra.Command {
-	opts := &ClusterUpgradeOptions{}
-	
+	opts := &ClusterUpgradeOptions{
+		SSHPort:           22,
+		RollbackOnFailure: true,
+	}
+
 	cmd := &cobra.Command{
 		Use:   "upgrade <cluster-name>",
 		Short: "Upgrade cluster to a new SeaweedFS version",
@@ -147,28 +150,38 @@ This command safely upgrades cluster components with minimal downtime:
 - Performs health checks before and after upgrade
 - Supports rollback on failure
 - Maintains data availability during upgrade`,
-		
+
 		Example: `  # Upgrade to specific version
-  seaweed-up cluster upgrade prod-cluster --version=3.75
-  
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=3.75
+
   # Upgrade to latest version
-  seaweed-up cluster upgrade prod-cluster --version=latest
-  
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=latest
+
   # Dry run to see what would be upgraded
-  seaweed-up cluster upgrade prod-cluster --version=3.75 --dry-run`,
-		
-		Args: cobra.ExactArgs(1),
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=3.75 --dry-run`,
+
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterUpgrade(args[0], opts)
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return runClusterUpgrade(name, opts)
 		},
 	}
-	
+
 	cmd.Flags().StringVar(&opts.Version, "version", "", "target version to upgrade to (required)")
-	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required)")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
+	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
-	
+	cmd.Flags().BoolVar(&opts.RollbackOnFailure, "rollback-on-failure", true, "reinstall previous version on a host if its post-upgrade health check fails")
+	cmd.Flags().BoolVar(&opts.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "skip TLS certificate verification for upgrade health probes")
+
 	_ = cmd.MarkFlagRequired("version")
+	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
 }
