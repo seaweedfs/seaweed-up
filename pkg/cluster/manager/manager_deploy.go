@@ -53,6 +53,39 @@ func validateS3Prerequisites(specification *spec.Specification) error {
 	return nil
 }
 
+// resolveWorkerDefaultAdmins returns the default admin endpoint(s) used when
+// an individual WorkerServerSpec does not supply its own Admin field.
+//
+// `weed worker -admin` points to the SeaweedFS admin server (the `weed admin`
+// component), NOT a master. The admin component serves port 23646. Workers
+// MUST therefore talk to an admin server; defaulting to a master IP would
+// silently target the wrong host because masters listen on 9333, not 23646.
+//
+// Precedence:
+//  1. If every worker has its own explicit Admin, no default is needed and
+//     the returned slice may be empty (callers still use per-worker Admin).
+//  2. Otherwise, if the cluster spec defines at least one admin_server, use
+//     the first admin server's ip:port as the default.
+//  3. Otherwise, return a clear error rather than silently falling back to a
+//     master IP — that would be incorrect.
+func resolveWorkerDefaultAdmins(specification *spec.Specification) ([]string, error) {
+	var defaultAdmins []string
+	if len(specification.AdminServers) > 0 {
+		adminSpec := specification.AdminServers[0]
+		adminPort := adminSpec.Port
+		if adminPort == 0 {
+			adminPort = 23646
+		}
+		defaultAdmins = append(defaultAdmins, fmt.Sprintf("%s:%d", adminSpec.Ip, adminPort))
+	}
+	for _, workerSpec := range specification.WorkerServers {
+		if workerSpec.Admin == "" && len(defaultAdmins) == 0 {
+			return nil, fmt.Errorf("worker %s:%d requires an admin endpoint: set worker_servers[].admin or define at least one admin_server", workerSpec.Ip, workerSpec.PortSsh)
+		}
+	}
+	return defaultAdmins, nil
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateS3Prerequisites(specification); err != nil {
 		return err
@@ -202,21 +235,11 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 
 	if m.shouldInstall("worker") && len(specification.WorkerServers) > 0 {
 		// Resolve the default admin endpoint used when a worker spec does not
-		// supply one of its own. Precedence:
-		//   1. The individual WorkerServerSpec.Admin field (handled inside
-		//      WorkerServerSpec.WriteToBuffer) — wins per-worker.
-		//   2. The first master server in the cluster spec, on the standard
-		//      admin port 23646 (fallback default for all workers below).
-		//   3. Empty — in which case workers without an explicit Admin are
-		//      rejected with a clear error before any deploy work happens.
-		var defaultAdmins []string
-		if len(specification.MasterServers) > 0 {
-			defaultAdmins = append(defaultAdmins, fmt.Sprintf("%s:%d", specification.MasterServers[0].Ip, 23646))
-		}
-		for _, workerSpec := range specification.WorkerServers {
-			if workerSpec.Admin == "" && len(defaultAdmins) == 0 {
-				return fmt.Errorf("worker %s:%d requires an admin endpoint: set worker_servers[].admin or define at least one master_server", workerSpec.Ip, workerSpec.PortSsh)
-			}
+		// supply one of its own. See resolveWorkerDefaultAdmins for the
+		// precedence rules.
+		defaultAdmins, err := resolveWorkerDefaultAdmins(specification)
+		if err != nil {
+			return err
 		}
 
 		// Fan out worker deploys using the same errgroup + shared error
