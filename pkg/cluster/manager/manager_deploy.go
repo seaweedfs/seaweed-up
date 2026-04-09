@@ -65,6 +65,14 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
+	if m.shouldInstall("admin") {
+		for index, adminSpec := range specification.AdminServers {
+			if err := m.DeployAdminServer(masters, adminSpec, index); err != nil {
+				return fmt.Errorf("deploy to admin server %s:%d :%v", adminSpec.Ip, adminSpec.PortSsh, err)
+			}
+		}
+	}
+
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
@@ -100,6 +108,9 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, envoySpec := range specification.EnvoyServers {
 		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
+	}
+	for _, adminSpec := range specification.AdminServers {
+		adminSpec.PortSsh = utils.NvlInt(adminSpec.PortSsh, m.SshPort, 22)
 	}
 }
 
