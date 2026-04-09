@@ -1,0 +1,6 @@
+[cassandra]
+enabled = true
+keyspace = "seaweed"
+hosts = ["c1", "c2", "c3"]
+username = "cass"
+password = "pw"

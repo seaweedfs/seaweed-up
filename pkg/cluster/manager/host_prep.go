@@ -86,6 +86,9 @@ func (m *Manager) PrepareAllHosts(specification *spec.Specification) error {
 	for _, s := range specification.EnvoyServers {
 		add(s.Ip, s.PortSsh)
 	}
+	for _, s := range specification.WorkerServers {
+		add(s.Ip, s.PortSsh)
+	}
 
 	prepare := m.prepareHostAddressFn
 	if prepare == nil {

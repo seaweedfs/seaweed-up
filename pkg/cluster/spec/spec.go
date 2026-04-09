@@ -30,6 +30,7 @@ type (
 		S3Servers     []*S3ServerSpec     `yaml:"s3_servers"`
 		AdminServers  []*AdminServerSpec  `yaml:"admin_servers"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
+		WorkerServers []*WorkerServerSpec `yaml:"worker_servers"`
 	}
 )
 

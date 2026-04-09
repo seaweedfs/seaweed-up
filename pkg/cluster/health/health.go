@@ -3,10 +3,13 @@ package health
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"sync"
 	"time"
@@ -114,19 +117,66 @@ func (c *ClusterHealth) UnhealthyCount() int {
 type Prober struct {
 	Timeout time.Duration
 	Client  *http.Client
+	// Scheme is the URL scheme used when constructing probe URLs, either
+	// "http" or "https". Empty is treated as "http".
+	Scheme string
 }
 
-// NewProber returns a Prober with sensible defaults.
+// NewProber returns a Prober with sensible defaults that speaks HTTP.
+// Use NewProberForSpec to derive scheme and TLS settings from a cluster
+// specification.
 func NewProber(timeout time.Duration) *Prober {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
 	return &Prober{
 		Timeout: timeout,
+		Scheme:  "http",
 		Client: &http.Client{
 			Timeout: timeout,
 		},
 	}
+}
+
+// NewProberForSpec builds a Prober whose URL scheme and TLS trust roots
+// match the cluster spec. When the spec has TLS enabled, the returned
+// Prober speaks HTTPS and trusts the cluster CA found under
+// ~/.seaweed-up/clusters/<name>/certs/ca.crt when present; otherwise it
+// falls back to the system trust store. InsecureSkipVerify is never set.
+//
+// clusterCertDir is the directory where the cluster CA lives (typically
+// the same directory returned by pkg/cluster/tls.LocalClusterDir). Pass
+// an empty string to skip CA loading and use the system roots.
+func NewProberForSpec(timeout time.Duration, s *spec.Specification, clusterCertDir string) *Prober {
+	p := NewProber(timeout)
+	if s == nil || !s.GlobalOptions.TLSEnabled {
+		return p
+	}
+	p.Scheme = "https"
+
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if clusterCertDir != "" {
+		caPath := clusterCertDir + "/ca.crt"
+		if pem, err := os.ReadFile(caPath); err == nil && len(pem) > 0 {
+			pool := x509.NewCertPool()
+			if pool.AppendCertsFromPEM(pem) {
+				tlsCfg.RootCAs = pool
+			}
+		}
+	}
+	p.Client = &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
+	return p
+}
+
+// scheme returns the URL scheme to use for probe URLs.
+func (p *Prober) scheme() string {
+	if p.Scheme == "" {
+		return "http"
+	}
+	return p.Scheme
 }
 
 // fetchJSON GETs the URL and decodes the response body as a JSON object.
@@ -188,7 +238,7 @@ func (p *Prober) ProbeMaster(ctx context.Context, ip string, port int) ProbeResu
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	res := ProbeResult{Kind: KindMaster, Address: addr, Extra: map[string]map[string]any{}}
 
-	clusterURL := fmt.Sprintf("http://%s/cluster/status", addr)
+	clusterURL := fmt.Sprintf("%s://%s/cluster/status", p.scheme(), addr)
 	data, err := p.fetchJSON(ctx, clusterURL)
 	if err != nil {
 		res.Err = err.Error()
@@ -197,7 +247,7 @@ func (p *Prober) ProbeMaster(ctx context.Context, ip string, port int) ProbeResu
 	res.Raw = data
 	res.Version = extractVersion(data)
 
-	dirURL := fmt.Sprintf("http://%s/dir/status", addr)
+	dirURL := fmt.Sprintf("%s://%s/dir/status", p.scheme(), addr)
 	if dirData, derr := p.fetchJSON(ctx, dirURL); derr == nil {
 		res.Extra["dir_status"] = dirData
 		if res.Version == "" {
@@ -216,7 +266,7 @@ func (p *Prober) ProbeMaster(ctx context.Context, ip string, port int) ProbeResu
 func (p *Prober) ProbeVolume(ctx context.Context, ip string, port int) ProbeResult {
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	res := ProbeResult{Kind: KindVolume, Address: addr}
-	data, err := p.fetchJSON(ctx, fmt.Sprintf("http://%s/status", addr))
+	data, err := p.fetchJSON(ctx, fmt.Sprintf("%s://%s/status", p.scheme(), addr))
 	if err != nil {
 		res.Err = err.Error()
 		return res
@@ -235,7 +285,7 @@ func (p *Prober) ProbeFiler(ctx context.Context, ip string, port int) ProbeResul
 	addr := fmt.Sprintf("%s:%d", ip, port)
 	res := ProbeResult{Kind: KindFiler, Address: addr}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://%s/", addr), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s/", p.scheme(), addr), nil)
 	if err != nil {
 		res.Err = err.Error()
 		return res

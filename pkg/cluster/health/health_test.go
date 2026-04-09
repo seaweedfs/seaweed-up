@@ -2,17 +2,26 @@ package health
 
 import (
 	"context"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	"gopkg.in/yaml.v3"
 )
+
+// pemEncodeCert wraps a raw DER cert in a PEM block for writing to disk.
+func pemEncodeCert(t *testing.T, der []byte) []byte {
+	t.Helper()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
 
 // parseHostPort extracts ip + port from an httptest.Server URL.
 func parseHostPort(t *testing.T, raw string) (string, int) {
@@ -221,6 +230,90 @@ func TestProbeAggregation(t *testing.T) {
 	}
 	if len(ch.Masters) != 1 || len(ch.Volumes) != 1 || len(ch.Filers) != 1 {
 		t.Fatalf("wrong counts: %+v", ch)
+	}
+}
+
+// TestNewProberForSpecTLS verifies that NewProberForSpec builds an HTTPS
+// prober that trusts a CA loaded from disk when the cluster spec has TLS
+// enabled. It uses httptest.NewTLSServer and writes the server's cert as
+// "ca.crt" into a temp directory (since httptest self-signs its own leaf).
+func TestNewProberForSpecTLS(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Version":"3.75"}`))
+	})
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+
+	// Persist the server's self-signed cert as ca.crt in a temp dir so
+	// NewProberForSpec picks it up as the trust root.
+	dir := t.TempDir()
+	caPath := dir + "/ca.crt"
+	certPEM := srv.Certificate()
+	pemBytes := pemEncodeCert(t, certPEM.Raw)
+	if err := os.WriteFile(caPath, pemBytes, 0o600); err != nil {
+		t.Fatalf("write ca.crt: %v", err)
+	}
+
+	ip, port := parseHostPort(t, srv.URL)
+	s := &spec.Specification{
+		GlobalOptions: spec.GlobalOptions{TLSEnabled: true},
+		VolumeServers: []*spec.VolumeServerSpec{{Ip: ip, Port: port}},
+	}
+	p := NewProberForSpec(2*time.Second, s, dir)
+	if p.Scheme != "https" {
+		t.Fatalf("expected scheme https, got %q", p.Scheme)
+	}
+	res := p.ProbeVolume(context.Background(), ip, port)
+	if !res.Healthy {
+		t.Fatalf("expected healthy over TLS with CA trust, got err=%s", res.Err)
+	}
+	if res.Version != "3.75" {
+		t.Errorf("version = %q, want 3.75", res.Version)
+	}
+}
+
+// TestDeployPersistsTLSEnabledAndProbeHTTPS simulates a `cluster deploy
+// --tls` flow: stamp TLSEnabled on the spec, persist it via the state
+// store, reload, and confirm both the persisted flag and the probe URL
+// scheme round-trip correctly.
+func TestDeployPersistsTLSEnabledAndProbeHTTPS(t *testing.T) {
+	// Emulate the cmd/cluster_impl.go deploy path: when --tls is
+	// specified the spec gets TLSEnabled=true before it is written out.
+	sp := &spec.Specification{
+		Name: "tlscluster",
+		MasterServers: []*spec.MasterServerSpec{
+			{Ip: "10.0.0.1", Port: 9333},
+		},
+	}
+	sp.GlobalOptions.TLSEnabled = true
+
+	// Round-trip through YAML the same way state.Store does to be sure
+	// the `enable_tls` field serializes.
+	yml, err := yaml.Marshal(sp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(yml), "enable_tls: true") {
+		t.Fatalf("expected enable_tls in YAML, got:\n%s", yml)
+	}
+	var loaded spec.Specification
+	if err := yaml.Unmarshal(yml, &loaded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !loaded.GlobalOptions.TLSEnabled {
+		t.Fatalf("TLSEnabled did not round-trip")
+	}
+
+	// Build a Prober from the reloaded spec and check that it speaks
+	// HTTPS (no CA dir -> system roots, which is fine here because we
+	// only inspect scheme/URL construction, not an actual handshake).
+	p := NewProberForSpec(time.Second, &loaded, "")
+	if p.Scheme != "https" {
+		t.Fatalf("Scheme = %q, want https", p.Scheme)
+	}
+	if got := p.scheme(); got != "https" {
+		t.Fatalf("scheme() = %q, want https", got)
 	}
 }
 

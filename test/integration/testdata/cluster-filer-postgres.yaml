@@ -1,0 +1,32 @@
+# Single-node cluster that stores filer metadata in an external
+# PostgreSQL database. The integration workflow starts a postgres
+# container on the same docker network at 172.28.0.20.
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+master_servers:
+  - ip: 172.28.0.10
+    port: 9333
+
+volume_servers:
+  - ip: 172.28.0.10
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/vol1
+        disk: ""
+
+filer_servers:
+  - ip: 172.28.0.10
+    port: 8888
+    config:
+      type: postgres
+      hostname: 172.28.0.20
+      port: 5432
+      username: seaweed
+      password: seaweedpw
+      database: seaweedfs
+      schema: public
+      sslmode: disable
