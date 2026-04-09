@@ -1,0 +1,162 @@
+name: Integration SFTP
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'pkg/cluster/spec/sftp_server_spec.go'
+      - 'pkg/cluster/manager/deploy_sftp_server.go'
+      - 'pkg/cluster/manager/manager_deploy.go'
+      - 'test/integration/sftp_test.go'
+      - 'test/integration/testdata/cluster-sftp.yaml'
+      - '.github/workflows/integration-sftp.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'pkg/cluster/spec/sftp_server_spec.go'
+      - 'pkg/cluster/manager/deploy_sftp_server.go'
+      - 'pkg/cluster/manager/manager_deploy.go'
+      - 'test/integration/sftp_test.go'
+      - 'test/integration/testdata/cluster-sftp.yaml'
+      - '.github/workflows/integration-sftp.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sftp-integration:
+    name: SFTP Gateway Integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start containers
+        run: |
+          for i in 1 2 3; do
+            ip="172.28.0.$((9 + i))"
+            docker run -d \
+              --name seaweed-up-host$i \
+              --hostname host$i \
+              --privileged \
+              --cgroupns=host \
+              --network seaweed-up-net \
+              --ip $ip \
+              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+              geerlingguy/docker-ubuntu2204-ansible:latest
+          done
+
+          sleep 10
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            for i in {1..60}; do
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Install SSH on containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server openssh-client curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+          done
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+          done
+
+      - name: Deploy cluster with SFTP gateway
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-sftp \
+            -f testdata/cluster-sftp.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          echo "Waiting for services..."
+          sleep 25
+
+          echo "=== Listening ports on host1 ==="
+          docker exec seaweed-up-host1 ss -tlnp 2>&1 || true
+          echo "=== Seaweed services ==="
+          docker exec seaweed-up-host1 systemctl list-units 'seaweed*' --all --no-pager 2>&1 || true
+          echo "=== sftp service journal ==="
+          docker exec seaweed-up-host1 journalctl -u 'seaweed_sftp*' --no-pager -n 80 2>&1 || true
+
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
+          nc -z 172.28.0.10 8382 || (echo "Volume not running" && exit 1)
+          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
+          nc -z 172.28.0.10 2022 || (echo "SFTP gateway not running" && exit 1)
+          echo "All services verified including SFTP gateway on port 2022"
+
+      - name: Archive logs
+        if: always()
+        working-directory: test/integration
+        run: |
+          echo "=== Container Status ===" > sftp.log
+          docker ps -a >> sftp.log
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "=== Logs for $host ===" >> sftp.log
+            docker logs $host >> sftp.log 2>&1 || true
+            echo "=== Seaweed journal on $host ===" >> sftp.log
+            docker exec $host journalctl -u 'seaweed*' --no-pager 2>&1 >> sftp.log || true
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sftp-integration-logs
+          path: test/integration/sftp.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh

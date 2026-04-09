@@ -65,6 +65,14 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
+	if m.shouldInstall("sftp") {
+		for index, sftpSpec := range specification.SftpServers {
+			if err := m.DeploySftpServer(masters, sftpSpec, index); err != nil {
+				return fmt.Errorf("deploy to sftp server %s:%d :%v", sftpSpec.Ip, sftpSpec.PortSsh, err)
+			}
+		}
+	}
+
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
@@ -97,6 +105,20 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, filerSpec := range specification.FilerServers {
 		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, m.SshPort, 22)
+	}
+	for _, sftpSpec := range specification.SftpServers {
+		sftpSpec.PortSsh = utils.NvlInt(sftpSpec.PortSsh, m.SshPort, 22)
+		if sftpSpec.Port == 0 {
+			sftpSpec.Port = 2022
+		}
+		if sftpSpec.Filer == "" && len(specification.FilerServers) > 0 {
+			f := specification.FilerServers[0]
+			filerPort := f.Port
+			if filerPort == 0 {
+				filerPort = 8888
+			}
+			sftpSpec.Filer = fmt.Sprintf("%s:%d", f.Ip, filerPort)
+		}
 	}
 	for _, envoySpec := range specification.EnvoyServers {
 		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
