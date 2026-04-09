@@ -10,18 +10,12 @@ services:
     hostname: host1
     container_name: seaweed-up-host1
     privileged: true
-    cgroup: host
-    command: /sbin/init
     networks:
       seaweed-up-net:
-        ipv4_address: 10.200.41.10
+        ipv4_address: 172.28.0.10
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host1-data:/opt/seaweed
       - host1-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
     stop_grace_period: 1s
 
   target-host-2:
@@ -29,18 +23,12 @@ services:
     hostname: host2
     container_name: seaweed-up-host2
     privileged: true
-    cgroup: host
-    command: /sbin/init
     networks:
       seaweed-up-net:
-        ipv4_address: 10.200.41.11
+        ipv4_address: 172.28.0.11
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host2-data:/opt/seaweed
       - host2-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
     stop_grace_period: 1s
 
   target-host-3:
@@ -48,18 +36,12 @@ services:
     hostname: host3
     container_name: seaweed-up-host3
     privileged: true
-    cgroup: host
-    command: /sbin/init
     networks:
       seaweed-up-net:
-        ipv4_address: 10.200.41.12
+        ipv4_address: 172.28.0.12
     volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - host3-data:/opt/seaweed
       - host3-conf:/etc/seaweed
-    tmpfs:
-      - /run
-      - /run/lock
     stop_grace_period: 1s
 
 networks:
@@ -67,7 +49,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.200.41.0/24
+        - subnet: 172.28.0.0/16
 
 volumes:
   host1-data:

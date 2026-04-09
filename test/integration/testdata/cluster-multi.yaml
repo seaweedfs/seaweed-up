@@ -6,22 +6,22 @@ global:
   replication: "000"
 
 master_servers:
-  - ip: 10.200.41.10
+  - ip: 172.28.0.10
     port: 9333
 
 volume_servers:
-  - ip: 10.200.41.11
+  - ip: 172.28.0.11
     port: 8080
     folders:
       - folder: /opt/seaweed/volume0
         disk: ""
-  - ip: 10.200.41.12
+  - ip: 172.28.0.12
     port: 8080
     folders:
       - folder: /opt/seaweed/volume1
         disk: ""
 
 filer_servers:
-  - ip: 10.200.41.10
+  - ip: 172.28.0.10
     port: 8888
 

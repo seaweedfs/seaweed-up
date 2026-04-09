@@ -1,22 +1,21 @@
-# Single-node test cluster configuration
 global:
-  dir.conf: "/etc/seaweed"
-  dir.data: "/opt/seaweed"
-  volumeSizeLimitMB: 100
+  version: "3.97"
+  data_center: "dc1"
+  rack: "rack1"
+  default_replication: "000"
   replication: "000"
 
 master_servers:
-  - ip: 172.28.0.10
+  - ip: 10.200.41.10
     port: 9333
 
 volume_servers:
-  - ip: 172.28.0.10
+  - ip: 10.200.41.10
     port: 8382
     folders:
       - folder: /opt/seaweed/vol1
         disk: ""
 
 filer_servers:
-  - ip: 172.28.0.10
+  - ip: 10.200.41.10
     port: 8888
-

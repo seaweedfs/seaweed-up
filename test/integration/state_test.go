@@ -5,6 +5,7 @@ package integration
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,9 +13,38 @@ import (
 // TestPersistedStateSingleNode verifies that deploying a cluster
 // writes a state entry that `cluster list` can resolve by name, with
 // the expected host count populated from the topology.
+//
+// This test runs in its own GitHub Actions workflow
+// (.github/workflows/integration-state.yml) which pre-starts
+// containers on the 10.200.41.0/24 subnet via bash `docker run`
+// (not docker-compose). It therefore bypasses the shared
+// docker-compose based Setup()/Teardown() helpers in framework.go
+// and uses state-specific testdata (cluster-single-state.yaml) so
+// it does not collide with the original Integration Tests workflow
+// which uses 172.28.0.0/16.
 func TestPersistedStateSingleNode(t *testing.T) {
-	env := NewTestEnvironment(t)
-	env.SkipIfNotAvailable(t)
+	if !isDockerAvailable() {
+		t.Skip("Docker is not available, skipping integration test")
+	}
+
+	projectRoot := findProjectRoot()
+	if projectRoot == "" {
+		t.Fatal("could not locate project root")
+	}
+
+	env := &TestEnvironment{
+		t:           t,
+		projectRoot: projectRoot,
+		testDataDir: filepath.Join(projectRoot, "test", "integration", "testdata"),
+		hosts: []HostInfo{
+			{Name: "host1", IP: "10.200.41.10", Port: 22},
+			{Name: "host2", IP: "10.200.41.11", Port: 22},
+			{Name: "host3", IP: "10.200.41.12", Port: 22},
+		},
+		// dockerRunning stays false: the workflow manages container
+		// lifecycle via bash `docker run`, so Teardown() is a no-op
+		// and we do not call Setup().
+	}
 
 	if err := env.BuildSeaweedUp(); err != nil {
 		t.Fatalf("Failed to build seaweed-up: %v", err)
@@ -26,16 +56,12 @@ func TestPersistedStateSingleNode(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("SEAWEED_UP_HOME", stateHome)
 
-	if err := env.Setup(); err != nil {
-		t.Fatalf("Failed to setup test environment: %v", err)
+	// Wait for SSH to be reachable on the pre-started containers.
+	if err := env.waitForHosts(); err != nil {
+		t.Fatalf("Failed waiting for pre-started hosts: %v", err)
 	}
-	defer func() {
-		if err := env.Teardown(); err != nil {
-			t.Errorf("Failed to teardown test environment: %v", err)
-		}
-	}()
 
-	configFile := env.GetClusterConfig("cluster-single.yaml")
+	configFile := env.GetClusterConfig("cluster-single-state.yaml")
 	sshKey := env.GetSSHKeyPath()
 
 	const clusterName = "test-state"
@@ -89,9 +115,10 @@ func TestPersistedStateSingleNode(t *testing.T) {
 				continue
 			}
 			found = true
-			// cluster-single.yaml uses a single host (10.200.41.10)
-			// across master, volume, and filer. After de-dupe the
-			// store should report exactly one host.
+			// cluster-single-state.yaml uses a single host
+			// (10.200.41.10) across master, volume, and filer.
+			// After de-dupe the store should report exactly one
+			// host.
 			if len(e.Hosts) != 1 {
 				t.Errorf("Hosts = %v, want exactly 1 entry", e.Hosts)
 			}
