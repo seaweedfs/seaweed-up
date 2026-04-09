@@ -45,6 +45,7 @@ type ClusterDeployOptions struct {
 	Version      string
 	Component    string
 	MountDisks   bool
+	HostPrep     bool
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
@@ -124,6 +125,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.Version = opts.Version
 	mgr.ComponentToDeploy = opts.Component
 	mgr.PrepareVolumeDisks = opts.MountDisks
+	mgr.HostPrep = opts.HostPrep
 	mgr.ForceRestart = opts.ForceRestart
 	mgr.ProxyUrl = opts.ProxyUrl
 	mgr.Concurrency = opts.Concurrency

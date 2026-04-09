@@ -11,6 +11,12 @@ import (
 //go:embed *.sh
 var content embed.FS
 
+// HostPrepScript is the embedded host preparation script applied to every
+// target host before deployment when --host-prep is set.
+//
+//go:embed host_prep.sh
+var HostPrepScript string
+
 func Open(path string) (fs.File, error) {
 	return content.Open(path)
 }

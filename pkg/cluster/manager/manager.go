@@ -23,6 +23,7 @@ type Manager struct {
 	Version            string
 	SshPort            int
 	PrepareVolumeDisks bool
+	HostPrep           bool
 	ForceRestart       bool
 	// Concurrency limits the number of concurrent per-host deploy goroutines.
 	// If <=0, deploys run with unlimited concurrency (default behavior).
@@ -34,6 +35,10 @@ type Manager struct {
 	sudoPass   string
 	confDir    string
 	dataDir    string
+
+	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
+	// PrepareAllHosts calls PrepareHostAddress directly.
+	prepareHostAddressFn func(ip string, sshPort int) error
 }
 
 func NewManager() *Manager {
