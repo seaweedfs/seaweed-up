@@ -1,0 +1,28 @@
+# Admin UI test cluster configuration.
+#
+# Deploys master, volume, filer and the SeaweedFS admin UI on a single host
+# so the integration workflow can curl the admin HTTP endpoint.
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+master_servers:
+  - ip: 172.28.0.10
+    port: 9333
+
+volume_servers:
+  - ip: 172.28.0.10
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/vol1
+        disk: ""
+
+filer_servers:
+  - ip: 172.28.0.10
+    port: 8888
+
+admin_servers:
+  - ip: 172.28.0.10
+    port: 23646
