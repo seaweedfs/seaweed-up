@@ -81,7 +81,8 @@ func (m *Manager) deployS3Instance(op operator.CommandOperator, component, compo
 	}
 
 	if s3Config != nil {
-		if err := op.Upload(s3Config, fmt.Sprintf("%s/config/s3.json", dir), "0644"); err != nil {
+		// s3.json contains IAM credentials; restrict to owner-only.
+		if err := op.Upload(s3Config, fmt.Sprintf("%s/config/s3.json", dir), "0600"); err != nil {
 			return fmt.Errorf("error received during upload s3.json: %w", err)
 		}
 	}

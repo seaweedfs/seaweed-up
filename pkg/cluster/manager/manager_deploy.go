@@ -3,7 +3,10 @@ package manager
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
+	"sync"
+
 	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
@@ -11,7 +14,6 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/seaweedfs/seaweed-up/scripts"
 	"github.com/thanhpk/randstr"
-	"sync"
 )
 
 func (m *Manager) shouldInstall(c string) bool {
@@ -57,6 +59,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	var wg sync.WaitGroup
+	var deployErrMu sync.Mutex
 	var deployErrors []error
 
 	if m.shouldInstall("volume") {
@@ -65,7 +68,9 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			go func(index int, volumeSpec *spec.VolumeServerSpec) {
 				defer wg.Done()
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
+					deployErrMu.Lock()
+					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%w", volumeSpec.Ip, volumeSpec.PortSsh, err))
+					deployErrMu.Unlock()
 				}
 			}(index, volumeSpec)
 		}
@@ -76,31 +81,36 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			go func(index int, filerSpec *spec.FilerServerSpec) {
 				defer wg.Done()
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err))
+					deployErrMu.Lock()
+					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%w", filerSpec.Ip, filerSpec.PortSsh, err))
+					deployErrMu.Unlock()
 				}
 			}(index, filerSpec)
 		}
 	}
 	wg.Wait()
-	if len(deployErrors) > 0 {
-		return deployErrors[0]
+	if err := stderrors.Join(deployErrors...); err != nil {
+		return err
 	}
 
 	if m.shouldInstall("s3") {
 		var s3wg sync.WaitGroup
+		var s3ErrMu sync.Mutex
 		var s3Errors []error
 		for index, s3Spec := range specification.S3Servers {
 			s3wg.Add(1)
 			go func(index int, s3Spec *spec.S3ServerSpec) {
 				defer s3wg.Done()
 				if err := m.DeployS3Server(s3Spec, index); err != nil {
-					s3Errors = append(s3Errors, fmt.Errorf("deploy to s3 server %s:%d :%v", s3Spec.Ip, s3Spec.PortSsh, err))
+					s3ErrMu.Lock()
+					s3Errors = append(s3Errors, fmt.Errorf("deploy to s3 server %s:%d :%w", s3Spec.Ip, s3Spec.PortSsh, err))
+					s3ErrMu.Unlock()
 				}
 			}(index, s3Spec)
 		}
 		s3wg.Wait()
-		if len(s3Errors) > 0 {
-			return s3Errors[0]
+		if err := stderrors.Join(s3Errors...); err != nil {
+			return err
 		}
 	}
 
