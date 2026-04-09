@@ -158,10 +158,18 @@ func matchesNode(dn dataNode, target string) bool {
 		return true
 	}
 	// Some versions use "Url" fields without scheme; others include one.
-	if strings.TrimPrefix(dn.URL, "http://") == target {
+	// Strip both http:// and https:// prefixes when comparing.
+	if stripScheme(dn.URL) == target || stripScheme(dn.PublicURL) == target {
 		return true
 	}
 	return false
+}
+
+// stripScheme removes http:// or https:// prefix from the given address.
+func stripScheme(addr string) string {
+	addr = strings.TrimPrefix(addr, "https://")
+	addr = strings.TrimPrefix(addr, "http://")
+	return addr
 }
 
 // dirStatus matches the pieces of /dir/status that Drain consumes. Extra

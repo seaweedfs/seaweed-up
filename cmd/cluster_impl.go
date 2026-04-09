@@ -35,6 +35,7 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
+	TLS          bool
 }
 
 type ClusterStatusOptions struct {
@@ -61,6 +62,7 @@ type ClusterScaleOutOptions struct {
 type ClusterScaleInOptions struct {
 	ConfigFile  string
 	RemoveNodes []string
+	Identity    string
 	SkipConfirm bool
 }
 
@@ -144,6 +146,23 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		}
 	}
 	
+	// If --tls requested, bootstrap the CA and distribute certs BEFORE
+	// starting services so that the rendered security.toml is in place
+	// when seaweed processes come up.
+	if opts.TLS {
+		color.Cyan("🔐 Bootstrapping TLS for cluster %q", clusterSpec.Name)
+		certOpts := &ClusterCertOptions{
+			ConfigFile:   opts.ConfigFile,
+			User:         mgr.User,
+			SSHPort:      opts.SSHPort,
+			IdentityFile: mgr.IdentityFile,
+		}
+		if err := runClusterCertInit(clusterSpec.Name, certOpts, false); err != nil {
+			color.Red("❌ TLS bootstrap failed: %v", err)
+			return err
+		}
+	}
+
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
 		color.Red("❌ Deployment failed: %v", err)
@@ -287,7 +306,12 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 
 	// Pick the first master as the drain coordinator.
 	master := clusterSpec.MasterServers[0]
-	masterAddr := fmt.Sprintf("%s:%d", master.Ip, nonZero(master.Port, 9333))
+	masterPort := nonZero(master.Port, 9333)
+	scheme := "http://"
+	if clusterSpec.GlobalOptions.TLSEnabled {
+		scheme = "https://"
+	}
+	masterAddr := fmt.Sprintf("%s%s:%d", scheme, master.Ip, masterPort)
 
 	fmt.Printf("Removing %d volume server(s) via master %s:\n", len(targets), masterAddr)
 	for _, t := range targets {
@@ -301,7 +325,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		}
 	}
 
-	sshUser, sshIdentity, sudoPass, err := currentSSHCreds()
+	sshUser, sshIdentity, sudoPass, err := currentSSHCreds(opts.Identity)
 	if err != nil {
 		return err
 	}
@@ -313,7 +337,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		drainErr := scale.Drain(masterAddr, nodeAddr, 30*time.Minute)
 		if drainErr != nil {
 			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
-			if fbErr := drainViaWeedShell(master.Ip, master.PortSsh, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
+			if fbErr := drainViaWeedShell(master.Ip, master.PortSsh, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
 				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
 			}
 		}
@@ -380,18 +404,24 @@ func nonZero(v, fallback int) int {
 	return v
 }
 
-// currentSSHCreds returns the current user and default identity file used
+// currentSSHCreds returns the current user and identity file used
 // by the deploy path so scale-in can reuse the same connection model.
-func currentSSHCreds() (user, identity, sudoPass string, err error) {
+// If identityOverride is non-empty, it is used instead of the default
+// ~/.ssh/id_rsa path.
+func currentSSHCreds(identityOverride string) (user, identity, sudoPass string, err error) {
 	user, err = utils.CurrentUser()
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to get current user: %w", err)
 	}
-	home, err := utils.UserHome()
-	if err != nil {
-		return "", "", "", fmt.Errorf("failed to determine home directory: %w", err)
+	if identityOverride != "" {
+		identity = identityOverride
+	} else {
+		home, err := utils.UserHome()
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to determine home directory: %w", err)
+		}
+		identity = filepath.Join(home, ".ssh", "id_rsa")
 	}
-	identity = filepath.Join(home, ".ssh", "id_rsa")
 	if user != "root" {
 		sudoPass = utils.PromptForPassword("Input sudo password: ")
 	}
@@ -400,12 +430,15 @@ func currentSSHCreds() (user, identity, sudoPass string, err error) {
 
 // drainViaWeedShell runs `weed shell ... volume.evacuate -node=<target>`
 // on a master host via SSH, as a fallback when HTTP drain is unavailable.
-func drainViaWeedShell(masterIp string, masterSshPort int, user, identity, sudoPass, nodeAddr string) error {
+func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, identity, sudoPass, nodeAddr string) error {
 	if masterSshPort == 0 {
 		masterSshPort = 22
 	}
+	if masterPort == 0 {
+		masterPort = 9333
+	}
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterIp, masterSshPort), user, identity, sudoPass, func(op operator.CommandOperator) error {
-		cmd := fmt.Sprintf("echo 'volume.evacuate -node=%s' | weed shell -master=%s:9333", nodeAddr, masterIp)
+		cmd := fmt.Sprintf("echo 'volume.evacuate -node=%s' | weed shell -master=%s:%d", nodeAddr, masterIp, masterPort)
 		return op.Execute(cmd)
 	})
 }
