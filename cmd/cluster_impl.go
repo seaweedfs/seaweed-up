@@ -76,7 +76,7 @@ type ClusterListOptions struct {
 }
 
 func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOptions) error {
-	color.Green("🚀 Deploying SeaweedFS cluster...")
+	color.Green("Deploying SeaweedFS cluster...")
 	
 	// Load cluster specification
 	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
@@ -131,7 +131,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	
 	// Confirm deployment if not skipped
 	if !opts.SkipConfirm {
-		color.Yellow("📋 Deployment Summary:")
+		color.Yellow("Deployment Summary:")
 		fmt.Printf("  Cluster: %s\n", clusterSpec.Name)
 		fmt.Printf("  Version: %s\n", mgr.Version)
 		fmt.Printf("  Masters: %d\n", len(clusterSpec.MasterServers))
@@ -139,14 +139,14 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
 		
 		if !utils.PromptForConfirmation("Proceed with deployment?") {
-			color.Yellow("⚠️  Deployment cancelled by user")
+			color.Yellow("WARN: Deployment cancelled by user")
 			return nil
 		}
 	}
 	
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
-		color.Red("❌ Deployment failed: %v", err)
+		color.Red("FAIL: Deployment failed: %v", err)
 		return err
 	}
 
@@ -155,7 +155,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	if clusterSpec.Name != "" {
 		store, storeErr := state.NewStore("")
 		if storeErr != nil {
-			color.Yellow("⚠️  Unable to open state store: %v", storeErr)
+			color.Yellow("WARN: Unable to open state store: %v", storeErr)
 		} else {
 			meta := state.Meta{
 				Name:       clusterSpec.Name,
@@ -164,15 +164,15 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 				Hosts:      state.HostsFromSpec(clusterSpec),
 			}
 			if err := store.Save(clusterSpec.Name, clusterSpec, meta); err != nil {
-				color.Yellow("⚠️  Failed to persist cluster state: %v", err)
+				color.Yellow("WARN: Failed to persist cluster state: %v", err)
 			}
 		}
 	} else {
-		color.Yellow("⚠️  Cluster has no name; skipping state persistence")
+		color.Yellow("WARN: Cluster has no name; skipping state persistence")
 	}
 
-	color.Green("✅ Cluster deployed successfully!")
-	color.Cyan("💡 Next steps:")
+	color.Green("Cluster deployed successfully!")
+	color.Cyan("Next steps:")
 	fmt.Println("  - Check cluster status: seaweed-up cluster status", clusterSpec.Name)
 	fmt.Println("  - View logs: seaweed-up cluster logs", clusterSpec.Name)
 	
@@ -195,21 +195,21 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 		if err := displayClusterStatus(args, opts); err != nil {
 			return err
 		}
-		color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+		color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 
 		for {
 			select {
 			case <-sigChan:
 				// Graceful shutdown on interrupt
 				fmt.Println()
-				color.Yellow("⏹️  Refresh stopped by user")
+				color.Yellow("Refresh stopped by user")
 				return nil
 			case <-ticker.C:
 				clearScreen()
 				if err := displayClusterStatus(args, opts); err != nil {
 					return err
 				}
-				color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+				color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 			}
 		}
 	}
@@ -235,15 +235,15 @@ func clearScreen() {
 // displayClusterStatus shows the actual cluster status
 func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
 	// TODO: Implement actual status collection
-	color.Green("📊 Cluster Status")
+	color.Green("Cluster Status")
 	
 	if len(args) == 0 {
-		color.Yellow("📋 All Clusters:")
+		color.Yellow("All Clusters:")
 		// Show all clusters
 		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
 	} else {
 		clusterName := args[0]
-		color.Yellow("📋 Cluster: %s", clusterName)
+		color.Yellow("Cluster: %s", clusterName)
 		fmt.Println("Status collection not yet implemented")
 	}
 	
@@ -251,10 +251,10 @@ func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
 }
 
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
-	color.Green("⬆️  Upgrading cluster: %s to version %s", clusterName, opts.Version)
+	color.Green("Upgrading cluster: %s to version %s", clusterName, opts.Version)
 
 	if opts.DryRun {
-		color.Yellow("🔍 Dry run mode - no changes will be made")
+		color.Yellow("Dry run mode - no changes will be made")
 	}
 
 	clusterSpec, err := resolveSpec([]string{clusterName}, opts.ConfigFile)
@@ -272,7 +272,7 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 }
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {
-	color.Green("📈 Scaling out cluster: %s", clusterName)
+	color.Green("Scaling out cluster: %s", clusterName)
 	
 	if opts.AddVolume > 0 {
 		fmt.Printf("Adding %d volume servers\n", opts.AddVolume)
@@ -288,7 +288,7 @@ func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error 
 }
 
 func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
-	color.Green("📉 Scaling in cluster: %s", clusterName)
+	color.Green("Scaling in cluster: %s", clusterName)
 	
 	if len(opts.RemoveNodes) > 0 {
 		fmt.Printf("Removing nodes: %v\n", opts.RemoveNodes)
@@ -301,17 +301,17 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 }
 
 func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
-	color.Red("💥 WARNING: This will destroy cluster '%s'", clusterName)
+	color.Red("WARNING: This will destroy cluster '%s'", clusterName)
 	
 	if opts.RemoveData {
-		color.Red("⚠️  ALL DATA WILL BE PERMANENTLY DELETED!")
+		color.Red("WARN: ALL DATA WILL BE PERMANENTLY DELETED!")
 	}
 	
 	if !opts.SkipConfirm {
 		confirmation := utils.PromptForInput("Type the cluster name to confirm destruction: ")
 		
 		if confirmation != clusterName {
-			color.Yellow("⚠️  Destruction cancelled - cluster name didn't match")
+			color.Yellow("WARN: Destruction cancelled - cluster name didn't match")
 			return nil
 		}
 	}
@@ -362,7 +362,7 @@ func runClusterList(opts *ClusterListOptions) error {
 		return nil
 	}
 
-	color.Green("📋 Managed Clusters")
+	color.Green("Managed Clusters")
 	if len(entries) == 0 {
 		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
 		return nil
