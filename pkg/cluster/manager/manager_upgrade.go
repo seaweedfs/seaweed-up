@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -89,35 +91,38 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	// Volume servers first.
 	for i, v := range specification.VolumeServers {
+		hostPort := net.JoinHostPort(v.Ip, strconv.Itoa(v.Port))
 		targets = append(targets, upgradeTarget{
 			component: "volume",
 			index:     i,
 			ip:        v.Ip,
 			portSsh:   v.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s:%d/status", scheme, v.Ip, v.Port),
-			describe:  fmt.Sprintf("volume%d %s:%d", i, v.Ip, v.Port),
+			healthURL: fmt.Sprintf("%s://%s/status", scheme, hostPort),
+			describe:  fmt.Sprintf("volume%d %s", i, hostPort),
 		})
 	}
 	// Filer servers next.
 	for i, f := range specification.FilerServers {
+		hostPort := net.JoinHostPort(f.Ip, strconv.Itoa(f.Port))
 		targets = append(targets, upgradeTarget{
 			component: "filer",
 			index:     i,
 			ip:        f.Ip,
 			portSsh:   f.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s:%d/", scheme, f.Ip, f.Port),
-			describe:  fmt.Sprintf("filer%d %s:%d", i, f.Ip, f.Port),
+			healthURL: fmt.Sprintf("%s://%s/", scheme, hostPort),
+			describe:  fmt.Sprintf("filer%d %s", i, hostPort),
 		})
 	}
 	// Masters last so quorum isn't disturbed early.
 	for i, ms := range specification.MasterServers {
+		hostPort := net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port))
 		targets = append(targets, upgradeTarget{
 			component: "master",
 			index:     i,
 			ip:        ms.Ip,
 			portSsh:   ms.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s:%d/cluster/status", scheme, ms.Ip, ms.Port),
-			describe:  fmt.Sprintf("master%d %s:%d", i, ms.Ip, ms.Port),
+			healthURL: fmt.Sprintf("%s://%s/cluster/status", scheme, hostPort),
+			describe:  fmt.Sprintf("master%d %s", i, hostPort),
 		})
 	}
 
@@ -131,7 +136,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
-		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))
+		masters = append(masters, net.JoinHostPort(masterSpec.Ip, strconv.Itoa(masterSpec.Port)))
 	}
 
 	info(fmt.Sprintf("Starting rolling upgrade to version %q (previous=%q)", targetVersion, previousVersion))
@@ -185,7 +190,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters []st
 		vs := specification.VolumeServers[t.index]
 		hooks = componentHooks{
 			serviceName: "volume",
-			sshAddr:     fmt.Sprintf("%s:%d", vs.Ip, vs.PortSsh),
+			sshAddr:     net.JoinHostPort(vs.Ip, strconv.Itoa(vs.PortSsh)),
 			stop:        func() error { return m.StopVolumeServer(vs, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { vs.WriteToBuffer(masters, buf) },
 		}
@@ -193,7 +198,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters []st
 		fs := specification.FilerServers[t.index]
 		hooks = componentHooks{
 			serviceName: "filer",
-			sshAddr:     fmt.Sprintf("%s:%d", fs.Ip, fs.PortSsh),
+			sshAddr:     net.JoinHostPort(fs.Ip, strconv.Itoa(fs.PortSsh)),
 			stop:        func() error { return m.StopFilerServer(fs, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { fs.WriteToBuffer(masters, buf) },
 		}
@@ -201,7 +206,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters []st
 		ms := specification.MasterServers[t.index]
 		hooks = componentHooks{
 			serviceName: "master",
-			sshAddr:     fmt.Sprintf("%s:%d", ms.Ip, ms.PortSsh),
+			sshAddr:     net.JoinHostPort(ms.Ip, strconv.Itoa(ms.PortSsh)),
 			stop:        func() error { return m.StopMasterServer(ms, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { ms.WriteToBuffer(masters, buf) },
 		}

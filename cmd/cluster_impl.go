@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -325,12 +327,53 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	return nil
 }
 
-// versionRegex captures semver-ish version tokens like "3.64" or "v3.64.1".
-var versionRegex = regexp.MustCompile(`v?\d+\.\d+(?:\.\d+)?`)
+// seaweedVersionRegexes are ordered-by-preference patterns used to extract a
+// SeaweedFS version from a master's /dir/status or /cluster/status response.
+//
+// SeaweedFS versions look like "30GB 3.85 b2f34c..." (disk-unit, version,
+// commit) or "seaweedfs 3.85". We deliberately avoid a bare `\d+\.\d+` match
+// because the master's response can legitimately contain IP addresses (e.g.
+// "172.28.0.10") which would otherwise be mis-parsed as versions — that caused
+// a rolling upgrade rollback to try to reinstall "172.28.0" and fail.
+var seaweedVersionRegexes = []*regexp.Regexp{
+	// "30GB 3.85 abcd1234" — the canonical /dir/status Version field.
+	regexp.MustCompile(`\b\d+\s*[KMGT]B\s+(\d+\.\d+(?:\.\d+)?)\b`),
+	// "seaweedfs 3.85" or "weed 3.85".
+	regexp.MustCompile(`(?i)\b(?:seaweedfs|weed)\s+v?(\d+\.\d+(?:\.\d+)?)\b`),
+	// "seaweedfs/3.85" (e.g. Server header).
+	regexp.MustCompile(`(?i)\b(?:seaweedfs|weed)/v?(\d+\.\d+(?:\.\d+)?)\b`),
+}
 
-// probeCurrentClusterVersion asks one of the master hosts for its running
-// version. It tries /cluster/status first and falls back to /dir/status,
-// looking in both the JSON body and the Server response header.
+// extractSeaweedVersion returns a version token from s, or "" if nothing
+// plausible is found. Matches must come from the Seaweed-specific patterns
+// above; a raw IP address like "172.28.0.10" will never match.
+func extractSeaweedVersion(s string) string {
+	if s == "" {
+		return ""
+	}
+	for _, re := range seaweedVersionRegexes {
+		if m := re.FindStringSubmatch(s); len(m) >= 2 && m[1] != "" {
+			return m[1]
+		}
+	}
+	return ""
+}
+
+// dirStatusPayload is the minimal subset of SeaweedFS's /dir/status response
+// we care about for version probing.
+type dirStatusPayload struct {
+	Version string `json:"Version"`
+}
+
+// probeCurrentClusterVersion asks the master hosts for their running version.
+// It tries /dir/status first and falls back to /cluster/status, preferring a
+// typed JSON Version field and then falling back to the Server response header.
+//
+// The parser is strict: it only accepts tokens that match a Seaweed-specific
+// version pattern. An IP-like substring ("172.28.0.10") will never be returned.
+// If a master responds 2xx but no version could be extracted, probing
+// continues with the remaining masters; "" + nil is returned only when all
+// masters responded successfully without a recognizable version.
 //
 // When the cluster is TLS-enabled, the default http.Client uses the system
 // cert pool. Pass insecureSkipTLSVerify=true to disable certificate
@@ -350,9 +393,11 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify),
 	}
 	var lastErr error
+	sawHealthyMasterWithoutVersion := false
 	for _, ms := range clusterSpec.MasterServers {
-		for _, path := range []string{"/cluster/status", "/dir/status"} {
-			url := fmt.Sprintf("%s://%s:%d%s", scheme, ms.Ip, ms.Port, path)
+		for _, path := range []string{"/dir/status", "/cluster/status"} {
+			addr := net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port))
+			url := fmt.Sprintf("%s://%s%s", scheme, addr, path)
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			if err != nil {
 				lastErr = err
@@ -375,34 +420,39 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 				lastErr = fmt.Errorf("read body from %s: %w", url, readErr)
 				continue
 			}
-			// Try common JSON fields. Only accept matches that look like a
-			// version — if a field exists but doesn't match the regex (e.g. a
-			// commit hash), keep searching rather than silently returning it.
+			// Prefer the typed JSON Version field.
+			var typed dirStatusPayload
+			if jsonErr := json.Unmarshal(body, &typed); jsonErr == nil && typed.Version != "" {
+				if v := extractSeaweedVersion(typed.Version); v != "" {
+					return v, nil
+				}
+			}
+			// Generic map lookup covers responses that use lowercase "version".
 			var payload map[string]interface{}
 			if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
 				for _, key := range []string{"Version", "version"} {
-					if v, ok := payload[key].(string); ok && v != "" {
-						if m := versionRegex.FindString(v); m != "" {
-							return m, nil
+					if raw, ok := payload[key].(string); ok && raw != "" {
+						if v := extractSeaweedVersion(raw); v != "" {
+							return v, nil
 						}
 					}
 				}
 			}
 			// Fall back to the Server response header.
-			if serverHeader != "" {
-				if m := versionRegex.FindString(serverHeader); m != "" {
-					return m, nil
-				}
+			if v := extractSeaweedVersion(serverHeader); v != "" {
+				return v, nil
 			}
-			// Last-ditch: regex scan the raw body.
-			if m := versionRegex.FindString(string(body)); m != "" {
-				return m, nil
-			}
-			// Nothing matched the version regex on this endpoint. Treat as
-			// "unknown version" rather than returning a non-version string.
-			// Return empty + nil so the caller proceeds with rollback disabled.
-			return "", nil
+			// Nothing matched on this endpoint. Remember that this master
+			// responded 2xx but didn't yield a recognizable version, and
+			// keep probing other masters/endpoints.
+			sawHealthyMasterWithoutVersion = true
 		}
+	}
+	if sawHealthyMasterWithoutVersion {
+		// All reachable masters responded but none exposed a parseable
+		// version. Return empty + nil so the caller proceeds with rollback
+		// disabled rather than treating this as a hard error.
+		return "", nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no master responded")
