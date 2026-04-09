@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
@@ -31,12 +33,16 @@ This command group provides comprehensive cluster lifecycle management including
 	
 	// Add cluster subcommands
 	cmd.AddCommand(newClusterDeployCmd())
+	cmd.AddCommand(newClusterCheckCmd())
 	cmd.AddCommand(newClusterStatusCmd())
 	cmd.AddCommand(newClusterUpgradeCmd())
 	cmd.AddCommand(newClusterScaleCmd())
 	cmd.AddCommand(newClusterDestroyCmd())
 	cmd.AddCommand(newClusterListCmd())
 	cmd.AddCommand(newClusterPrepareCmd())
+	cmd.AddCommand(newClusterStartCmd())
+	cmd.AddCommand(newClusterStopCmd())
+	cmd.AddCommand(newClusterRestartCmd())
 
 	return cmd
 }
@@ -74,13 +80,15 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().StringVar(&opts.Version, "version", "", "SeaweedFS version to deploy")
-	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|envoy]")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|s3|envoy]")
 	cmd.Flags().BoolVar(&opts.MountDisks, "mount-disks", true, "auto mount disks on volume servers")
 	cmd.Flags().BoolVar(&opts.HostPrep, "host-prep", false, "run host preparation (ulimits, sysctls, firewall, time sync) before deploy")
 	cmd.Flags().BoolVar(&opts.ForceRestart, "restart", false, "force restart services")
 	cmd.Flags().StringVarP(&opts.ProxyUrl, "proxy", "x", "", "proxy for downloads (http://proxy:8080)")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
-	
+	cmd.Flags().BoolVar(&opts.Check, "check", false, "run preflight checks before deploying and abort on failure")
+	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 0, "max concurrent per-host deploys (0 = unlimited)")
+
 	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
@@ -113,12 +121,19 @@ Shows real-time information about cluster components including:
   
   # Auto-refresh status every 5 seconds
   seaweed-up cluster status prod-cluster --refresh=5`,
-		
+
+		// Accept at most one positional cluster-name. When no positional is
+		// given, -f/--file must be provided (enforced in resolveStatusSpec).
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterStatus(args, opts)
+			if opts.ConfigFile == "" && len(args) == 0 {
+				return fmt.Errorf("either a cluster-name positional argument or -f/--file is required")
+			}
+			return runClusterStatus(cmd, args, opts)
 		},
 	}
-	
+
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required if no cluster-name positional)")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
 	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	cmd.Flags().StringVar(&opts.Timeout, "timeout", "30s", "timeout for status collection")
@@ -128,8 +143,11 @@ Shows real-time information about cluster components including:
 }
 
 func newClusterUpgradeCmd() *cobra.Command {
-	opts := &ClusterUpgradeOptions{}
-	
+	opts := &ClusterUpgradeOptions{
+		SSHPort:           22,
+		RollbackOnFailure: true,
+	}
+
 	cmd := &cobra.Command{
 		Use:   "upgrade <cluster-name>",
 		Short: "Upgrade cluster to a new SeaweedFS version",
@@ -140,28 +158,38 @@ This command safely upgrades cluster components with minimal downtime:
 - Performs health checks before and after upgrade
 - Supports rollback on failure
 - Maintains data availability during upgrade`,
-		
+
 		Example: `  # Upgrade to specific version
-  seaweed-up cluster upgrade prod-cluster --version=3.75
-  
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=3.75
+
   # Upgrade to latest version
-  seaweed-up cluster upgrade prod-cluster --version=latest
-  
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=latest
+
   # Dry run to see what would be upgraded
-  seaweed-up cluster upgrade prod-cluster --version=3.75 --dry-run`,
-		
-		Args: cobra.ExactArgs(1),
+  seaweed-up cluster upgrade prod-cluster -f cluster.yaml --version=3.75 --dry-run`,
+
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterUpgrade(args[0], opts)
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return runClusterUpgrade(name, opts)
 		},
 	}
-	
+
 	cmd.Flags().StringVar(&opts.Version, "version", "", "target version to upgrade to (required)")
-	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required)")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
+	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
-	
+	cmd.Flags().BoolVar(&opts.RollbackOnFailure, "rollback-on-failure", true, "reinstall previous version on a host if its post-upgrade health check fails")
+	cmd.Flags().BoolVar(&opts.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "skip TLS certificate verification for upgrade health probes")
+
 	_ = cmd.MarkFlagRequired("version")
+	_ = cmd.MarkFlagRequired("file")
 
 	return cmd
 }
@@ -241,8 +269,8 @@ properly migrated and cluster health is maintained.`,
 }
 
 func newClusterDestroyCmd() *cobra.Command {
-	opts := &ClusterDestroyOptions{}
-	
+	opts := &ClusterDestroyOptions{SSHPort: 22}
+
 	cmd := &cobra.Command{
 		Use:   "destroy <cluster-name>",
 		Short: "Destroy a SeaweedFS cluster",
@@ -264,6 +292,9 @@ stopped and removed. Use --remove-data to also delete all stored data.`,
 	}
 	
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
+	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
+	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
+	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.RemoveData, "remove-data", false, "remove all cluster data (WARNING: irreversible)")
 	

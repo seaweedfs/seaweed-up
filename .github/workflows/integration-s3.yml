@@ -1,0 +1,203 @@
+name: Integration Tests (S3 Gateway)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: test/integration
+
+jobs:
+  s3-gateway-test:
+    name: S3 Gateway Deployment Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        working-directory: .
+        run: go build -v -o seaweed-up .
+
+      - name: Install awscli
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y awscli
+          aws --version
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start container with docker run
+        run: |
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          echo "Waiting for container to start..."
+          sleep 10
+
+          docker ps -a
+
+          status=$(docker inspect -f '{{.State.Status}}' seaweed-up-host1 2>/dev/null || echo "not found")
+          echo "Container seaweed-up-host1 status: $status"
+          if [ "$status" != "running" ]; then
+            docker logs seaweed-up-host1 2>&1 || true
+            exit 1
+          fi
+
+          echo "Waiting for systemd to initialize..."
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "Systemd ready (state: $state)"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Timeout waiting for systemd"
+              docker logs seaweed-up-host1 2>&1 || true
+              docker exec seaweed-up-host1 journalctl -xe --no-pager 2>&1 | tail -100 || true
+              exit 1
+            fi
+            echo "Waiting for systemd... ($i/60, state: $state)"
+            sleep 2
+          done
+
+      - name: Install SSH on container
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+
+          sleep 5
+          for j in {1..30}; do
+            if nc -z 172.28.0.10 22 2>/dev/null; then
+              echo "SSH ready"
+              break
+            fi
+            if [ $j -eq 30 ]; then
+              echo "SSH not ready"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+
+      - name: Verify SSH connectivity
+        run: |
+          ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@172.28.0.10 "echo 'SSH OK'"
+
+      - name: Deploy cluster with S3 gateway
+        run: |
+          ../../seaweed-up cluster deploy test-s3 \
+            -f testdata/cluster-s3.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          echo "Waiting for services to start..."
+          sleep 30
+
+          echo "=== systemd units ==="
+          docker exec seaweed-up-host1 systemctl list-units 'seaweed*' --all --no-pager || true
+          echo "=== recent journal ==="
+          docker exec seaweed-up-host1 journalctl -u 'seaweed*' --no-pager -n 100 || true
+          echo "=== listening ports ==="
+          docker exec seaweed-up-host1 ss -tlnp || true
+
+          FAILED=0
+          nc -z 172.28.0.10 9333 && echo "Master OK" || { echo "Master NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 8382 && echo "Volume OK" || { echo "Volume NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 8888 && echo "Filer OK" || { echo "Filer NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 8333 && echo "S3 OK" || { echo "S3 NOT running"; FAILED=1; }
+          if [ $FAILED -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Exercise S3 endpoint with awscli
+        env:
+          AWS_ACCESS_KEY_ID: any
+          AWS_SECRET_ACCESS_KEY: any
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: "true"
+        run: |
+          ENDPOINT=http://172.28.0.10:8333
+
+          echo "Creating bucket..."
+          aws --endpoint-url=$ENDPOINT s3 mb s3://test
+
+          echo "Uploading file..."
+          echo "hello seaweed s3" > /tmp/hello.txt
+          aws --endpoint-url=$ENDPOINT s3 cp /tmp/hello.txt s3://test/hello.txt
+
+          echo "Listing bucket..."
+          aws --endpoint-url=$ENDPOINT s3 ls s3://test/ | tee /tmp/ls.out
+          grep hello.txt /tmp/ls.out
+
+          echo "Downloading file..."
+          aws --endpoint-url=$ENDPOINT s3 cp s3://test/hello.txt /tmp/hello-downloaded.txt
+          diff /tmp/hello.txt /tmp/hello-downloaded.txt
+
+          echo "S3 round-trip OK"
+
+      - name: Save logs
+        if: always()
+        run: |
+          echo "=== Container Status ===" > s3-gateway.log
+          docker ps -a >> s3-gateway.log
+          echo "=== Logs for seaweed-up-host1 ===" >> s3-gateway.log
+          docker logs seaweed-up-host1 >> s3-gateway.log 2>&1 || true
+          echo "=== seaweed journal ===" >> s3-gateway.log
+          docker exec seaweed-up-host1 journalctl -u 'seaweed*' --no-pager -n 500 >> s3-gateway.log 2>&1 || true
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-gateway-test-logs
+          path: test/integration/s3-gateway.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 || true
+          docker rm seaweed-up-host1 || true
+          docker network rm seaweed-up-net || true
+          rm -rf .ssh
