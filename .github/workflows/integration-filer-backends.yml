@@ -144,7 +144,8 @@ jobs:
       - name: Write and read a file via filer
         run: |
           set -e
-          curl -sS -X POST -d "hello from filer_postgres_test" \
+          printf "hello from filer_postgres_test" > /tmp/seaweed-up-test.txt
+          curl -sS -F file=@/tmp/seaweed-up-test.txt \
             http://172.28.0.10:8888/seaweed-up-test.txt
           OUT=$(curl -sS http://172.28.0.10:8888/seaweed-up-test.txt)
           echo "GET returned: $OUT"

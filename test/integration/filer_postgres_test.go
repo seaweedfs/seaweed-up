@@ -4,9 +4,10 @@
 package integration
 
 import (
+	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 )
@@ -75,11 +76,24 @@ func TestDeployFilerPostgres(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, filerURL, strings.NewReader(content))
+	// SeaweedFS filer upload requires multipart/form-data with a "file" field.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "seaweed-up-test.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte(content)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, filerURL, &body)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("filer POST failed: %v", err)
