@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -22,7 +23,9 @@ import (
 	"github.com/fatih/color"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/health"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/preflight"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/state"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
@@ -42,6 +45,7 @@ type ClusterDeployOptions struct {
 	ProxyUrl     string
 	SkipConfirm  bool
 	TLS          bool
+	Check        bool
 	Concurrency  int
 }
 
@@ -79,9 +83,12 @@ type ClusterScaleInOptions struct {
 }
 
 type ClusterDestroyOptions struct {
-	ConfigFile  string
-	SkipConfirm bool
-	RemoveData  bool
+	ConfigFile   string
+	User         string
+	SSHPort      int
+	IdentityFile string
+	SkipConfirm  bool
+	RemoveData   bool
 }
 
 type ClusterListOptions struct {
@@ -135,6 +142,23 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		mgr.IdentityFile = opts.IdentityFile
 	}
 	
+	// Run preflight checks first if requested
+	if opts.Check {
+		color.Cyan("Running preflight checks...")
+		// TODO: plumb sudo password from deploy options once ClusterDeployOptions
+		// exposes a Password/SudoPass field so preflight sudo checks work on
+		// hosts that require a password.
+		factory := preflight.OperatorSSHFactory(mgr.User, mgr.IdentityFile, "")
+		results := preflight.RunWithOptions(cmd.Context(), clusterSpec, factory, preflight.Options{
+			DefaultSSHPort: opts.SSHPort,
+		})
+		preflight.Pretty(os.Stdout, results)
+		if preflight.HasFailure(results) {
+			return fmt.Errorf("preflight checks failed; aborting deploy")
+		}
+		color.Green("Preflight checks passed")
+	}
+
 	// Get latest version if not specified
 	if mgr.Version == "" {
 		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", "seaweedfs", "seaweedfs")
@@ -178,10 +202,31 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 
 	// Deploy cluster
 	if err := mgr.DeployCluster(clusterSpec); err != nil {
-		color.Red("Deployment failed: %v", err)
+		color.Red("FAIL: Deployment failed: %v", err)
 		return err
 	}
-	
+
+	// Persist cluster topology + metadata so later commands can
+	// resolve by name.
+	if clusterSpec.Name != "" {
+		store, storeErr := state.NewStore("")
+		if storeErr != nil {
+			color.Yellow("WARN: Unable to open state store: %v", storeErr)
+		} else {
+			meta := state.Meta{
+				Name:       clusterSpec.Name,
+				Version:    mgr.Version,
+				DeployedAt: time.Now().UTC(),
+				Hosts:      state.HostsFromSpec(clusterSpec),
+			}
+			if err := store.Save(clusterSpec.Name, clusterSpec, meta); err != nil {
+				color.Yellow("WARN: Failed to persist cluster state: %v", err)
+			}
+		}
+	} else {
+		color.Yellow("WARN: Cluster has no name; skipping state persistence")
+	}
+
 	color.Green("Cluster deployed successfully!")
 	color.Cyan("Next steps:")
 	fmt.Println("  - Check cluster status: seaweed-up cluster status", clusterSpec.Name)
@@ -394,9 +439,9 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		return fmt.Errorf("--version is required")
 	}
 
-	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	clusterSpec, err := resolveSpec([]string{clusterName}, opts.ConfigFile)
 	if err != nil {
-		return fmt.Errorf("failed to load cluster configuration: %w", err)
+		return err
 	}
 	if clusterName != "" {
 		clusterSpec.Name = clusterName
@@ -659,29 +704,168 @@ func runClusterDestroy(clusterName string, opts *ClusterDestroyOptions) error {
 	if opts.RemoveData {
 		color.Red("ALL DATA WILL BE PERMANENTLY DELETED!")
 	}
-	
+
+	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to load cluster configuration: %w", err)
+	}
+	if clusterName != "" {
+		clusterSpec.Name = clusterName
+	}
+
 	if !opts.SkipConfirm {
-		confirmation := utils.PromptForInput("Type the cluster name to confirm destruction: ")
-		
-		if confirmation != clusterName {
-			color.Yellow("Destruction cancelled - cluster name didn't match")
+		prompt := fmt.Sprintf("Type the cluster name '%s' to confirm destruction: ", clusterSpec.Name)
+		confirmation := utils.PromptForInput(prompt)
+
+		if confirmation != clusterSpec.Name {
+			color.Yellow("WARN: Destruction cancelled - cluster name didn't match")
 			return nil
 		}
 	}
-	
-	// TODO: Implement destroy logic
-	fmt.Printf("Destroy functionality not yet implemented\n")
-	
+
+	mgr, err := newManagerForLifecycle(opts.SSHPort, opts.User, opts.IdentityFile)
+	if err != nil {
+		return err
+	}
+
+	color.Yellow("Destroying cluster components...")
+	if err := mgr.DestroyCluster(clusterSpec, opts.RemoveData); err != nil {
+		color.Red("FAIL: Destroy failed: %v", err)
+		return err
+	}
+
+	color.Green("Cluster destroyed successfully")
+	if opts.RemoveData {
+		color.Green("Data and configuration directories removed")
+	}
 	return nil
 }
 
+// newManagerForLifecycle builds a manager.Manager populated with SSH
+// credentials suitable for lifecycle operations (start/stop/restart/destroy).
+// Zero/empty values fall back to sensible defaults.
+func newManagerForLifecycle(sshPort int, user, identityFile string) (*manager.Manager, error) {
+	mgr := manager.NewManager()
+
+	if sshPort == 0 {
+		sshPort = 22
+	}
+	mgr.SshPort = sshPort
+
+	if user == "" {
+		currentUser, err := utils.CurrentUser()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current user for SSH: %w", err)
+		}
+		mgr.User = currentUser
+	} else {
+		mgr.User = user
+	}
+
+	if identityFile == "" {
+		home, err := utils.UserHome()
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine home directory for SSH identity file: %w", err)
+		}
+		mgr.IdentityFile = filepath.Join(home, ".ssh", "id_rsa")
+	} else {
+		mgr.IdentityFile = identityFile
+	}
+
+	return mgr, nil
+}
+
 func runClusterList(opts *ClusterListOptions) error {
+	store, err := state.NewStore("")
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	entries, err := store.List()
+	if err != nil {
+		return fmt.Errorf("list clusters: %w", err)
+	}
+
+	if opts.JSONOutput {
+		type jsonEntry struct {
+			Name       string    `json:"name"`
+			Version    string    `json:"version"`
+			DeployedAt time.Time `json:"deployed_at"`
+			Hosts      []string  `json:"hosts"`
+			Masters    int       `json:"masters"`
+			Volumes    int       `json:"volumes"`
+			Filers     int       `json:"filers"`
+		}
+		out := make([]jsonEntry, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, jsonEntry{
+				Name:       e.Meta.Name,
+				Version:    e.Meta.Version,
+				DeployedAt: e.Meta.DeployedAt,
+				Hosts:      e.Meta.Hosts,
+				Masters:    len(e.Spec.MasterServers),
+				Volumes:    len(e.Spec.VolumeServers),
+				Filers:     len(e.Spec.FilerServers),
+			})
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
 	color.Green("Managed Clusters")
-	
-	// TODO: Implement cluster listing
-	fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
-	
-	return nil
+	if len(entries) == 0 {
+		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tHOSTS\tMASTERS\tVOLUMES\tFILERS\tDEPLOYED")
+	for _, e := range entries {
+		deployed := e.Meta.DeployedAt.Local().Format("2006-01-02 15:04:05")
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+			e.Meta.Name,
+			e.Meta.Version,
+			len(e.Meta.Hosts),
+			len(e.Spec.MasterServers),
+			len(e.Spec.VolumeServers),
+			len(e.Spec.FilerServers),
+			deployed,
+		)
+		if opts.Verbose && len(e.Meta.Hosts) > 0 {
+			_, _ = fmt.Fprintf(tw, "  hosts: %s\t\t\t\t\t\t\n", strings.Join(e.Meta.Hosts, ", "))
+		}
+	}
+	return tw.Flush()
+}
+
+// resolveSpec returns the cluster specification to operate on.
+// If cfgFile is set, it is loaded and returned. Otherwise, the first
+// positional argument is treated as a cluster name and looked up in
+// the persistent state store. A clear error is returned if neither
+// resolution path succeeds.
+func resolveSpec(args []string, cfgFile string) (*spec.Specification, error) {
+	if cfgFile != "" {
+		return loadClusterSpec(cfgFile)
+	}
+	if len(args) == 0 || args[0] == "" {
+		return nil, fmt.Errorf("cluster name or -f/--file is required")
+	}
+	name := args[0]
+	store, err := state.NewStore("")
+	if err != nil {
+		return nil, fmt.Errorf("open state store: %w", err)
+	}
+	if !store.Exists(name) {
+		return nil, fmt.Errorf("no persisted cluster named %q; pass -f to specify a configuration file", name)
+	}
+	sp, _, err := store.Load(name)
+	if err != nil {
+		return nil, fmt.Errorf("load cluster %q: %w", name, err)
+	}
+	return sp, nil
 }
 
 func loadClusterSpec(configFile string) (*spec.Specification, error) {
