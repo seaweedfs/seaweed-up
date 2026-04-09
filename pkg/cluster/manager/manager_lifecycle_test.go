@@ -93,27 +93,64 @@ func TestBuildDestroyCommand(t *testing.T) {
 	for _, expect := range []string{
 		"systemctl stop 'seaweed_master0.service'",
 		"systemctl disable 'seaweed_master0.service'",
-		"rm -f /etc/systemd/system/seaweed_*.service",
+		"rm -f '/etc/systemd/system/seaweed_master0.service'",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(cmd, expect) {
 			t.Errorf("missing %q in %s", expect, cmd)
 		}
 	}
-	if strings.Contains(cmd, "rm -rf /opt/seaweed") {
+	if strings.Contains(cmd, "seaweed_*.service") {
+		t.Errorf("should not use wildcard unit matching: %s", cmd)
+	}
+	if strings.Contains(cmd, "rm -rf /opt/seaweed") || strings.Contains(cmd, "rm -rf '/opt/seaweed'") {
 		t.Errorf("should not remove data without flag: %s", cmd)
 	}
 
 	cmd2 := buildDestroyCommand(svcs, "/opt/seaweed", "/etc/seaweed", true)
-	if !strings.Contains(cmd2, "rm -rf /opt/seaweed") {
-		t.Errorf("should remove data dir: %s", cmd2)
+	if !strings.Contains(cmd2, "rm -rf '/opt/seaweed'") {
+		t.Errorf("should remove quoted data dir: %s", cmd2)
 	}
-	if !strings.Contains(cmd2, "rm -rf /etc/seaweed") {
-		t.Errorf("should remove config dir: %s", cmd2)
+	if !strings.Contains(cmd2, "rm -rf '/etc/seaweed'") {
+		t.Errorf("should remove quoted config dir: %s", cmd2)
 	}
 
 	cmd3 := buildDestroyCommand(svcs, "/opt/seaweed", "/opt/seaweed", true)
-	if strings.Count(cmd3, "rm -rf /opt/seaweed") != 1 {
+	if strings.Count(cmd3, "rm -rf '/opt/seaweed'") != 1 {
 		t.Errorf("should dedupe identical dirs: %s", cmd3)
+	}
+
+	// Unsafe dirs must not result in an rm -rf call.
+	for _, bad := range []string{"", " ", "/"} {
+		c := buildDestroyCommand(svcs, bad, bad, true)
+		if strings.Contains(c, "rm -rf") {
+			t.Errorf("unsafe dir %q should be filtered: %s", bad, c)
+		}
+	}
+
+	// Single-quote escaping for data dirs containing apostrophes.
+	c := buildDestroyCommand(svcs, "/opt/sea'weed", "", true)
+	if !strings.Contains(c, `rm -rf '/opt/sea'\''weed'`) {
+		t.Errorf("single quote not escaped: %s", c)
+	}
+}
+
+func TestUniqueHostsSameIPDifferentPorts(t *testing.T) {
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{
+			{Ip: "10.0.0.1", PortSsh: 22},
+			{Ip: "10.0.0.1", PortSsh: 2222},
+		},
+	}
+	hosts := uniqueHosts(s, "")
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 unique (ip,port) entries, got %d: %+v", len(hosts), hosts)
+	}
+	ports := map[int]bool{}
+	for _, h := range hosts {
+		ports[h.sshPort] = true
+	}
+	if !ports[22] || !ports[2222] {
+		t.Errorf("expected both ports 22 and 2222: %+v", hosts)
 	}
 }

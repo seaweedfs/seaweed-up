@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -8,6 +9,12 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
+
+// shellSingleQuote wraps s in single quotes, escaping any embedded single
+// quotes so the result is safe to use as a single shell argument.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // LifecycleVerb represents a systemctl verb applied to seaweed units.
 type LifecycleVerb string
@@ -69,13 +76,16 @@ func servicesForHost(s *spec.Specification, ip, component string) []string {
 // uniqueHosts returns every unique host referenced by the specification,
 // filtered to hosts relevant to the given component ("" for all).
 func uniqueHosts(s *spec.Specification, component string) []hostEntry {
-	seen := make(map[string]hostEntry)
+	seen := make(map[hostEntry]struct{})
+	var order []hostEntry
 	add := func(ip string, sshPort int) {
 		if ip == "" {
 			return
 		}
-		if _, ok := seen[ip]; !ok {
-			seen[ip] = hostEntry{ip: ip, sshPort: sshPort}
+		h := hostEntry{ip: ip, sshPort: sshPort}
+		if _, ok := seen[h]; !ok {
+			seen[h] = struct{}{}
+			order = append(order, h)
 		}
 	}
 
@@ -95,11 +105,7 @@ func uniqueHosts(s *spec.Specification, component string) []hostEntry {
 		}
 	}
 
-	out := make([]hostEntry, 0, len(seen))
-	for _, h := range seen {
-		out = append(out, h)
-	}
-	return out
+	return order
 }
 
 // buildLifecycleCommand produces the remote shell command that applies a
@@ -111,7 +117,7 @@ func buildLifecycleCommand(verb LifecycleVerb, services []string) string {
 	}
 	quoted := make([]string, 0, len(services))
 	for _, svc := range services {
-		quoted = append(quoted, fmt.Sprintf("'%s'", svc))
+		quoted = append(quoted, shellSingleQuote(svc))
 	}
 	return fmt.Sprintf("systemctl %s %s || true", string(verb), strings.Join(quoted, " "))
 }
@@ -123,23 +129,31 @@ func buildDestroyCommand(services []string, dataDir, confDir string, removeData 
 	var sb strings.Builder
 	if len(services) > 0 {
 		quoted := make([]string, 0, len(services))
+		unitPaths := make([]string, 0, len(services))
 		for _, svc := range services {
-			quoted = append(quoted, fmt.Sprintf("'%s'", svc))
+			quoted = append(quoted, shellSingleQuote(svc))
+			unitPaths = append(unitPaths, shellSingleQuote("/etc/systemd/system/"+svc))
 		}
 		all := strings.Join(quoted, " ")
 		sb.WriteString(fmt.Sprintf("systemctl stop %s || true; ", all))
 		sb.WriteString(fmt.Sprintf("systemctl disable %s || true; ", all))
+		// Only remove the specific unit files we know belong to this cluster,
+		// avoiding wildcard matches that could delete unrelated units.
+		sb.WriteString(fmt.Sprintf("rm -f %s; ", strings.Join(unitPaths, " ")))
 	}
-	// Wildcard cleanup to catch any stale unit files we may not know about.
-	sb.WriteString("rm -f /etc/systemd/system/seaweed_*.service; ")
-	sb.WriteString("rm -f /etc/systemd/system/seaweed-*.service; ")
 	sb.WriteString("systemctl daemon-reload || true")
 	if removeData {
-		if dataDir != "" {
-			sb.WriteString(fmt.Sprintf("; rm -rf %s", dataDir))
+		// Guard against unsafe values (empty, "/", or pure whitespace) so we
+		// never accidentally rm -rf the root filesystem.
+		isSafeDir := func(d string) bool {
+			d = strings.TrimSpace(d)
+			return d != "" && d != "/"
 		}
-		if confDir != "" && confDir != dataDir {
-			sb.WriteString(fmt.Sprintf("; rm -rf %s", confDir))
+		if isSafeDir(dataDir) {
+			sb.WriteString(fmt.Sprintf("; rm -rf %s", shellSingleQuote(dataDir)))
+		}
+		if isSafeDir(confDir) && confDir != dataDir {
+			sb.WriteString(fmt.Sprintf("; rm -rf %s", shellSingleQuote(confDir)))
 		}
 	}
 	return sb.String()
@@ -180,10 +194,7 @@ func (m *Manager) applyLifecycle(specification *spec.Specification, verb Lifecyc
 	}
 	wg.Wait()
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // StartCluster runs `systemctl start` on all seaweed units across the cluster.
@@ -236,8 +247,5 @@ func (m *Manager) DestroyCluster(specification *spec.Specification, removeData b
 	}
 	wg.Wait()
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-	return nil
+	return errors.Join(errs...)
 }
