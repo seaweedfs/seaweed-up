@@ -137,11 +137,12 @@ jobs:
 
       - name: Run Go integration test
         env:
-          SEAWEED_UP_SKIP_COMPOSE: "1"
+          SEAWEED_UP_EXTERNAL_ENV: "1"
         run: |
-          # The Go test uses docker-compose for setup; we already have the
-          # host running via docker run. We still run the test for coverage
-          # when docker-compose is not present it will skip gracefully.
+          # The Go test framework can start its own docker-compose environment,
+          # but we have already provisioned the host container above. Setting
+          # SEAWEED_UP_EXTERNAL_ENV=1 tells framework.Setup() to skip the
+          # docker-compose path and reuse the externally managed containers.
           go test -tags integration ./test/integration/ -run TestHostPrep -v
 
       - name: Save logs
