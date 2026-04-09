@@ -203,7 +203,8 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 		return err
 	}
 	if !ch.AllHealthy() {
-		os.Exit(1)
+		unhealthy := ch.UnhealthyCount()
+		return fmt.Errorf("%d component(s) unhealthy", unhealthy)
 	}
 	return nil
 }
@@ -275,11 +276,13 @@ func displayClusterStatus(clusterSpec *spec.Specification, opts *ClusterStatusOp
 		return ch, nil
 	}
 
-	renderStatusTable(clusterSpec, ch, opts.Verbose)
+	if err := renderStatusTable(clusterSpec, ch, opts.Verbose); err != nil {
+		return ch, err
+	}
 	return ch, nil
 }
 
-func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose bool) {
+func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose bool) error {
 	name := s.Name
 	if name == "" {
 		name = "(unnamed)"
@@ -313,13 +316,16 @@ func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose 
 	for _, r := range ch.Filers {
 		writeRow(r)
 	}
-	_ = tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("flush status table: %w", err)
+	}
 
 	if !ch.AllHealthy() {
 		color.Red("Cluster is UNHEALTHY")
 	} else {
 		color.Green("Cluster is healthy")
 	}
+	return nil
 }
 
 func orDash(s string) string {

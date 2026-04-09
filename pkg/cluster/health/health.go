@@ -61,6 +61,28 @@ func (c *ClusterHealth) AllHealthy() bool {
 	return true
 }
 
+// UnhealthyCount returns the total number of unhealthy components across
+// masters, volumes, and filers.
+func (c *ClusterHealth) UnhealthyCount() int {
+	n := 0
+	for _, r := range c.Masters {
+		if !r.Healthy {
+			n++
+		}
+	}
+	for _, r := range c.Volumes {
+		if !r.Healthy {
+			n++
+		}
+	}
+	for _, r := range c.Filers {
+		if !r.Healthy {
+			n++
+		}
+	}
+	return n
+}
+
 // Prober issues HTTP probes with a shared timeout and http.Client.
 type Prober struct {
 	Timeout time.Duration
