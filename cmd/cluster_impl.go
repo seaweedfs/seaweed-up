@@ -145,7 +145,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	// starting services so that the rendered security.toml is in place
 	// when seaweed processes come up.
 	if opts.TLS {
-		color.Cyan("🔐 Bootstrapping TLS for cluster %q", clusterSpec.Name)
+		color.Cyan("Bootstrapping TLS for cluster %q", clusterSpec.Name)
 		certOpts := &ClusterCertOptions{
 			ConfigFile:   opts.ConfigFile,
 			User:         mgr.User,
@@ -153,7 +153,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 			IdentityFile: mgr.IdentityFile,
 		}
 		if err := runClusterCertInit(clusterSpec.Name, certOpts, false); err != nil {
-			color.Red("❌ TLS bootstrap failed: %v", err)
+			color.Red("Error: TLS bootstrap failed: %v", err)
 			return err
 		}
 	}
