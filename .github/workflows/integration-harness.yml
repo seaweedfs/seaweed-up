@@ -1,0 +1,80 @@
+name: Integration Harness Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  harness-tests:
+    name: Go Integration Harness
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      # The harness package owns its own docker network + containers per-test
+      # and does NOT rely on docker-compose or a pre-created shared network.
+      # We still need the systemd-in-docker prerequisites from the existing
+      # integration-tests workflow: a modern docker daemon, cgroups v2, and the
+      # ability to run privileged containers with --cgroupns=host. Ubuntu-22.04
+      # runners satisfy all of those out of the box.
+      - name: Verify docker is available
+        run: |
+          docker version
+          docker info | grep -i cgroup || true
+
+      - name: Run integration harness tests
+        run: |
+          # Only exercise tests that use the new self-contained harness
+          # (test/integration/harness and TestDeployErrorAggregation). The
+          # legacy docker-compose based tests in test/integration (TestDeploy*,
+          # TestClusterDestroy) are covered by the separate integration-tests
+          # workflow and rely on docker-compose.yml which lacks the
+          # --cgroupns=host / /sys/fs/cgroup bind-mount required for systemd
+          # on GitHub Actions runners.
+          go test -tags=integration -timeout=30m -v \
+            ./test/integration/harness/...
+          go test -tags=integration -timeout=30m -v \
+            -run '^TestDeployErrorAggregation$' \
+            ./test/integration/...
+
+      - name: Dump docker state on failure
+        if: failure()
+        run: |
+          echo "=== docker ps -a ==="
+          docker ps -a || true
+          echo "=== docker network ls ==="
+          docker network ls || true
+          for c in $(docker ps -aq); do
+            echo "=== logs $c ==="
+            docker logs "$c" 2>&1 | tail -200 || true
+          done
+
+      - name: Cleanup leftover harness resources
+        if: always()
+        run: |
+          # Remove any containers/networks the harness may have left behind
+          # if a test was killed before its t.Cleanup ran.
+          for c in $(docker ps -aq --filter name=seaweedup-harness-); do
+            docker rm -f "$c" || true
+          done
+          for n in $(docker network ls --filter name=seaweedup-harness- -q); do
+            docker network rm "$n" || true
+          done

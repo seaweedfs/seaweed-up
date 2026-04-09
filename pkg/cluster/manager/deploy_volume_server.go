@@ -24,9 +24,29 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 			}
 		}
 
+		if err := m.ensureVolumeFolders(op, volumeServerSpec); err != nil {
+			return err
+		}
+
 		return m.deployComponentInstance(op, component, componentInstance, &buf)
 
 	})
+}
+
+// ensureVolumeFolders creates each configured -dir path on the remote host
+// before the volume server starts. SeaweedFS volume refuses to boot if any of
+// the -dir paths does not exist (Fatalf "Check Data Folder(-dir) Writable"),
+// so this must run on both initial deploys and rolling upgrades.
+func (m *Manager) ensureVolumeFolders(op operator.CommandOperator, volumeServerSpec *spec.VolumeServerSpec) error {
+	for _, folder := range volumeServerSpec.Folders {
+		if folder == nil || folder.Folder == "" {
+			continue
+		}
+		if err := m.sudo(op, fmt.Sprintf("mkdir -p %s", folder.Folder)); err != nil {
+			return fmt.Errorf("create volume data folder %s: %v", folder.Folder, err)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) ResetVolumeServer(volumeServerSpec *spec.VolumeServerSpec, index int) error {
