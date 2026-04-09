@@ -12,6 +12,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/preflight"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
@@ -31,6 +32,7 @@ type ClusterDeployOptions struct {
 	ForceRestart bool
 	ProxyUrl     string
 	SkipConfirm  bool
+	Check        bool
 }
 
 type ClusterStatusOptions struct {
@@ -116,6 +118,18 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		mgr.IdentityFile = opts.IdentityFile
 	}
 	
+	// Run preflight checks first if requested
+	if opts.Check {
+		color.Cyan("🔍 Running preflight checks...")
+		factory := preflight.OperatorSSHFactory(mgr.User, mgr.IdentityFile, "")
+		results := preflight.Run(cmd.Context(), clusterSpec, factory)
+		preflight.Pretty(os.Stdout, results)
+		if preflight.HasFailure(results) {
+			return fmt.Errorf("preflight checks failed; aborting deploy")
+		}
+		color.Green("✅ Preflight checks passed")
+	}
+
 	// Get latest version if not specified
 	if mgr.Version == "" {
 		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", "seaweedfs", "seaweedfs")
