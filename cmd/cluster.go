@@ -169,6 +169,7 @@ This command safely upgrades cluster components with minimal downtime:
 	cmd.Flags().BoolVarP(&opts.SkipConfirm, "yes", "y", false, "skip confirmation prompts")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "show what would be done without making changes")
 	cmd.Flags().BoolVar(&opts.RollbackOnFailure, "rollback-on-failure", true, "reinstall previous version on a host if its post-upgrade health check fails")
+	cmd.Flags().BoolVar(&opts.InsecureSkipTLSVerify, "insecure-skip-tls-verify", false, "skip TLS certificate verification for upgrade health probes")
 
 	_ = cmd.MarkFlagRequired("version")
 	_ = cmd.MarkFlagRequired("file")

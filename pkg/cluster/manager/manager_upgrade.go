@@ -23,6 +23,9 @@ type UpgradeOptions struct {
 	HealthTimeout time.Duration
 	// HealthInterval is the poll interval between health probes.
 	HealthInterval time.Duration
+	// InsecureSkipTLSVerify disables TLS certificate verification for health
+	// probes. Defaults to false; only set when the caller explicitly opts in.
+	InsecureSkipTLSVerify bool
 }
 
 // upgradeTarget represents a single host/instance to be upgraded.
@@ -35,6 +38,20 @@ type upgradeTarget struct {
 	healthURL string
 	// describe is a human-readable identifier for logs/errors.
 	describe string
+}
+
+// componentHooks bundles the per-component knobs used by upgradeOneHost so
+// the stop/redeploy/restart logic can live in a single helper instead of
+// being copy-pasted per component.
+type componentHooks struct {
+	// serviceName is the systemd unit base ("volume", "filer", "master").
+	serviceName string
+	// sshAddr is host:port for the SSH target of this instance.
+	sshAddr string
+	// stop stops the running systemd unit best-effort.
+	stop func() error
+	// writeConfig writes the component-specific CLI options to buf.
+	writeConfig func(buf *bytes.Buffer)
 }
 
 // UpgradeCluster performs a rolling upgrade of the cluster to targetVersion.
@@ -104,12 +121,6 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		})
 	}
 
-	// Per-host previous-version record. Today this is homogeneous across the
-	// cluster (populated from previousVersion) but is captured immediately
-	// before each host's stop/install below so rollback picks up whatever was
-	// running on that specific host.
-	hostPrevVersion := make(map[string]string, len(targets))
-
 	if opts.DryRun {
 		info(fmt.Sprintf("Dry-run: rolling upgrade plan to version %q (previous=%q)", targetVersion, previousVersion))
 		for _, t := range targets {
@@ -125,9 +136,8 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	info(fmt.Sprintf("Starting rolling upgrade to version %q (previous=%q)", targetVersion, previousVersion))
 
-	// rollbackHost reinstalls the recorded previous version on t, if any.
-	rollbackHost := func(t upgradeTarget, cause error) error {
-		prev := hostPrevVersion[t.describe]
+	// rollbackHost reinstalls the given previous version on t, if any.
+	rollbackHost := func(t upgradeTarget, prev string, cause error) error {
 		if !opts.RollbackOnFailure || prev == "" {
 			return cause
 		}
@@ -142,17 +152,21 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 	for _, t := range targets {
 		info(fmt.Sprintf("Upgrading %s...", t.describe))
 
-		// Record the version running on this host right before we touch it.
-		hostPrevVersion[t.describe] = previousVersion
+		// Capture the version running on this host right before we touch it.
+		// Today this is homogeneous across the cluster (sourced from
+		// previousVersion) but the capture happens here so the timing matches
+		// the semantics: the rollback target is whatever was running on this
+		// specific host immediately before its stop/install step.
+		hostPrev := previousVersion
 
 		m.Version = targetVersion
 		if err := m.upgradeOneHost(specification, masters, t); err != nil {
-			return rollbackHost(t, fmt.Errorf("upgrade %s: %w", t.describe, err))
+			return rollbackHost(t, hostPrev, fmt.Errorf("upgrade %s: %w", t.describe, err))
 		}
 
-		if err := waitForHealthy(t.healthURL, opts.HealthTimeout, opts.HealthInterval); err != nil {
+		if err := waitForHealthy(t.healthURL, opts.HealthTimeout, opts.HealthInterval, opts.InsecureSkipTLSVerify); err != nil {
 			info(fmt.Sprintf("Health check failed for %s: %v", t.describe, err))
-			return rollbackHost(t, fmt.Errorf("health check failed for %s: %w", t.describe, err))
+			return rollbackHost(t, hostPrev, fmt.Errorf("health check failed for %s: %w", t.describe, err))
 		}
 
 		info(fmt.Sprintf("%s upgraded and healthy", t.describe))
@@ -165,75 +179,75 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 // upgradeOneHost stops, reinstalls (at m.Version), and starts a single host instance.
 func (m *Manager) upgradeOneHost(specification *spec.Specification, masters []string, t upgradeTarget) error {
+	var hooks componentHooks
 	switch t.component {
 	case "volume":
 		vs := specification.VolumeServers[t.index]
-		if err := m.StopVolumeServer(vs, t.index); err != nil {
-			// Best-effort stop: log and continue to reinstall which will restart the unit.
-			info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
+		hooks = componentHooks{
+			serviceName: "volume",
+			sshAddr:     fmt.Sprintf("%s:%d", vs.Ip, vs.PortSsh),
+			stop:        func() error { return m.StopVolumeServer(vs, t.index) },
+			writeConfig: func(buf *bytes.Buffer) { vs.WriteToBuffer(masters, buf) },
 		}
-		return operator.ExecuteRemote(fmt.Sprintf("%s:%d", vs.Ip, vs.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-			component := "volume"
-			componentInstance := fmt.Sprintf("%s%d", component, t.index)
-			var buf bytes.Buffer
-			vs.WriteToBuffer(masters, &buf)
-			if err := m.deployComponentInstance(op, component, componentInstance, &buf); err != nil {
-				return err
-			}
-			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
-		})
 	case "filer":
 		fs := specification.FilerServers[t.index]
-		if err := m.StopFilerServer(fs, t.index); err != nil {
-			info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
+		hooks = componentHooks{
+			serviceName: "filer",
+			sshAddr:     fmt.Sprintf("%s:%d", fs.Ip, fs.PortSsh),
+			stop:        func() error { return m.StopFilerServer(fs, t.index) },
+			writeConfig: func(buf *bytes.Buffer) { fs.WriteToBuffer(masters, buf) },
 		}
-		return operator.ExecuteRemote(fmt.Sprintf("%s:%d", fs.Ip, fs.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-			component := "filer"
-			componentInstance := fmt.Sprintf("%s%d", component, t.index)
-			var buf bytes.Buffer
-			fs.WriteToBuffer(masters, &buf)
-			if err := m.deployComponentInstance(op, component, componentInstance, &buf); err != nil {
-				return err
-			}
-			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
-		})
 	case "master":
 		ms := specification.MasterServers[t.index]
-		if err := m.StopMasterServer(ms, t.index); err != nil {
-			info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
+		hooks = componentHooks{
+			serviceName: "master",
+			sshAddr:     fmt.Sprintf("%s:%d", ms.Ip, ms.PortSsh),
+			stop:        func() error { return m.StopMasterServer(ms, t.index) },
+			writeConfig: func(buf *bytes.Buffer) { ms.WriteToBuffer(masters, buf) },
 		}
-		return operator.ExecuteRemote(fmt.Sprintf("%s:%d", ms.Ip, ms.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-			component := "master"
-			componentInstance := fmt.Sprintf("%s%d", component, t.index)
-			var buf bytes.Buffer
-			ms.WriteToBuffer(masters, &buf)
-			if err := m.deployComponentInstance(op, component, componentInstance, &buf); err != nil {
-				return err
-			}
-			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
-		})
+	default:
+		return fmt.Errorf("unknown component: %s", t.component)
 	}
-	return fmt.Errorf("unknown component: %s", t.component)
+	return m.runUpgradeHost(t, hooks)
+}
+
+// runUpgradeHost applies the stop/redeploy/restart sequence to a single host
+// using the component-specific hooks. This holds the logic that was previously
+// duplicated across the volume/filer/master switch cases.
+func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
+	if err := hooks.stop(); err != nil {
+		// Best-effort stop: log and continue to reinstall which will restart the unit.
+		info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
+	}
+	componentInstance := fmt.Sprintf("%s%d", hooks.serviceName, t.index)
+	return operator.ExecuteRemote(hooks.sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+		var buf bytes.Buffer
+		hooks.writeConfig(&buf)
+		if err := m.deployComponentInstance(op, hooks.serviceName, componentInstance, &buf); err != nil {
+			return err
+		}
+		return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
+	})
 }
 
 // waitForHealthy polls an HTTP(S) URL until it returns 2xx or the timeout
 // elapses. This is intentionally minimal — a more thorough probe would parse
 // the body.
 //
-// TODO: once the cluster CA bundle is plumbed through the Manager, honor
-// InsecureSkipVerify=false and load the cluster root CA into RootCAs. Today
-// we intentionally fall back to InsecureSkipVerify=true so that self-signed
-// upgrade probes don't block the rolling upgrade.
-func waitForHealthy(url string, timeout, interval time.Duration) error {
+// By default TLS connections verify against the system cert pool. Pass
+// insecureSkipTLSVerify=true to disable verification (for self-signed dev
+// clusters); callers must opt in explicitly via --insecure-skip-tls-verify.
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func waitForHealthy(url string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
 	if url == "" {
 		return nil
 	}
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			// Default: verify. Fallback to skip because CA bundle isn't wired yet.
-			InsecureSkipVerify: true, //nolint:gosec // see TODO above
-		},
+	tlsConfig := &tls.Config{}
+	if insecureSkipTLSVerify {
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
 	}
+	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
 	deadline := time.Now().Add(timeout)
 	var lastErr error

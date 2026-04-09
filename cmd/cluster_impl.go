@@ -46,14 +46,15 @@ type ClusterStatusOptions struct {
 }
 
 type ClusterUpgradeOptions struct {
-	Version           string
-	ConfigFile        string
-	User              string
-	SSHPort           int
-	IdentityFile      string
-	SkipConfirm       bool
-	DryRun            bool
-	RollbackOnFailure bool
+	Version               string
+	ConfigFile            string
+	User                  string
+	SSHPort               int
+	IdentityFile          string
+	SkipConfirm           bool
+	DryRun                bool
+	RollbackOnFailure     bool
+	InsecureSkipTLSVerify bool
 }
 
 type ClusterScaleOutOptions struct {
@@ -294,8 +295,11 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	// Probe the currently-running cluster version so that rollback has a target
 	// to restore to. If probing fails we proceed with previousVersion="" and
 	// rollback will be disabled for this run.
-	if current, err := probeCurrentClusterVersion(clusterSpec); err != nil {
+	if current, err := probeCurrentClusterVersion(clusterSpec, opts.InsecureSkipTLSVerify); err != nil {
 		color.Yellow("⚠️  Could not determine current cluster version (%v); rollback will be disabled.", err)
+		mgr.Version = ""
+	} else if current == "" {
+		color.Yellow("⚠️  Current cluster version could not be parsed from master response; rollback will be disabled.")
 		mgr.Version = ""
 	} else {
 		color.Cyan("ℹ️  Current cluster version detected: %s", current)
@@ -303,8 +307,9 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	}
 
 	upgradeOpts := manager.UpgradeOptions{
-		RollbackOnFailure: opts.RollbackOnFailure,
-		DryRun:            opts.DryRun,
+		RollbackOnFailure:     opts.RollbackOnFailure,
+		DryRun:                opts.DryRun,
+		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
 	}
 
 	if err := mgr.UpgradeCluster(clusterSpec, opts.Version, upgradeOpts); err != nil {
@@ -327,10 +332,12 @@ var versionRegex = regexp.MustCompile(`v?\d+\.\d+(?:\.\d+)?`)
 // version. It tries /cluster/status first and falls back to /dir/status,
 // looking in both the JSON body and the Server response header.
 //
-// TODO: plumb the cluster CA bundle through so we can set
-// InsecureSkipVerify=false. For now we intentionally skip verification so
-// upgrades work on self-signed clusters out of the box.
-func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error) {
+// When the cluster is TLS-enabled, the default http.Client uses the system
+// cert pool. Pass insecureSkipTLSVerify=true to disable certificate
+// verification (for self-signed dev clusters).
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLSVerify bool) (string, error) {
 	if len(clusterSpec.MasterServers) == 0 {
 		return "", fmt.Errorf("no master servers in spec")
 	}
@@ -339,12 +346,8 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 		scheme = "https"
 	}
 	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec // see TODO above
-			},
-		},
+		Timeout:   5 * time.Second,
+		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify),
 	}
 	var lastErr error
 	for _, ms := range clusterSpec.MasterServers {
@@ -372,7 +375,9 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 				lastErr = fmt.Errorf("read body from %s: %w", url, readErr)
 				continue
 			}
-			// Try common JSON fields.
+			// Try common JSON fields. Only accept matches that look like a
+			// version — if a field exists but doesn't match the regex (e.g. a
+			// commit hash), keep searching rather than silently returning it.
 			var payload map[string]interface{}
 			if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
 				for _, key := range []string{"Version", "version"} {
@@ -380,7 +385,6 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 						if m := versionRegex.FindString(v); m != "" {
 							return m, nil
 						}
-						return v, nil
 					}
 				}
 			}
@@ -394,13 +398,30 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error)
 			if m := versionRegex.FindString(string(body)); m != "" {
 				return m, nil
 			}
-			lastErr = fmt.Errorf("no version found in response from %s", url)
+			// Nothing matched the version regex on this endpoint. Treat as
+			// "unknown version" rather than returning a non-version string.
+			// Return empty + nil so the caller proceeds with rollback disabled.
+			return "", nil
 		}
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no master responded")
 	}
 	return "", lastErr
+}
+
+// newUpgradeHTTPTransport builds an http.Transport for upgrade probes.
+//
+// Default behavior uses the system cert pool (tls.Config{}). When
+// insecureSkipTLSVerify is true, certificate verification is disabled.
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func newUpgradeHTTPTransport(insecureSkipTLSVerify bool) *http.Transport {
+	tlsConfig := &tls.Config{}
+	if insecureSkipTLSVerify {
+		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
+	}
+	return &http.Transport{TLSClientConfig: tlsConfig}
 }
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {
