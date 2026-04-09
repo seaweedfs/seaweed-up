@@ -3,8 +3,8 @@ package manager
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -44,7 +44,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	// that operators see ALL per-host failures (not just the first), we
 	// collect every error into a mutex-guarded slice, log each of them, and
 	// build a combined error message that mentions every failing host.
-	eg, _ := errgroup.WithContext(context.Background())
+	var eg errgroup.Group
 	if m.Concurrency > 0 {
 		eg.SetLimit(m.Concurrency)
 	}
@@ -65,9 +65,8 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			index, volumeSpec := index, volumeSpec
 			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
-					wrapped := fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err)
+					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
 					recordErr(wrapped)
-					return wrapped
 				}
 				return nil
 			})
@@ -78,9 +77,8 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			index, filerSpec := index, filerSpec
 			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
-					wrapped := fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err)
+					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
 					recordErr(wrapped)
-					return wrapped
 				}
 				return nil
 			})
@@ -94,11 +92,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		if len(deployErrors) == 1 {
 			return deployErrors[0]
 		}
-		msgs := make([]string, 0, len(deployErrors))
-		for _, e := range deployErrors {
-			msgs = append(msgs, e.Error())
-		}
-		return fmt.Errorf("%d deploy errors: %s", len(deployErrors), strings.Join(msgs, "; "))
+		return fmt.Errorf("%d deploy errors: %w", len(deployErrors), stderrors.Join(deployErrors...))
 	}
 
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
