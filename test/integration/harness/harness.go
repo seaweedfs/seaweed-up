@@ -34,7 +34,12 @@ import (
 // dockerImage is the pinned systemd-in-docker image used by the harness.
 // Pinning to a specific tag (instead of :latest) keeps the test environment
 // reproducible and guards against upstream regressions breaking CI.
-const dockerImage = "geerlingguy/docker-ubuntu2204-ansible:2024.04.01"
+// The previously attempted date-style tag (e.g. 2024.04.01) does not exist on
+// Docker Hub — only :latest is published. To keep the test environment
+// reproducible we pin by immutable manifest-list digest instead of the mutable
+// :latest tag. Bump this digest intentionally when a newer upstream image is
+// required.
+const dockerImage = "geerlingguy/docker-ubuntu2204-ansible@sha256:bbe4c56c16c57c902554b9a47833590926b7a7d4440aef3d9851473b9f7be9d4"
 
 // Harness owns a docker bridge network plus a set of Ubuntu+systemd containers
 // reachable via SSH. It is safe for a single test goroutine.
@@ -93,6 +98,8 @@ func New(t *testing.T, hostCount int) *Harness {
 	octet := pickOctet(t)
 	subnet := fmt.Sprintf("172.29.%d.0/24", octet)
 	gateway := fmt.Sprintf("172.29.%d.1", octet)
+	// #nosec G404 -- suffix is used only to build a unique docker network/temp
+	// directory name in tests; no security properties are required.
 	suffix := fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Intn(100000))
 	netName := "seaweedup-harness-" + suffix
 
@@ -402,6 +409,8 @@ func pickOctet(t *testing.T) int {
 	defer usedOctetsMu.Unlock()
 	// Range [10, 250] gives 241 options; use a deterministic shuffle to
 	// quickly find a free one.
+	// #nosec G404 -- non-cryptographic randomness is sufficient for picking a
+	// free /24 octet inside a test-only docker bridge subnet.
 	r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(os.Getpid())))
 	perm := r.Perm(241)
 	for _, p := range perm {
