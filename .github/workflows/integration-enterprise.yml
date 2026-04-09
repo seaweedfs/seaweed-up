@@ -6,6 +6,7 @@ on:
     paths:
       - 'pkg/cluster/manager/manager.go'
       - 'pkg/cluster/manager/manager_deploy.go'
+      - 'pkg/config/version.go'
       - 'cmd/cluster.go'
       - 'cmd/cluster_impl.go'
       - 'scripts/install.sh'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'pkg/cluster/manager/manager.go'
       - 'pkg/cluster/manager/manager_deploy.go'
+      - 'pkg/config/version.go'
       - 'cmd/cluster.go'
       - 'cmd/cluster_impl.go'
       - 'scripts/install.sh'
@@ -68,6 +70,7 @@ jobs:
             geerlingguy/docker-ubuntu2204-ansible:latest
 
           sleep 10
+          state=""
           for i in {1..60}; do
             state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
             if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
@@ -76,6 +79,12 @@ jobs:
             fi
             sleep 2
           done
+          if [ "$state" != "running" ] && [ "$state" != "degraded" ]; then
+            echo "Systemd did not become ready within timeout (last state: $state)" >&2
+            docker exec seaweed-up-host1 systemctl --no-pager --failed || true
+            docker logs seaweed-up-host1 2>&1 | tail -50 || true
+            exit 1
+          fi
 
       - name: Install SSH
         run: |

@@ -116,13 +116,13 @@ download_and_install() {
   else
     OS="linux"
     # OSS builds publish a "_full" variant; enterprise builds are
-    # already full and have no _full segment. FULL_SUFIX comes from the
-    # Go side so install.sh stays agnostic to release source.
-    FULL_SUFIX="{{.FullSuffix}}"
-    LARGE_SUFIX="_large_disk"
+    # already full and have no _full segment. FULL_SUFFIX comes from
+    # the Go side so install.sh stays agnostic to release source.
+    FULL_SUFFIX="{{.FullSuffix}}"
+    LARGE_SUFFIX="_large_disk"
     # ASSET_PREFIX is "" for OSS and "weed-enterprise-" for enterprise.
     ASSET_PREFIX="{{.AssetPrefix}}"
-    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFIX}${LARGE_SUFIX}.tar.gz"
+    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
     RELEASE_OWNER="{{.ReleaseOwner}}"
     RELEASE_REPO="{{.ReleaseRepo}}"
 
