@@ -1,0 +1,182 @@
+name: Integration Status Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: test/integration
+
+jobs:
+  status-test:
+    name: Cluster Status HTTP Probe Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        working-directory: .
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start containers with docker run
+        run: |
+          # systemd-in-docker pattern mirrored from integration-tests.yml
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          echo "Waiting for containers to start..."
+          sleep 10
+
+          echo "=== Container Status ==="
+          docker ps -a
+
+          status=$(docker inspect -f '{{.State.Status}}' seaweed-up-host1 2>/dev/null || echo "not found")
+          echo "Container seaweed-up-host1 status: $status"
+          if [ "$status" != "running" ]; then
+            echo "=== Logs ==="
+            docker logs seaweed-up-host1 2>&1 || true
+            exit 1
+          fi
+
+          # Wait for systemd to be ready
+          echo "Waiting for systemd to initialize..."
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "Systemd ready (state: $state)"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Timeout waiting for systemd"
+              docker logs seaweed-up-host1 2>&1 || true
+              docker exec seaweed-up-host1 journalctl -xe --no-pager 2>&1 | tail -100 || true
+              exit 1
+            fi
+            echo "Waiting for systemd... ($i/60, state: $state)"
+            sleep 2
+          done
+
+      - name: Install SSH on container
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+
+          # Wait for SSH
+          sleep 5
+          for j in {1..30}; do
+            if nc -z 172.28.0.10 22 2>/dev/null; then
+              echo "SSH ready on 172.28.0.10"
+              break
+            fi
+            if [ $j -eq 30 ]; then
+              echo "SSH not ready"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+
+      - name: Verify SSH connectivity
+        run: |
+          ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@172.28.0.10 "echo 'SSH OK'"
+
+      - name: Deploy single-node cluster
+        run: |
+          ../../seaweed-up cluster deploy test-status \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          # Wait for services to start
+          echo "Waiting for SeaweedFS services to initialize..."
+          sleep 30
+
+          # Show listening ports for debug
+          docker exec seaweed-up-host1 ss -tlnp 2>&1 || true
+
+          # Sanity checks
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
+          nc -z 172.28.0.10 8382 || (echo "Volume not running" && exit 1)
+          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
+          echo "All ports listening"
+
+      - name: Run cluster status (table)
+        run: |
+          ../../seaweed-up cluster status -f testdata/cluster-single.yaml
+
+      - name: Run cluster status (JSON)
+        run: |
+          ../../seaweed-up cluster status -f testdata/cluster-single.yaml --json
+
+      - name: Run integration status Go test
+        run: |
+          go test -tags integration -run TestClusterStatusReal -v -timeout 20m ./...
+
+      - name: Save logs
+        if: always()
+        run: |
+          echo "=== Container Status ===" > status.log
+          docker ps -a >> status.log
+          echo "=== Host1 Logs ===" >> status.log
+          docker logs seaweed-up-host1 >> status.log 2>&1 || true
+          echo "=== Host1 SeaweedFS Logs ===" >> status.log
+          docker exec seaweed-up-host1 bash -c "cat /opt/seaweed/*/*.log 2>/dev/null" >> status.log 2>&1 || true
+
+      - name: Archive logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-status-logs
+          path: test/integration/status.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 || true
+          docker rm seaweed-up-host1 || true
+          docker network rm seaweed-up-net || true
+          rm -rf .ssh

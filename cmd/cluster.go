@@ -117,6 +117,7 @@ Shows real-time information about cluster components including:
 		},
 	}
 	
+	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "output in JSON format")
 	cmd.Flags().BoolVar(&opts.Verbose, "verbose", false, "show detailed information")
 	cmd.Flags().StringVar(&opts.Timeout, "timeout", "30s", "timeout for status collection")

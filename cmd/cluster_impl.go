@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,9 +10,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/health"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
@@ -34,6 +38,7 @@ type ClusterDeployOptions struct {
 }
 
 type ClusterStatusOptions struct {
+	ConfigFile string
 	JSONOutput bool
 	Verbose    bool
 	Timeout    string
@@ -155,6 +160,11 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 }
 
 func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
+	clusterSpec, err := resolveStatusSpec(args, opts)
+	if err != nil {
+		return err
+	}
+
 	// Handle auto-refresh mode with proper signal handling
 	if opts.Refresh > 0 {
 		ticker := time.NewTicker(time.Duration(opts.Refresh) * time.Second)
@@ -167,29 +177,62 @@ func runClusterStatus(args []string, opts *ClusterStatusOptions) error {
 
 		// Show initial status
 		clearScreen()
-		if err := displayClusterStatus(args, opts); err != nil {
-			return err
+		if _, derr := displayClusterStatus(clusterSpec, opts); derr != nil {
+			return derr
 		}
-		color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+		color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 
 		for {
 			select {
 			case <-sigChan:
-				// Graceful shutdown on interrupt
 				fmt.Println()
-				color.Yellow("⏹️  Refresh stopped by user")
+				color.Yellow("Refresh stopped by user")
 				return nil
 			case <-ticker.C:
 				clearScreen()
-				if err := displayClusterStatus(args, opts); err != nil {
-					return err
+				if _, derr := displayClusterStatus(clusterSpec, opts); derr != nil {
+					return derr
 				}
-				color.Cyan("🔄 Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
+				color.Cyan("Refreshing every %d seconds (Press Ctrl+C to stop)", opts.Refresh)
 			}
 		}
 	}
 
-	return displayClusterStatus(args, opts)
+	ch, err := displayClusterStatus(clusterSpec, opts)
+	if err != nil {
+		return err
+	}
+	if !ch.AllHealthy() {
+		os.Exit(1)
+	}
+	return nil
+}
+
+// resolveStatusSpec loads the topology either from -f or by looking up a
+// positional cluster-name file next to the binary's working directory.
+func resolveStatusSpec(args []string, opts *ClusterStatusOptions) (*spec.Specification, error) {
+	configFile := opts.ConfigFile
+	if configFile == "" && len(args) > 0 {
+		// Positional-name fallback: try <name>.yaml / <name>.yml
+		candidates := []string{args[0] + ".yaml", args[0] + ".yml", args[0]}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				configFile = c
+				break
+			}
+		}
+	}
+	if configFile == "" {
+		return nil, fmt.Errorf("cluster configuration file is required (use -f)")
+	}
+	s, err := loadClusterSpec(configFile)
+	if err != nil {
+		return nil, err
+	}
+	if s.Name == "" && len(args) > 0 {
+		s.Name = args[0]
+	}
+	return s, nil
 }
 
 // clearScreen clears the terminal screen in a cross-platform way
@@ -207,22 +250,83 @@ func clearScreen() {
 	}
 }
 
-// displayClusterStatus shows the actual cluster status
-func displayClusterStatus(args []string, opts *ClusterStatusOptions) error {
-	// TODO: Implement actual status collection
-	color.Green("📊 Cluster Status")
-	
-	if len(args) == 0 {
-		color.Yellow("📋 All Clusters:")
-		// Show all clusters
-		fmt.Println("No clusters found. Deploy a cluster first with 'seaweed-up cluster deploy'")
-	} else {
-		clusterName := args[0]
-		color.Yellow("📋 Cluster: %s", clusterName)
-		fmt.Println("Status collection not yet implemented")
+// displayClusterStatus probes the cluster and prints the result, returning
+// the aggregated health so callers can decide on process exit status.
+func displayClusterStatus(clusterSpec *spec.Specification, opts *ClusterStatusOptions) (*health.ClusterHealth, error) {
+	timeout := 5 * time.Second
+	if opts.Timeout != "" {
+		if d, err := time.ParseDuration(opts.Timeout); err == nil && d > 0 {
+			timeout = d
+		}
 	}
-	
-	return nil
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+2*time.Second)
+	defer cancel()
+
+	prober := health.NewProber(timeout)
+	ch := prober.Probe(ctx, clusterSpec)
+
+	if opts.JSONOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(ch); err != nil {
+			return ch, err
+		}
+		return ch, nil
+	}
+
+	renderStatusTable(clusterSpec, ch, opts.Verbose)
+	return ch, nil
+}
+
+func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose bool) {
+	name := s.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	color.Green("Cluster Status: %s", name)
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "COMPONENT\tADDRESS\tHEALTHY\tVERSION\tDETAIL")
+	writeRow := func(r health.ProbeResult) {
+		healthy := "NO"
+		if r.Healthy {
+			healthy = "OK"
+		}
+		detail := r.Err
+		if detail == "" && verbose && r.Raw != nil {
+			if b, err := json.Marshal(r.Raw); err == nil {
+				detail = string(b)
+			}
+		}
+		if detail == "" {
+			detail = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.Kind, r.Address, healthy, orDash(r.Version), detail)
+	}
+	for _, r := range ch.Masters {
+		writeRow(r)
+	}
+	for _, r := range ch.Volumes {
+		writeRow(r)
+	}
+	for _, r := range ch.Filers {
+		writeRow(r)
+	}
+	_ = tw.Flush()
+
+	if !ch.AllHealthy() {
+		color.Red("Cluster is UNHEALTHY")
+	} else {
+		color.Green("Cluster is healthy")
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
