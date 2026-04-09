@@ -132,45 +132,6 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	return release, nil
 }
 
-// BuildAssetSuffix returns the SeaweedFS release asset file suffix matching
-// the given target os/arch and build flavor flags. Example:
-// "linux_amd64_full_large_disk.tar.gz".
-func BuildAssetSuffix(targetOS, arch string, isLargeDisk, isFull bool) string {
-	largeDiskSuffix := ""
-	if isLargeDisk {
-		largeDiskSuffix = "_large_disk"
-	}
-	fullSuffix := ""
-	if isFull {
-		fullSuffix = "_full"
-	}
-	return fmt.Sprintf("%s_%s%s%s.tar.gz", targetOS, arch, fullSuffix, largeDiskSuffix)
-}
-
-// FetchReleaseBinary resolves a GitHub release (owner/repo, version or "0"
-// for latest) and downloads the asset matching assetSuffix along with its
-// .md5 checksum file. It returns the raw tarball bytes, the raw md5 file
-// bytes, the resolved asset filename, and the resolved release version.
-//
-// Asset data is pulled via the GitHub API asset URL which requires an
-// Authorization header for private repositories — this is supplied
-// automatically from $GITHUB_TOKEN / $GH_TOKEN by getGithubData.
-func FetchReleaseBinary(ctx context.Context, owner, repo, ver, assetSuffix string) (tarball []byte, md5Data []byte, assetName string, version string, err error) {
-	rel, err := GitHubLatestRelease(ctx, ver, owner, repo)
-	if err != nil {
-		return nil, nil, "", "", err
-	}
-	_, md5Data, err = getGithubDataFile(ctx, rel.Assets, assetSuffix+".md5")
-	if err != nil {
-		return nil, nil, "", "", fmt.Errorf("fetch md5 for %s: %w", assetSuffix, err)
-	}
-	assetName, tarball, err = getGithubDataFile(ctx, rel.Assets, assetSuffix)
-	if err != nil {
-		return nil, nil, "", "", fmt.Errorf("fetch binary %s: %w", assetSuffix, err)
-	}
-	return tarball, md5Data, assetName, rel.Version, nil
-}
-
 func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {

@@ -52,13 +52,13 @@ type ClusterDeployOptions struct {
 	TLS          bool
 	Check        bool
 	Concurrency  int
-	// Enterprise selects the private SeaweedFS enterprise release repo
-	// (github.com/seaweedfs/artifactory) as the binary source. Requires
-	// $GITHUB_TOKEN or $GH_TOKEN with read access to that repo.
+	// Enterprise selects the public SeaweedFS enterprise release repo
+	// (github.com/seaweedfs/artifactory) as the binary source instead of
+	// the OSS repo. No authentication is required — both repos are
+	// public, though $GITHUB_TOKEN / $GH_TOKEN is still honored on the
+	// release metadata lookup to dodge the 60 req/hr anonymous rate
+	// limit on shared CI runners.
 	Enterprise bool
-	// TargetArch is the target binary architecture for enterprise downloads
-	// (e.g. "amd64", "arm64"). Defaults to "amd64".
-	TargetArch string
 }
 
 type ClusterStatusOptions struct {
@@ -79,12 +79,9 @@ type ClusterUpgradeOptions struct {
 	DryRun                bool
 	RollbackOnFailure     bool
 	InsecureSkipTLSVerify bool
-	// Enterprise pulls target binaries from the private SeaweedFS
+	// Enterprise pulls target binaries from the public SeaweedFS
 	// enterprise release repo (github.com/seaweedfs/artifactory).
 	Enterprise bool
-	// TargetArch is the target binary architecture for enterprise
-	// downloads (defaults to "amd64").
-	TargetArch string
 }
 
 type ClusterScaleOutOptions struct {
@@ -143,8 +140,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.ProxyUrl = opts.ProxyUrl
 	mgr.Concurrency = opts.Concurrency
 	mgr.Enterprise = opts.Enterprise
-	mgr.TargetArch = opts.TargetArch
-	
+
 	// Default SSH user to current user if not specified
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()
@@ -185,7 +181,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	}
 
 	// Get latest version if not specified. Enterprise deploys look up the
-	// version from the private artifactory repo instead of the OSS repo.
+	// version from the public artifactory repo instead of the OSS repo.
 	if mgr.Version == "" {
 		owner, repo := mgr.ReleaseOwnerRepo()
 		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", owner, repo)
@@ -195,23 +191,6 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		mgr.Version = latest.Version
 	}
 
-	// For enterprise deploys, pre-warm the binary cache here where we still
-	// hold cmd.Context(). The downstream per-host deploy loop no longer has
-	// a context in its signature, so fetching here ensures the GitHub API
-	// call honors Ctrl+C / deadline propagation from the cobra command.
-	if mgr.Enterprise {
-		if _, _, _, err := mgr.EnsureEnterpriseBinary(cmd.Context(), mgr.Version); err != nil {
-			return fmt.Errorf("prefetch enterprise binary: %w", err)
-		}
-		// If the caller asked for "latest", mgr.Version is already set
-		// above by the OSS/enterprise version lookup, so this is a no-op
-		// in practice — but keeping the assignment in sync with the
-		// resolved tag guards against any future divergence.
-		if resolved := mgr.EnterpriseResolvedVersion(); resolved != "" {
-			mgr.Version = resolved
-		}
-	}
-	
 	// Confirm deployment if not skipped
 	if !opts.SkipConfirm {
 		color.Yellow("Deployment Summary:")
@@ -483,7 +462,7 @@ func orDash(s string) string {
 	return s
 }
 
-func runClusterUpgrade(ctx context.Context, clusterName string, opts *ClusterUpgradeOptions) error {
+func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	color.Green("Upgrading cluster: %s to version %s", clusterName, opts.Version)
 
 	if opts.Version == "" {
@@ -504,7 +483,6 @@ func runClusterUpgrade(ctx context.Context, clusterName string, opts *ClusterUpg
 		mgr.SshPort = 22
 	}
 	mgr.Enterprise = opts.Enterprise
-	mgr.TargetArch = opts.TargetArch
 
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()
@@ -560,17 +538,6 @@ func runClusterUpgrade(ctx context.Context, clusterName string, opts *ClusterUpg
 		RollbackOnFailure:     opts.RollbackOnFailure,
 		DryRun:                opts.DryRun,
 		InsecureSkipTLSVerify: opts.InsecureSkipTLSVerify,
-	}
-
-	// Pre-warm the enterprise binary cache while we still hold the cobra
-	// command context so cancellation propagates into the GitHub fetch.
-	// The *target* version is what we want staged on hosts, not the
-	// previously-probed running version held in mgr.Version. See
-	// runClusterDeploy for the matching call on the deploy path.
-	if mgr.Enterprise && !opts.DryRun {
-		if _, _, _, err := mgr.EnsureEnterpriseBinary(ctx, opts.Version); err != nil {
-			return fmt.Errorf("prefetch enterprise binary: %w", err)
-		}
 	}
 
 	if err := mgr.UpgradeCluster(clusterSpec, opts.Version, upgradeOpts); err != nil {

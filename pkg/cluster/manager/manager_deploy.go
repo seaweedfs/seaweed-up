@@ -401,6 +401,26 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		return fmt.Errorf("error received during installation: %s", err)
 	}
 
+	// Pick the release source (OSS vs enterprise) and compute the matching
+	// asset naming pieces. The enterprise repo (seaweedfs/artifactory) is
+	// public and uses a different asset naming scheme:
+	//
+	//	OSS:         ${OS}_${ARCH}_full_large_disk.tar.gz
+	//	Enterprise:  weed-enterprise-${OS}_${ARCH}_large_disk.tar.gz
+	//
+	// Both are delivered via github.com release download URLs, so the
+	// remote host can curl them directly; no controller-side pre-stage is
+	// needed. Arch detection still happens on the remote via uname -m.
+	releaseOwner, releaseRepo := m.ReleaseOwnerRepo()
+	assetPrefix := ""
+	// fullSuffix selects the "_full" OSS variant; the enterprise build is
+	// already a full flavor and has no "_full" segment in its asset name.
+	fullSuffix := "_full"
+	if m.Enterprise {
+		assetPrefix = enterpriseAssetPrefix
+		fullSuffix = ""
+	}
+
 	data := map[string]interface{}{
 		"Component":         component,
 		"ComponentInstance": componentInstance,
@@ -412,47 +432,10 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"ForceRestart":      m.ForceRestart,
 		"Version":           m.Version,
 		"ProxyConfig":       "",
-		"Arch":              "",
-		// ReleaseOwner/ReleaseRepo drive the URL the OSS install path
-		// curls from. Enterprise deploys pre-stage the tarball on the
-		// remote host and never actually hit these URLs, but we still
-		// template them in for consistency.
-		"ReleaseOwner": ossReleaseOwner,
-		"ReleaseRepo":  ossReleaseRepo,
-	}
-
-	if m.Enterprise {
-		// Pre-stage the enterprise binary (downloaded by the controller
-		// against the private github.com/seaweedfs/artifactory repo) so
-		// that install.sh's [ ! -f ] guard short-circuits the curl step.
-		// This keeps GitHub tokens off the remote hosts entirely.
-		//
-		// The cache is expected to have been pre-warmed by the caller
-		// (runClusterDeploy/runClusterUpgrade) with cmd.Context() so that
-		// cancellation propagates; passing context.Background() here is a
-		// defense-in-depth fallback that only runs if pre-warming was
-		// skipped (in which case the sync.Once hit above would need to
-		// actually issue the GitHub API call).
-		tarball, md5Data, assetName, err := m.EnsureEnterpriseBinary(context.Background(), m.Version)
-		if err != nil {
-			return err
-		}
-		arch := m.TargetArch
-		if arch == "" {
-			arch = "amd64"
-		}
-		data["Arch"] = arch
-		data["ReleaseOwner"] = enterpriseReleaseOwner
-		data["ReleaseRepo"] = enterpriseReleaseRepo
-		data["Version"] = m.Version
-
-		stagedName := fmt.Sprintf("seaweed_%s_%s", m.Version, assetName)
-		if err := op.Upload(bytes.NewReader(tarball), fmt.Sprintf("%s/%s", dir, stagedName), "0644"); err != nil {
-			return fmt.Errorf("stage enterprise binary: %w", err)
-		}
-		if err := op.Upload(bytes.NewReader(md5Data), fmt.Sprintf("%s/%s.md5", dir, stagedName), "0644"); err != nil {
-			return fmt.Errorf("stage enterprise md5: %w", err)
-		}
+		"ReleaseOwner":      releaseOwner,
+		"ReleaseRepo":       releaseRepo,
+		"AssetPrefix":       assetPrefix,
+		"FullSuffix":        fullSuffix,
 	}
 
 	// Configure proxy if specified

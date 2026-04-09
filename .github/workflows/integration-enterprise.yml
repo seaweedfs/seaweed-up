@@ -1,0 +1,156 @@
+name: Integration Enterprise
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'pkg/cluster/manager/manager.go'
+      - 'pkg/cluster/manager/manager_deploy.go'
+      - 'cmd/cluster.go'
+      - 'cmd/cluster_impl.go'
+      - 'scripts/install.sh'
+      - '.github/workflows/integration-enterprise.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'pkg/cluster/manager/manager.go'
+      - 'pkg/cluster/manager/manager_deploy.go'
+      - 'cmd/cluster.go'
+      - 'cmd/cluster_impl.go'
+      - 'scripts/install.sh'
+      - '.github/workflows/integration-enterprise.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Authenticate GitHub API calls so release metadata lookups
+  # dont hit the anonymous 60 req/hour rate limit shared
+  # across CI runners.
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  enterprise-deploy:
+    name: Enterprise Release Deployment
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          sleep 10
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "Systemd ready (state: $state)"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install SSH
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+          sleep 5
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys"
+
+      - name: Deploy cluster with --enterprise
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-enterprise \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --enterprise \
+            --yes
+
+      - name: Verify binary came from enterprise repo
+        run: |
+          # `weed version` doesn't report which repo it came from, so prove
+          # the enterprise URL was actually used: hash the installed weed
+          # binary, then unpack the enterprise tarball for the same tag and
+          # confirm the hashes match. If install.sh had pulled from the OSS
+          # repo, the binary hash would not match the enterprise tarball.
+          VERSION=$(docker exec seaweed-up-host1 /usr/local/bin/weed version | awk '{print $3}')
+          echo "Deployed version: $VERSION"
+          URL="https://github.com/seaweedfs/artifactory/releases/download/${VERSION}/weed-enterprise-linux_amd64_large_disk.tar.gz"
+          curl -sfL -o /tmp/ent.tgz "$URL"
+          mkdir -p /tmp/ent && tar xzf /tmp/ent.tgz -C /tmp/ent
+          ENT_HASH=$(sha256sum /tmp/ent/weed | awk '{print $1}')
+          HOST_HASH=$(docker exec seaweed-up-host1 sha256sum /usr/local/bin/weed | awk '{print $1}')
+          echo "enterprise tarball weed sha256: $ENT_HASH"
+          echo "installed /usr/local/bin/weed sha256: $HOST_HASH"
+          test "$ENT_HASH" = "$HOST_HASH" \
+            || (echo "installed binary does not match enterprise tarball" && exit 1)
+          echo "Enterprise binary verified for version $VERSION"
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 60); do
+            if nc -z 172.28.0.10 9333 && nc -z 172.28.0.10 8382 && nc -z 172.28.0.10 8888; then
+              echo "All services listening"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Services did not come up in time"
+          docker exec seaweed-up-host1 systemctl list-units 'seaweed*' --all --no-pager || true
+          docker exec seaweed-up-host1 journalctl -u 'seaweed_*' --no-pager -n 80 || true
+          exit 1
+
+      - name: Write and read a file via filer
+        run: |
+          echo "hello-enterprise" > /tmp/test.txt
+          curl -sf -F file=@/tmp/test.txt http://172.28.0.10:8888/test/test.txt
+          body=$(curl -sf http://172.28.0.10:8888/test/test.txt)
+          echo "Read back: $body"
+          echo "$body" | grep -q hello-enterprise
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 || true
+          docker rm seaweed-up-host1 || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh

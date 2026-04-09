@@ -56,11 +56,6 @@ setup_env() {
 
 # --- set arch and suffix, fatal if architecture not supported ---
 setup_verify_arch() {
-  # The controller may pin an arch (e.g. enterprise deploys, where the
-  # binary is pre-staged for a specific arch); otherwise auto-detect.
-  if [ -z "$ARCH" ]; then
-    ARCH="{{.Arch}}"
-  fi
   if [ -z "$ARCH" ]; then
     ARCH=$(uname -m)
   fi
@@ -120,26 +115,22 @@ download_and_install() {
     info "Seaweed binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
   else
     OS="linux"
-    FULL_SUFIX="_full"
+    # OSS builds publish a "_full" variant; enterprise builds are
+    # already full and have no _full segment. FULL_SUFIX comes from the
+    # Go side so install.sh stays agnostic to release source.
+    FULL_SUFIX="{{.FullSuffix}}"
     LARGE_SUFIX="_large_disk"
-    assetFileName="${OS}_${SUFFIX}${FULL_SUFIX}${LARGE_SUFIX}.tar.gz"
+    # ASSET_PREFIX is "" for OSS and "weed-enterprise-" for enterprise.
+    ASSET_PREFIX="{{.AssetPrefix}}"
+    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFIX}${LARGE_SUFIX}.tar.gz"
     RELEASE_OWNER="{{.ReleaseOwner}}"
     RELEASE_REPO="{{.ReleaseRepo}}"
 
-    # If the controller has pre-staged the tarball + md5 in $TMP_DIR
-    # (e.g. enterprise deploys, which download locally and scp so that
-    # remote hosts never need a GitHub token), skip the curl step.
-    if [ ! -f "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" ]; then
-      info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
-      curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"
-    else
-      info "Using pre-staged ${SEAWEED_VERSION} ${assetFileName}"
-    fi
+    info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"
 
-    if [ ! -f "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" ]; then
-      info "Downloading ${SEAWEED_VERSION} ${assetFileName} md5"
-      curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
-    fi
+    info "Downloading ${SEAWEED_VERSION} ${assetFileName} md5"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
     info "Verifying downloaded ${SEAWEED_VERSION} ${assetFileName}"
     md5Value=`cat $TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5`
     echo "${md5Value}  seaweed_${SEAWEED_VERSION}_${assetFileName}" | md5sum -c
