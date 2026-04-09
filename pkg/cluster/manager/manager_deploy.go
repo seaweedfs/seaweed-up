@@ -37,6 +37,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	var wg sync.WaitGroup
+	var deployMu sync.Mutex
 	var deployErrors []error
 
 	if m.shouldInstall("volume") {
@@ -45,7 +46,9 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			go func(index int, volumeSpec *spec.VolumeServerSpec) {
 				defer wg.Done()
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
+					deployMu.Lock()
 					deployErrors = append(deployErrors, fmt.Errorf("deploy to volume server %s:%d :%v", volumeSpec.Ip, volumeSpec.PortSsh, err))
+					deployMu.Unlock()
 				}
 			}(index, volumeSpec)
 		}
@@ -56,14 +59,16 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			go func(index int, filerSpec *spec.FilerServerSpec) {
 				defer wg.Done()
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
+					deployMu.Lock()
 					deployErrors = append(deployErrors, fmt.Errorf("deploy to filer server %s:%d :%v", filerSpec.Ip, filerSpec.PortSsh, err))
+					deployMu.Unlock()
 				}
 			}(index, filerSpec)
 		}
 	}
 	wg.Wait()
 	if len(deployErrors) > 0 {
-		return deployErrors[0]
+		return errors.Join(deployErrors...)
 	}
 
 	if m.shouldInstall("worker") && len(specification.WorkerServers) > 0 {
