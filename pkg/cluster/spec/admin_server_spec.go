@@ -16,12 +16,27 @@ import (
 // The admin UI serves an HTTP management console for the cluster and
 // defaults to port 23646. Filers are auto-discovered via the masters,
 // so there is no explicit filer flag.
+//
+// Supported CLI flags are defined authoritatively in the SeaweedFS source at
+// weed/command/admin.go:
+//
+//	https://github.com/seaweedfs/seaweedfs/blob/master/weed/command/admin.go
+//
+// As of that file, the accepted flags are: port, port.grpc, master, masters
+// (deprecated), dataDir, adminUser, adminPassword, readOnlyUser,
+// readOnlyPassword, iceberg.port, urlPrefix, debug, debug.port, cpuprofile,
+// and memprofile. Any additional flags must be supplied via the free-form
+// Config map below.
 type AdminServerSpec struct {
-	Ip            string                 `yaml:"ip"`
-	PortSsh       int                    `yaml:"port.ssh" default:"22"`
-	IpBind        string                 `yaml:"ip.bind,omitempty"`
-	Port          int                    `yaml:"port" default:"23646"`
-	Masters       []string               `yaml:"masters,omitempty"`
+	Ip      string   `yaml:"ip"`
+	PortSsh int      `yaml:"port.ssh" default:"22"`
+	IpBind  string   `yaml:"ip.bind,omitempty"`
+	Port    int      `yaml:"port" default:"23646"`
+	Masters []string `yaml:"masters,omitempty"`
+	// DataDir, AdminUser, and AdminPassword correspond directly to the
+	// `-dataDir`, `-adminUser`, and `-adminPassword` flags defined in
+	// SeaweedFS weed/command/admin.go. They are intentionally retained as
+	// first-class fields because they are supported by `weed admin`.
 	DataDir       string                 `yaml:"dataDir,omitempty"`
 	AdminUser     string                 `yaml:"admin_user,omitempty"`
 	AdminPassword string                 `yaml:"admin_password,omitempty"`
@@ -55,10 +70,25 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "adminPassword", a.AdminPassword)
 
 	// Write free-form Config entries in stable (sorted) order so the
-	// resulting options file is deterministic.
+	// resulting options file is deterministic. Keys that are already
+	// handled by explicit struct fields above are skipped so that users
+	// cannot accidentally emit a duplicate (and ambiguous) flag by
+	// placing e.g. `port:` under `config:`.
 	if len(a.Config) > 0 {
+		reserved := map[string]bool{
+			"ip":            true,
+			"ip.bind":       true,
+			"port":          true,
+			"master":        true,
+			"dataDir":       true,
+			"adminUser":     true,
+			"adminPassword": true,
+		}
 		keys := make([]string, 0, len(a.Config))
 		for k := range a.Config {
+			if reserved[k] {
+				continue
+			}
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)

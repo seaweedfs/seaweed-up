@@ -66,6 +66,45 @@ func TestAdminServerSpec_WriteToBuffer_MastersOverride(t *testing.T) {
 	}
 }
 
+func TestAdminServerSpec_WriteToBuffer_ConfigReservedKeysSkipped(t *testing.T) {
+	a := &AdminServerSpec{
+		Ip:            "10.0.0.5",
+		Port:          24000,
+		DataDir:       "/var/lib/seaweed/admin",
+		AdminUser:     "root",
+		AdminPassword: "s3cret",
+		Config: map[string]interface{}{
+			// All of these collide with explicit fields and must be
+			// dropped from the Config pass-through to avoid duplicate
+			// flags in the generated options file.
+			"ip":            "9.9.9.9",
+			"ip.bind":       "0.0.0.0",
+			"port":          9999,
+			"master":        "bogus:9333",
+			"dataDir":       "/tmp/bogus",
+			"adminUser":     "other",
+			"adminPassword": "other",
+			// A non-reserved key should still flow through.
+			"port.grpc": 33646,
+		},
+	}
+	masters := []string{"10.0.0.1:9333"}
+
+	var buf bytes.Buffer
+	a.WriteToBuffer(masters, &buf)
+
+	want := "ip=10.0.0.5\n" +
+		"port=24000\n" +
+		"master=10.0.0.1:9333\n" +
+		"dataDir=/var/lib/seaweed/admin\n" +
+		"adminUser=root\n" +
+		"adminPassword=s3cret\n" +
+		"port.grpc=33646\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("unexpected options output\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestAdminServerSpec_WriteToBuffer_ConfigPassthrough(t *testing.T) {
 	a := &AdminServerSpec{
 		Ip:   "10.0.0.5",
