@@ -65,6 +65,24 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return deployErrors[0]
 	}
 
+	if m.shouldInstall("s3") {
+		var s3wg sync.WaitGroup
+		var s3Errors []error
+		for index, s3Spec := range specification.S3Servers {
+			s3wg.Add(1)
+			go func(index int, s3Spec *spec.S3ServerSpec) {
+				defer s3wg.Done()
+				if err := m.DeployS3Server(s3Spec, index); err != nil {
+					s3Errors = append(s3Errors, fmt.Errorf("deploy to s3 server %s:%d :%v", s3Spec.Ip, s3Spec.PortSsh, err))
+				}
+			}(index, s3Spec)
+		}
+		s3wg.Wait()
+		if len(s3Errors) > 0 {
+			return s3Errors[0]
+		}
+	}
+
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
@@ -97,6 +115,25 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, filerSpec := range specification.FilerServers {
 		filerSpec.PortSsh = utils.NvlInt(filerSpec.PortSsh, m.SshPort, 22)
+	}
+	// Default S3 gateways: ssh port from global, filer endpoint from the first filer if unset.
+	var defaultFiler string
+	if len(specification.FilerServers) > 0 {
+		f := specification.FilerServers[0]
+		port := f.Port
+		if port == 0 {
+			port = 8888
+		}
+		defaultFiler = fmt.Sprintf("%s:%d", f.Ip, port)
+	}
+	for _, s3Spec := range specification.S3Servers {
+		s3Spec.PortSsh = utils.NvlInt(s3Spec.PortSsh, m.SshPort, 22)
+		if s3Spec.Filer == "" {
+			s3Spec.Filer = defaultFiler
+		}
+		if s3Spec.Port == 0 {
+			s3Spec.Port = 8333
+		}
 	}
 	for _, envoySpec := range specification.EnvoyServers {
 		envoySpec.PortSsh = utils.NvlInt(envoySpec.PortSsh, m.SshPort, 22)
