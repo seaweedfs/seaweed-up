@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cheggaaa/pb/v3"
 	"golang.org/x/net/context/ctxhttp"
 )
 
@@ -132,65 +131,3 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	return release, nil
 }
 
-func getGithubData(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// request binary data
-	req.Header.Set("Accept", "application/octet-stream")
-	// Asset download URLs are served from api.github.com; authenticate when
-	// possible to avoid anonymous rate-limiting on shared CI runners.
-	if strings.Contains(url, "api.github.com") {
-		setGithubAuthHeaders(req)
-	}
-
-	res, err := ctxhttp.Do(ctx, http.DefaultClient, req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
-	}
-
-	readerCloser := withProgressBar(res.Body, int(res.ContentLength))
-	defer readerCloser.Close()
-
-	buf, err := io.ReadAll(readerCloser)
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
-}
-
-func getGithubDataFile(ctx context.Context, assets []Asset, suffix string) (filename string, data []byte, err error) {
-	var url string
-	for _, a := range assets {
-		if strings.HasSuffix(a.Name, suffix) {
-			url = a.URL
-			filename = a.Name
-			break
-		}
-	}
-
-	if url == "" {
-		return "", nil, fmt.Errorf("unable to find file with suffix %v", suffix)
-	}
-
-	log.Printf("download %v\n", filename)
-	data, err = getGithubData(ctx, url)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return filename, data, nil
-}
-
-func withProgressBar(r io.ReadCloser, length int) io.ReadCloser {
-	bar := pb.Simple.New(length).Start()
-	return bar.NewProxyReader(r)
-}
