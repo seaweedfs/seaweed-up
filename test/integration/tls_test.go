@@ -63,8 +63,9 @@ func TestDeployWithTLS(t *testing.T) {
 
 	masterURL := "https://172.28.0.10:9333/cluster/status"
 
-	// With CA: expect HTTP 200.
-	curlOK := exec.Command("curl", "-sk", "--cacert", caPath, "-o", "/dev/null", "-w", "%{http_code}", masterURL)
+	// With CA: expect HTTP 200. Do not pass -k here; we want curl to
+	// genuinely verify the cert chain and hostname against our CA.
+	curlOK := exec.Command("curl", "-s", "--cacert", caPath, "-o", "/dev/null", "-w", "%{http_code}", masterURL)
 	codeBytes, _ := curlOK.CombinedOutput()
 	code := strings.TrimSpace(string(codeBytes))
 	if code != "200" {

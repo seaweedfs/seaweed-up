@@ -50,10 +50,11 @@ func LoadOrGenerateCA(clusterName string) (caPEM, caKeyPEM []byte, err error) {
 	caCertPath := filepath.Join(dir, "ca.crt")
 	caKeyPath := filepath.Join(dir, "ca.key")
 
-	if certBytes, err1 := os.ReadFile(caCertPath); err1 == nil {
-		if keyBytes, err2 := os.ReadFile(caKeyPath); err2 == nil {
-			return certBytes, keyBytes, nil
-		}
+	// If both the CA cert and key already exist on disk, reuse them.
+	certBytes, certErr := os.ReadFile(caCertPath)
+	keyBytes, keyErr := os.ReadFile(caKeyPath)
+	if certErr == nil && keyErr == nil {
+		return certBytes, keyBytes, nil
 	}
 
 	caPEM, caKeyPEM, err = GenerateCA()

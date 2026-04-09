@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -110,6 +111,10 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 		return fmt.Errorf("no hosts found in cluster spec")
 	}
 
+	// Collect errors across all hosts so that a single bad host does not
+	// abort cert distribution for the rest of the cluster.
+	var hostErrs []error
+	var okCount int
 	for _, h := range hosts {
 		port := h.SSHPort
 		if port == 0 {
@@ -118,10 +123,12 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 		color.Yellow("  -> %s (%s)", h.IP, h.Role)
 		bundle, err := sutls.BuildHostBundle(caPEM, caKeyPEM, h.IP)
 		if err != nil {
-			return fmt.Errorf("build bundle for %s: %w", h.IP, err)
+			hostErrs = append(hostErrs, fmt.Errorf("build bundle for %s: %w", h.IP, err))
+			continue
 		}
 		if err := sutls.PersistHostBundle(clusterName, h.IP, bundle); err != nil {
-			return fmt.Errorf("persist bundle for %s: %w", h.IP, err)
+			hostErrs = append(hostErrs, fmt.Errorf("persist bundle for %s: %w", h.IP, err))
+			continue
 		}
 
 		address := fmt.Sprintf("%s:%d", h.IP, port)
@@ -129,8 +136,15 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 			return sutls.UploadBundle(op, h.Role, bundle)
 		})
 		if err != nil {
-			return fmt.Errorf("upload bundle to %s: %w", h.IP, err)
+			hostErrs = append(hostErrs, fmt.Errorf("upload bundle to %s: %w", h.IP, err))
+			continue
 		}
+		okCount++
+	}
+
+	if len(hostErrs) > 0 {
+		color.Red("TLS bootstrap finished with errors: %d/%d hosts succeeded", okCount, len(hosts))
+		return errors.Join(hostErrs...)
 	}
 
 	color.Green("TLS bootstrap complete for cluster %q (%d hosts)", clusterName, len(hosts))
