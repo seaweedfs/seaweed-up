@@ -45,17 +45,30 @@ func TestDeployWorker(t *testing.T) {
 	}
 	t.Logf("Deploy output: %s", output)
 
-	// Give services time to start.
-	time.Sleep(20 * time.Second)
-
 	workerHost := env.hosts[2]
 	containerName := "seaweed-up-" + workerHost.Name
 
-	cmd := exec.Command("docker", "exec", containerName, "systemctl", "is-active", "seaweed_worker0")
-	out, err := cmd.CombinedOutput()
-	state := strings.TrimSpace(string(out))
-	if err != nil || state != "active" {
-		t.Fatalf("seaweed_worker0 is not active on %s: state=%q err=%v", workerHost.IP, state, err)
+	// Poll for the worker systemd unit to become active instead of sleeping
+	// for a fixed duration, which is flaky on slow CI runners.
+	var (
+		state       string
+		lastErr     error
+		lastOut     []byte
+		deadline    = time.Now().Add(60 * time.Second)
+		pollTicker  = time.NewTicker(2 * time.Second)
+	)
+	defer pollTicker.Stop()
+	for {
+		cmd := exec.Command("docker", "exec", containerName, "systemctl", "is-active", "seaweed_worker0")
+		lastOut, lastErr = cmd.CombinedOutput()
+		state = strings.TrimSpace(string(lastOut))
+		if lastErr == nil && state == "active" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("seaweed_worker0 did not become active on %s within 60s: state=%q err=%v out=%s", workerHost.IP, state, lastErr, string(lastOut))
+		}
+		<-pollTicker.C
 	}
 	t.Logf("seaweed_worker0 is active on %s", workerHost.IP)
 }

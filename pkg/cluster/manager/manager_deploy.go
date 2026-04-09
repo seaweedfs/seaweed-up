@@ -3,8 +3,9 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"github.com/pkg/errors"
+	pkgerrors "github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
@@ -81,25 +82,29 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			}
 		}
 		var workerWg sync.WaitGroup
+		var workerMu sync.Mutex
+		var workerErrors []error
 		for index, workerSpec := range specification.WorkerServers {
 			workerWg.Add(1)
 			go func(index int, workerSpec *spec.WorkerServerSpec) {
 				defer workerWg.Done()
 				if err := m.DeployWorkerServer(admins, workerSpec, index); err != nil {
-					deployErrors = append(deployErrors, fmt.Errorf("deploy to worker server %s:%d :%v", workerSpec.Ip, workerSpec.PortSsh, err))
+					workerMu.Lock()
+					workerErrors = append(workerErrors, fmt.Errorf("deploy to worker server %s:%d :%v", workerSpec.Ip, workerSpec.PortSsh, err))
+					workerMu.Unlock()
 				}
 			}(index, workerSpec)
 		}
 		workerWg.Wait()
-		if len(deployErrors) > 0 {
-			return deployErrors[0]
+		if len(workerErrors) > 0 {
+			return errors.Join(workerErrors...)
 		}
 	}
 
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
 		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
 		if err != nil {
-			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+			return pkgerrors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
 		}
 		for index, envoySpec := range specification.EnvoyServers {
 			envoySpec.Version = utils.Nvl(envoySpec.Version, latest.Version)
