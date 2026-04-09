@@ -38,9 +38,9 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		projectRoot: projectRoot,
 		testDataDir: testDataDir,
 		hosts: []HostInfo{
-			{Name: "host1", IP: "172.29.41.10", Port: 22},
-			{Name: "host2", IP: "172.29.41.11", Port: 22},
-			{Name: "host3", IP: "172.29.41.12", Port: 22},
+			{Name: "host1", IP: "10.200.41.10", Port: 22},
+			{Name: "host2", IP: "10.200.41.11", Port: 22},
+			{Name: "host3", IP: "10.200.41.12", Port: 22},
 		},
 	}
 

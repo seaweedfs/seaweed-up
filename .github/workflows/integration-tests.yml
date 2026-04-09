@@ -39,7 +39,7 @@ jobs:
 
       - name: Create Docker network
         run: |
-          docker network create --driver bridge --subnet 172.29.41.0/24 seaweed-up-net
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
 
       - name: Start containers with docker run
         run: |
@@ -50,7 +50,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.10 \
+            --ip 172.28.0.10 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -60,7 +60,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.11 \
+            --ip 172.28.0.11 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -70,7 +70,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.12 \
+            --ip 172.28.0.12 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -142,7 +142,7 @@ jobs:
           # Wait for SSH to be ready
           echo "Waiting for SSH to be ready..."
           sleep 5
-          for ip in 172.29.41.10 172.29.41.11 172.29.41.12; do
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
             for j in {1..30}; do
               if nc -z $ip 22 2>/dev/null; then
                 echo "SSH ready on $ip"
@@ -177,7 +177,7 @@ jobs:
 
       - name: Verify SSH connectivity
         run: |
-          for ip in 172.29.41.10 172.29.41.11 172.29.41.12; do
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
             echo "Testing SSH to $ip..."
             ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 root@$ip "echo 'SSH OK to $ip'"
           done
@@ -194,7 +194,7 @@ jobs:
           sleep 15
           
           # Verify master is running
-          nc -z 172.29.41.10 9333 || (echo "Master not running" && exit 1)
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
           echo "Master server verified running"
 
       - name: Check cluster status
@@ -261,7 +261,7 @@ jobs:
       - name: Create Docker network
         working-directory: test/integration
         run: |
-          docker network create --driver bridge --subnet 172.29.41.0/24 seaweed-up-net
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
 
       - name: Start containers with docker run
         working-directory: test/integration
@@ -273,7 +273,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.10 \
+            --ip 172.28.0.10 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -283,7 +283,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.11 \
+            --ip 172.28.0.11 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -293,7 +293,7 @@ jobs:
             --privileged \
             --cgroupns=host \
             --network seaweed-up-net \
-            --ip 172.29.41.12 \
+            --ip 172.28.0.12 \
             -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
             geerlingguy/docker-ubuntu2204-ansible:latest
           
@@ -355,7 +355,7 @@ jobs:
           done
           
           sleep 5
-          for ip in 172.29.41.10 172.29.41.11 172.29.41.12; do
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
             for j in {1..30}; do
               if nc -z $ip 22 2>/dev/null; then
                 echo "SSH ready on $ip"
@@ -429,10 +429,10 @@ jobs:
           # Verify services - fail if any service is not running
           echo "=== Verifying services ==="
           FAILED=0
-          nc -z 172.29.41.10 9333 && echo "Master verified on 172.29.41.10:9333" || { echo "Master NOT running"; FAILED=1; }
-          nc -z 172.29.41.11 8080 && echo "Volume1 verified on 172.29.41.11:8080" || { echo "Volume1 NOT running"; FAILED=1; }
-          nc -z 172.29.41.12 8080 && echo "Volume2 verified on 172.29.41.12:8080" || { echo "Volume2 NOT running"; FAILED=1; }
-          nc -z 172.29.41.10 8888 && echo "Filer verified on 172.29.41.10:8888" || { echo "Filer NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 9333 && echo "Master verified on 172.28.0.10:9333" || { echo "Master NOT running"; FAILED=1; }
+          nc -z 172.28.0.11 8080 && echo "Volume1 verified on 172.28.0.11:8080" || { echo "Volume1 NOT running"; FAILED=1; }
+          nc -z 172.28.0.12 8080 && echo "Volume2 verified on 172.28.0.12:8080" || { echo "Volume2 NOT running"; FAILED=1; }
+          nc -z 172.28.0.10 8888 && echo "Filer verified on 172.28.0.10:8888" || { echo "Filer NOT running"; FAILED=1; }
           
           if [ $FAILED -eq 1 ]; then
             echo "Some services failed to start"

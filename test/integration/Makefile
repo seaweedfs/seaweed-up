@@ -77,9 +77,9 @@ status: ## Show status of all containers
 	@$(DOCKER_COMPOSE) ps
 	@echo ""
 	@echo "$(BLUE)Host Connectivity:$(NC)"
-	@nc -z 172.29.41.10 22 && echo "host1 (172.29.41.10:22): accessible" || echo "host1 (172.29.41.10:22): not accessible"
-	@nc -z 172.29.41.11 22 && echo "host2 (172.29.41.11:22): accessible" || echo "host2 (172.29.41.11:22): not accessible"
-	@nc -z 172.29.41.12 22 && echo "host3 (172.29.41.12:22): accessible" || echo "host3 (172.29.41.12:22): not accessible"
+	@nc -z 10.200.41.10 22 && echo "host1 (10.200.41.10:22): accessible" || echo "host1 (10.200.41.10:22): not accessible"
+	@nc -z 10.200.41.11 22 && echo "host2 (10.200.41.11:22): accessible" || echo "host2 (10.200.41.11:22): not accessible"
+	@nc -z 10.200.41.12 22 && echo "host3 (10.200.41.12:22): accessible" || echo "host3 (10.200.41.12:22): not accessible"
 
 # Development targets
 shell-host1: ## Open shell in host1 container
@@ -93,13 +93,13 @@ shell-host3: ## Open shell in host3 container
 
 # SSH targets (for debugging)
 ssh-host1: ## SSH into host1
-	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@172.29.41.10
+	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.200.41.10
 
 ssh-host2: ## SSH into host2
-	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@172.29.41.11
+	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.200.41.11
 
 ssh-host3: ## SSH into host3
-	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@172.29.41.12
+	@ssh -i .ssh/id_rsa_test -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@10.200.41.12
 
 # CI targets
 ci-test: ## Run tests in CI environment
