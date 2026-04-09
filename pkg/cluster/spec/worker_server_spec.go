@@ -17,14 +17,18 @@ type WorkerServerSpec struct {
 	OS      string                 `yaml:"os,omitempty"`
 }
 
-// workerReservedKeys lists option names that are derived from explicit fields
-// on WorkerServerSpec and therefore must not be overridden via the generic
-// Config map.
+// workerReservedKeys lists `weed worker` CLI option names that must not be
+// set via the generic Config map because they are either derived from an
+// explicit WorkerServerSpec field or managed by the deploy pipeline itself.
+//
+// Each entry is the exact CLI flag name (the portion after the leading `-`
+// on the `weed worker` command line) as rendered by addToBuffer.
 var workerReservedKeys = map[string]struct{}{
-	"ip":          {},
-	"port":        {},
-	"admin":       {},
-	"metricsPort": {},
+	// `admin` is always emitted by WriteToBuffer from the explicit
+	// WorkerServerSpec.Admin field (or the deploy-time fallback derived
+	// from the cluster's master servers). Allowing it to also appear in
+	// Config would produce a duplicate `-admin` flag.
+	"admin": {},
 }
 
 // WriteToBuffer writes `weed worker` CLI options to buf.

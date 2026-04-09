@@ -72,20 +72,24 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("worker") && len(specification.WorkerServers) > 0 {
-		var admins []string
-		for _, w := range specification.WorkerServers {
-			if w.Admin != "" {
-				admins = append(admins, w.Admin)
-				break
+		// Resolve the default admin endpoint used when a worker spec does not
+		// supply one of its own. Precedence:
+		//   1. The individual WorkerServerSpec.Admin field (handled inside
+		//      WorkerServerSpec.WriteToBuffer) — wins per-worker.
+		//   2. The first master server in the cluster spec, on the standard
+		//      admin port 23646 (fallback default for all workers below).
+		//   3. Empty — in which case workers without an explicit Admin are
+		//      rejected with a clear error before any deploy work happens.
+		var defaultAdmins []string
+		if len(specification.MasterServers) > 0 {
+			defaultAdmins = append(defaultAdmins, fmt.Sprintf("%s:%d", specification.MasterServers[0].Ip, 23646))
+		}
+		for _, workerSpec := range specification.WorkerServers {
+			if workerSpec.Admin == "" && len(defaultAdmins) == 0 {
+				return fmt.Errorf("worker %s:%d requires an admin endpoint: set worker_servers[].admin or define at least one master_server", workerSpec.Ip, workerSpec.PortSsh)
 			}
 		}
-		if len(admins) == 0 {
-			// Default to the first master host on the standard admin port 23646.
-			for _, masterSpec := range specification.MasterServers {
-				admins = append(admins, fmt.Sprintf("%s:%d", masterSpec.Ip, 23646))
-				break
-			}
-		}
+
 		var workerWg sync.WaitGroup
 		var workerMu sync.Mutex
 		var workerErrors []error
@@ -93,7 +97,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			workerWg.Add(1)
 			go func(index int, workerSpec *spec.WorkerServerSpec) {
 				defer workerWg.Done()
-				if err := m.DeployWorkerServer(admins, workerSpec, index); err != nil {
+				if err := m.DeployWorkerServer(defaultAdmins, workerSpec, index); err != nil {
 					workerMu.Lock()
 					workerErrors = append(workerErrors, fmt.Errorf("deploy to worker server %s:%d :%v", workerSpec.Ip, workerSpec.PortSsh, err))
 					workerMu.Unlock()
