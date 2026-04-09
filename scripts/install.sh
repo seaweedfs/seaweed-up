@@ -111,7 +111,16 @@ install_dependencies() {
 }
 
 download_and_install() {
-  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$(${BIN_DIR}/${BINARY} version | cut -d' ' -f3)" = "${SEAWEED_VERSION}" ]; then
+  # Enterprise weed builds self-report as "<tag>-enterprise" while the
+  # release is tagged as plain "<tag>", so strip any "-enterprise" suffix
+  # before comparing against the target version — otherwise every deploy
+  # to an enterprise host re-downloads the tarball needlessly.
+  installedVersion=""
+  if [ -x "${BIN_DIR}/${BINARY}" ]; then
+    installedVersion=$(${BIN_DIR}/${BINARY} version | cut -d' ' -f3)
+    installedVersion=${installedVersion%-enterprise}
+  fi
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$installedVersion" = "${SEAWEED_VERSION}" ]; then
     info "Seaweed binary already installed in ${BIN_DIR}, skipping downloading and installing binary"
   else
     OS="linux"
