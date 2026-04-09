@@ -54,6 +54,10 @@ type componentHooks struct {
 	stop func() error
 	// writeConfig writes the component-specific CLI options to buf.
 	writeConfig func(buf *bytes.Buffer)
+	// prepareRemote runs component-specific host prep inside the SSH session
+	// (e.g. creating volume -dir paths) before deployComponentInstance runs.
+	// May be nil.
+	prepareRemote func(op operator.CommandOperator) error
 }
 
 // UpgradeCluster performs a rolling upgrade of the cluster to targetVersion.
@@ -189,10 +193,11 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters []st
 	case "volume":
 		vs := specification.VolumeServers[t.index]
 		hooks = componentHooks{
-			serviceName: "volume",
-			sshAddr:     net.JoinHostPort(vs.Ip, strconv.Itoa(vs.PortSsh)),
-			stop:        func() error { return m.StopVolumeServer(vs, t.index) },
-			writeConfig: func(buf *bytes.Buffer) { vs.WriteToBuffer(masters, buf) },
+			serviceName:   "volume",
+			sshAddr:       net.JoinHostPort(vs.Ip, strconv.Itoa(vs.PortSsh)),
+			stop:          func() error { return m.StopVolumeServer(vs, t.index) },
+			writeConfig:   func(buf *bytes.Buffer) { vs.WriteToBuffer(masters, buf) },
+			prepareRemote: func(op operator.CommandOperator) error { return m.ensureVolumeFolders(op, vs) },
 		}
 	case "filer":
 		fs := specification.FilerServers[t.index]
@@ -228,6 +233,11 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 	return operator.ExecuteRemote(hooks.sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 		var buf bytes.Buffer
 		hooks.writeConfig(&buf)
+		if hooks.prepareRemote != nil {
+			if err := hooks.prepareRemote(op); err != nil {
+				return err
+			}
+		}
 		if err := m.deployComponentInstance(op, hooks.serviceName, componentInstance, &buf); err != nil {
 			return err
 		}
