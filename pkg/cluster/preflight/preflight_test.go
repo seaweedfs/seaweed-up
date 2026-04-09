@@ -83,7 +83,7 @@ func TestBuildHostPlans(t *testing.T) {
 			{Ip: "10.0.0.3"},
 		},
 	}
-	plans := BuildHostPlans(s)
+	plans := BuildHostPlans(s, 0)
 	if len(plans) != 3 {
 		t.Fatalf("want 3 plans, got %d", len(plans))
 	}
@@ -105,8 +105,32 @@ func TestBuildHostPlans(t *testing.T) {
 	}
 
 	h3 := m["10.0.0.3"]
-	if !reflect.DeepEqual(h3.Ports, []int{8001}) {
-		t.Errorf("envoy ports=%v", h3.Ports)
+	// Envoy host: spec-derived forwarded ports + default admin port 9901.
+	wantEnvoyPorts := []int{7333, 8333, 8888, 9901, 18888}
+	sort.Ints(h3.Ports)
+	if !reflect.DeepEqual(h3.Ports, wantEnvoyPorts) {
+		t.Errorf("envoy ports=%v want %v", h3.Ports, wantEnvoyPorts)
+	}
+}
+
+func TestBuildHostPlansDefaultSSHPort(t *testing.T) {
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1"}},
+	}
+	plans := BuildHostPlans(s, 2222)
+	if len(plans) != 1 || plans[0].SSHPort != 2222 {
+		t.Fatalf("expected defaultSSHPort 2222 to propagate, got %+v", plans)
+	}
+	// Zero default should fall back to DefaultSSHPort.
+	plans = BuildHostPlans(s, 0)
+	if plans[0].SSHPort != DefaultSSHPort {
+		t.Fatalf("expected fallback to %d, got %d", DefaultSSHPort, plans[0].SSHPort)
+	}
+	// Spec-set port wins.
+	s.MasterServers[0].PortSsh = 2200
+	plans = BuildHostPlans(s, 2222)
+	if plans[0].SSHPort != 2200 {
+		t.Fatalf("expected spec PortSsh to win, got %d", plans[0].SSHPort)
 	}
 }
 

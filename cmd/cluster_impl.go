@@ -122,7 +122,9 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	if opts.Check {
 		color.Cyan("🔍 Running preflight checks...")
 		factory := preflight.OperatorSSHFactory(mgr.User, mgr.IdentityFile, "")
-		results := preflight.Run(cmd.Context(), clusterSpec, factory)
+		results := preflight.RunWithOptions(cmd.Context(), clusterSpec, factory, preflight.Options{
+			DefaultSSHPort: opts.SSHPort,
+		})
 		preflight.Pretty(os.Stdout, results)
 		if preflight.HasFailure(results) {
 			return fmt.Errorf("preflight checks failed; aborting deploy")

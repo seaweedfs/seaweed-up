@@ -76,7 +76,9 @@ func runClusterCheck(cmd *cobra.Command, opts *ClusterCheckOptions) error {
 	}
 
 	factory := preflight.OperatorSSHFactory(user, identity, opts.Password)
-	results := preflight.Run(cmd.Context(), clusterSpec, factory)
+	results := preflight.RunWithOptions(cmd.Context(), clusterSpec, factory, preflight.Options{
+		DefaultSSHPort: opts.SSHPort,
+	})
 
 	if opts.JSONOutput {
 		enc := json.NewEncoder(os.Stdout)

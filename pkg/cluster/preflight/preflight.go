@@ -7,12 +7,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
+	"golang.org/x/sync/errgroup"
 )
+
+// DefaultSSHPort is the fallback SSH port when the spec does not set one.
+const DefaultSSHPort = 22
+
+// DefaultCheckConcurrency is the default number of hosts checked in parallel.
+const DefaultCheckConcurrency = 8
+
+// envoyAdminDefaultPort is the envoy admin listener port used when the spec
+// does not expose a configurable value. Derived from pkg/cluster/manager/envoy.yaml.tpl.
+const envoyAdminDefaultPort = 9901
 
 // Result is the outcome of a single preflight check on a single host.
 type Result struct {
@@ -54,8 +66,12 @@ type Check interface {
 }
 
 // BuildHostPlans converts a cluster spec into a per-host plan describing all
-// ports and components scheduled on that host.
-func BuildHostPlans(s *spec.Specification) []HostPlan {
+// ports and components scheduled on that host. The defaultSSHPort is used as
+// the fallback when the spec entry does not set a per-host SSH port.
+func BuildHostPlans(s *spec.Specification, defaultSSHPort int) []HostPlan {
+	if defaultSSHPort <= 0 {
+		defaultSSHPort = DefaultSSHPort
+	}
 	dataDir := s.GlobalOptions.DataDir
 	if dataDir == "" {
 		dataDir = "/opt/seaweed"
@@ -103,7 +119,7 @@ func BuildHostPlans(s *spec.Specification) []HostPlan {
 	for _, m := range s.MasterServers {
 		sshPort := m.PortSsh
 		if sshPort == 0 {
-			sshPort = 22
+			sshPort = defaultSSHPort
 		}
 		p := get(m.Ip, sshPort)
 		port := m.Port
@@ -127,7 +143,7 @@ func BuildHostPlans(s *spec.Specification) []HostPlan {
 	for _, v := range s.VolumeServers {
 		sshPort := v.PortSsh
 		if sshPort == 0 {
-			sshPort = 22
+			sshPort = defaultSSHPort
 		}
 		p := get(v.Ip, sshPort)
 		port := v.Port
@@ -151,7 +167,7 @@ func BuildHostPlans(s *spec.Specification) []HostPlan {
 	for _, f := range s.FilerServers {
 		sshPort := f.PortSsh
 		if sshPort == 0 {
-			sshPort = 22
+			sshPort = defaultSSHPort
 		}
 		p := get(f.Ip, sshPort)
 		port := f.Port
@@ -180,10 +196,34 @@ func BuildHostPlans(s *spec.Specification) []HostPlan {
 	for _, e := range s.EnvoyServers {
 		sshPort := e.PortSsh
 		if sshPort == 0 {
-			sshPort = 22
+			sshPort = defaultSSHPort
 		}
 		p := get(e.Ip, sshPort)
-		addPort(p, 8001)
+		// Forwarded listener ports: derive from spec where set, fall back to
+		// the documented defaults used by pkg/cluster/spec/envoy_server_spec.go.
+		filerPort := e.FilerPort
+		if filerPort == 0 {
+			filerPort = 8888
+		}
+		filerGrpcPort := e.FilerGrpcPort
+		if filerGrpcPort == 0 {
+			filerGrpcPort = 18888
+		}
+		s3Port := e.S3Port
+		if s3Port == 0 {
+			s3Port = 8333
+		}
+		webdavPort := e.WebdavPort
+		if webdavPort == 0 {
+			webdavPort = 7333
+		}
+		addPort(p, filerPort)
+		addPort(p, filerGrpcPort)
+		addPort(p, s3Port)
+		addPort(p, webdavPort)
+		// Envoy admin listener - not configurable in the current spec, so use
+		// the default documented in manager/envoy.yaml.tpl.
+		addPort(p, envoyAdminDefaultPort)
 		addComp(p, "envoy")
 	}
 
@@ -258,19 +298,36 @@ func ParseFreeKB(out string) (int64, error) {
 
 // --- concrete checks ---
 
-type sshSudoCheck struct{}
+// sshCheck verifies we successfully opened a session to the host. Because the
+// SSH factory is invoked before any per-host check runs, reaching this check
+// at all means the connection itself is up; we still emit an explicit OK
+// result so reports make connectivity status visible.
+type sshCheck struct{}
 
-func (sshSudoCheck) Name() string { return "ssh-sudo" }
-func (sshSudoCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
+func (sshCheck) Name() string { return "ssh" }
+func (sshCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
+	// A trivial command confirms the session can execute remote commands.
+	if _, err := r.Output("true"); err != nil {
+		return Result{Name: "ssh", Host: plan.Host, OK: false, Detail: "ssh session unusable: " + err.Error()}
+	}
+	return Result{Name: "ssh", Host: plan.Host, OK: true, Detail: "ssh session ok"}
+}
+
+// sudoCheck verifies passwordless sudo works for the SSH user. This is only
+// executed when the underlying ssh session is already usable.
+type sudoCheck struct{}
+
+func (sudoCheck) Name() string { return "sudo" }
+func (sudoCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
 	out, err := r.Output("sudo -n true 2>&1 || true")
 	if err != nil {
-		return Result{Name: "ssh-sudo", Host: plan.Host, OK: false, Detail: err.Error()}
+		return Result{Name: "sudo", Host: plan.Host, OK: false, Detail: err.Error()}
 	}
 	txt := strings.TrimSpace(string(out))
 	if txt == "" {
-		return Result{Name: "ssh-sudo", Host: plan.Host, OK: true, Detail: "sudo -n ok"}
+		return Result{Name: "sudo", Host: plan.Host, OK: true, Detail: "sudo -n ok"}
 	}
-	return Result{Name: "ssh-sudo", Host: plan.Host, OK: false, Detail: "sudo not passwordless: " + txt}
+	return Result{Name: "sudo", Host: plan.Host, OK: false, Detail: "sudo not passwordless: " + txt}
 }
 
 type diskSpaceCheck struct{}
@@ -333,7 +390,12 @@ type timeSkewCheck struct{}
 
 func (timeSkewCheck) Name() string { return "time-skew" }
 func (timeSkewCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
+	// Sandwich the remote call between two local timestamps so that we can
+	// compare against the midpoint of the local interval. This removes one-way
+	// network latency from the measured skew.
+	localBefore := time.Now().Unix()
 	out, err := r.Output("date +%s")
+	localAfter := time.Now().Unix()
 	if err != nil {
 		return Result{Name: "time-skew", Host: plan.Host, OK: false, Detail: err.Error()}
 	}
@@ -341,20 +403,21 @@ func (timeSkewCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
 	if err != nil {
 		return Result{Name: "time-skew", Host: plan.Host, OK: false, Detail: err.Error()}
 	}
-	local := time.Now().Unix()
-	diff := remote - local
+	midpoint := (localBefore + localAfter) / 2
+	diff := remote - midpoint
 	if diff < 0 {
 		diff = -diff
 	}
-	if diff >= 2 {
+	const toleranceSeconds int64 = 2
+	if diff > toleranceSeconds {
 		return Result{
 			Name: "time-skew", Host: plan.Host, OK: false,
-			Detail: fmt.Sprintf("clock skew %ds >= 2s", diff),
+			Detail: fmt.Sprintf("clock skew %ds > %ds tolerance", diff, toleranceSeconds),
 		}
 	}
 	return Result{
 		Name: "time-skew", Host: plan.Host, OK: true,
-		Detail: fmt.Sprintf("skew %ds", diff),
+		Detail: fmt.Sprintf("skew %ds (tolerance %ds)", diff, toleranceSeconds),
 	}
 }
 
@@ -428,7 +491,8 @@ func archEqual(spec, remote string) bool {
 // DefaultChecks returns the ordered list of checks executed by Run.
 func DefaultChecks() []Check {
 	return []Check{
-		sshSudoCheck{},
+		sshCheck{},
+		sudoCheck{},
 		diskSpaceCheck{},
 		portsFreeCheck{},
 		timeSkewCheck{},
@@ -437,28 +501,90 @@ func DefaultChecks() []Check {
 	}
 }
 
-// Run executes every default check across every host in the spec and returns
-// the full list of results. The SSH factory is used to open one Runner per
-// host. If the factory itself fails, a synthetic ssh-sudo FAIL is recorded
-// for the affected host.
+// Options customises a preflight run.
+type Options struct {
+	// DefaultSSHPort is the fallback SSH port for spec entries that do not set
+	// one. Defaults to DefaultSSHPort.
+	DefaultSSHPort int
+	// Concurrency caps how many hosts are checked in parallel. Zero means
+	// DefaultCheckConcurrency; negative values mean unlimited.
+	Concurrency int
+}
+
+// Run executes every default check across every host in the spec using the
+// default options. It is kept for backward compatibility with existing
+// callers; prefer RunWithOptions for new code.
 func Run(ctx context.Context, s *spec.Specification, factory SSHFactory) []Result {
-	plans := BuildHostPlans(s)
+	return RunWithOptions(ctx, s, factory, Options{})
+}
+
+// RunWithOptions executes every default check across every host in the spec
+// and returns the full list of results, ordered by host. Hosts are processed
+// concurrently up to opts.Concurrency. The SSH factory is used to open one
+// Runner per host. If the factory itself fails, synthetic FAIL results are
+// recorded against the affected host: a "ssh" failure for connectivity and
+// "skipped" entries for every check that could not execute.
+func RunWithOptions(ctx context.Context, s *spec.Specification, factory SSHFactory, opts Options) []Result {
+	defaultSSHPort := opts.DefaultSSHPort
+	if defaultSSHPort <= 0 {
+		defaultSSHPort = DefaultSSHPort
+	}
+	concurrency := opts.Concurrency
+	if concurrency == 0 {
+		concurrency = DefaultCheckConcurrency
+	}
+
+	plans := BuildHostPlans(s, defaultSSHPort)
 	checks := DefaultChecks()
-	var results []Result
-	for _, plan := range plans {
-		plan := plan
-		err := factory(ctx, plan.Host, plan.SSHPort, func(r Runner) error {
-			for _, c := range checks {
-				results = append(results, c.Run(ctx, plan, r))
+
+	// Preserve host ordering in the output by writing into a per-host slot.
+	perHost := make([][]Result, len(plans))
+
+	g, gctx := errgroup.WithContext(ctx)
+	if concurrency > 0 {
+		g.SetLimit(concurrency)
+	}
+	var mu sync.Mutex // guards perHost writes (index writes are disjoint but
+	// append-safety makes the intent explicit).
+	for i, plan := range plans {
+		i, plan := i, plan
+		g.Go(func() error {
+			var hostResults []Result
+			err := factory(gctx, plan.Host, plan.SSHPort, func(r Runner) error {
+				for _, c := range checks {
+					hostResults = append(hostResults, c.Run(gctx, plan, r))
+				}
+				return nil
+			})
+			if err != nil {
+				// Connection/auth failure: report as an "ssh" failure and
+				// mark every remaining check as skipped so the report makes
+				// it obvious that the sudo check did not actually run.
+				hostResults = []Result{{
+					Name: "ssh", Host: plan.Host, OK: false,
+					Detail: "ssh connect failed: " + err.Error(),
+				}}
+				for _, c := range checks {
+					if c.Name() == "ssh" {
+						continue
+					}
+					hostResults = append(hostResults, Result{
+						Name: c.Name(), Host: plan.Host, OK: false,
+						Detail: "skipped: ssh unavailable",
+					})
+				}
 			}
+			mu.Lock()
+			perHost[i] = hostResults
+			mu.Unlock()
 			return nil
 		})
-		if err != nil {
-			results = append(results, Result{
-				Name: "ssh-sudo", Host: plan.Host, OK: false,
-				Detail: "ssh connect failed: " + err.Error(),
-			})
-		}
+	}
+	_ = g.Wait()
+
+	var results []Result
+	for _, hr := range perHost {
+		results = append(results, hr...)
 	}
 	return results
 }
