@@ -1,0 +1,23 @@
+# Single-host cluster spec used by the host prep integration test.
+# Only the host list matters for `cluster prepare`; component specifics are
+# included so the spec validates via Specification.Validate().
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+master_servers:
+  - ip: 172.28.0.10
+    port: 9333
+
+volume_servers:
+  - ip: 172.28.0.10
+    port: 8080
+    folders:
+      - folder: /opt/seaweed/vol1
+        disk: ""
+
+filer_servers:
+  - ip: 172.28.0.10
+    port: 8888

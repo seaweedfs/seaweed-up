@@ -21,6 +21,12 @@ func (m *Manager) shouldInstall(c string) bool {
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	m.prepare(specification)
 
+	if m.HostPrep {
+		if err := m.PrepareAllHosts(specification); err != nil {
+			return err
+		}
+	}
+
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
 		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))

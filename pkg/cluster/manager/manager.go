@@ -14,6 +14,7 @@ type Manager struct {
 	Version            string
 	SshPort            int
 	PrepareVolumeDisks bool
+	HostPrep           bool
 	ForceRestart       bool
 
 	skipConfig bool
