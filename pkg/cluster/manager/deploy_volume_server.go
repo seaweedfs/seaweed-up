@@ -24,6 +24,19 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 			}
 		}
 
+		// Ensure the configured data folders exist before the volume
+		// server starts. Otherwise the service crash-loops on
+		// "Check Data Folder(-dir) Writable ... no such file or directory"
+		// and the filer's gRPC calls to assign/write data time out.
+		for _, folder := range volumeServerSpec.Folders {
+			if folder == nil || folder.Folder == "" {
+				continue
+			}
+			if err := m.sudo(op, fmt.Sprintf("mkdir -p %s", folder.Folder)); err != nil {
+				return fmt.Errorf("create volume folder %s: %v", folder.Folder, err)
+			}
+		}
+
 		return m.deployComponentInstance(op, component, componentInstance, &buf)
 
 	})
