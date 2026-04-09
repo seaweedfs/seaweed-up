@@ -77,6 +77,12 @@ func (m *Manager) PrepareAllHosts(specification *spec.Specification) error {
 	for _, s := range specification.FilerServers {
 		add(s.Ip, s.PortSsh)
 	}
+	for _, s := range specification.S3Servers {
+		add(s.Ip, s.PortSsh)
+	}
+	for _, s := range specification.AdminServers {
+		add(s.Ip, s.PortSsh)
+	}
 	for _, s := range specification.EnvoyServers {
 		add(s.Ip, s.PortSsh)
 	}

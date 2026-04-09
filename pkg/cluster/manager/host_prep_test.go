@@ -161,6 +161,87 @@ func TestPrepareAllHostsDeduplicatesByIP(t *testing.T) {
 	}
 }
 
+func TestPrepareAllHostsIncludesAllComponentTypes(t *testing.T) {
+	// A topology with an S3-only host (and an admin-only host) must still
+	// have those hosts prepared, in addition to the usual master/volume/filer
+	// and envoy hosts. Colocated hosts across component types should be
+	// deduped by (ip, sshPort).
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		VolumeServers: []*spec.VolumeServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		FilerServers:  []*spec.FilerServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		S3Servers:     []*spec.S3ServerSpec{{Ip: "10.0.0.3", PortSsh: 22}},
+		AdminServers:  []*spec.AdminServerSpec{{Ip: "10.0.0.4", PortSsh: 22}},
+		EnvoyServers:  []*spec.EnvoyServerSpec{{Ip: "10.0.0.2", PortSsh: 2222}},
+	}
+
+	m := NewManager()
+	type call struct {
+		ip   string
+		port int
+	}
+	var calls []call
+	m.prepareHostAddressFn = func(ip string, sshPort int) error {
+		calls = append(calls, call{ip: ip, port: sshPort})
+		return nil
+	}
+
+	if err := m.PrepareAllHosts(s); err != nil {
+		t.Fatalf("PrepareAllHosts returned error: %v", err)
+	}
+
+	want := map[call]bool{
+		{ip: "10.0.0.1", port: 22}:   false,
+		{ip: "10.0.0.2", port: 2222}: false,
+		{ip: "10.0.0.3", port: 22}:   false,
+		{ip: "10.0.0.4", port: 22}:   false,
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d unique host prepare calls, got %d: %+v", len(want), len(calls), calls)
+	}
+	for _, c := range calls {
+		if _, ok := want[c]; !ok {
+			t.Errorf("unexpected prepare call: %+v", c)
+			continue
+		}
+		if want[c] {
+			t.Errorf("duplicate prepare call: %+v", c)
+		}
+		want[c] = true
+	}
+	for c, seen := range want {
+		if !seen {
+			t.Errorf("expected prepare call for %+v, not seen", c)
+		}
+	}
+}
+
+func TestPrepareAllHostsS3OnlyHost(t *testing.T) {
+	// Regression: an S3 gateway on a dedicated host must be prepared.
+	s := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
+		S3Servers:     []*spec.S3ServerSpec{{Ip: "10.0.0.9", PortSsh: 22}},
+	}
+	m := NewManager()
+	var ips []string
+	m.prepareHostAddressFn = func(ip string, sshPort int) error {
+		ips = append(ips, ip)
+		return nil
+	}
+	if err := m.PrepareAllHosts(s); err != nil {
+		t.Fatalf("PrepareAllHosts returned error: %v", err)
+	}
+	var sawS3 bool
+	for _, ip := range ips {
+		if ip == "10.0.0.9" {
+			sawS3 = true
+		}
+	}
+	if !sawS3 {
+		t.Errorf("expected S3-only host 10.0.0.9 to be prepared, calls: %v", ips)
+	}
+}
+
 func TestPrepareAllHostsPropagatesError(t *testing.T) {
 	s := &spec.Specification{
 		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", PortSsh: 22}},
