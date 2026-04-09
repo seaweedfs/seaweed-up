@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -60,10 +61,11 @@ type ClusterScaleOutOptions struct {
 }
 
 type ClusterScaleInOptions struct {
-	ConfigFile  string
-	RemoveNodes []string
-	Identity    string
-	SkipConfirm bool
+	ConfigFile   string
+	RemoveNodes  []string
+	Identity     string
+	SkipConfirm  bool
+	DrainTimeout time.Duration
 }
 
 type ClusterDestroyOptions struct {
@@ -304,14 +306,30 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		return err
 	}
 
-	// Pick the first master as the drain coordinator.
-	master := clusterSpec.MasterServers[0]
-	masterPort := nonZero(master.Port, 9333)
+	// Pick a healthy master as the drain coordinator. Iterate through all
+	// configured masters and use the first that responds to a quick health
+	// check, so scale-in still works when masters[0] is down.
 	scheme := "http://"
 	if clusterSpec.GlobalOptions.TLSEnabled {
 		scheme = "https://"
 	}
-	masterAddr := fmt.Sprintf("%s%s:%d", scheme, master.Ip, masterPort)
+	var master *spec.MasterServerSpec
+	var masterPort int
+	var masterAddr string
+	for _, candidate := range clusterSpec.MasterServers {
+		port := nonZero(candidate.Port, 9333)
+		addr := fmt.Sprintf("%s%s:%d", scheme, candidate.Ip, port)
+		if healthyMaster(addr) {
+			master = candidate
+			masterPort = port
+			masterAddr = addr
+			break
+		}
+		color.Yellow("master %s did not respond to health check; trying next", addr)
+	}
+	if master == nil {
+		return fmt.Errorf("no responsive master found among %d configured master(s)", len(clusterSpec.MasterServers))
+	}
 
 	fmt.Printf("Removing %d volume server(s) via master %s:\n", len(targets), masterAddr)
 	for _, t := range targets {
@@ -334,7 +352,11 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		nodeAddr := fmt.Sprintf("%s:%d", t.spec.Ip, nonZero(t.spec.Port, 8080))
 		color.Cyan("🫧  Draining volumes from %s ...", nodeAddr)
 
-		drainErr := scale.Drain(masterAddr, nodeAddr, 30*time.Minute)
+		drainTimeout := opts.DrainTimeout
+		if drainTimeout <= 0 {
+			drainTimeout = 30 * time.Minute
+		}
+		drainErr := scale.Drain(masterAddr, nodeAddr, drainTimeout)
 		if drainErr != nil {
 			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
 			if fbErr := drainViaWeedShell(master.Ip, master.PortSsh, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
@@ -459,20 +481,30 @@ func removeVolumeNode(vs *spec.VolumeServerSpec, index int, user, identity, sudo
 	instance := fmt.Sprintf("volume%d", index)
 	unit := fmt.Sprintf("seaweed_%s.service", instance)
 
+	// Guard against catastrophic rm: never allow "/" or empty base dirs.
+	if !safeRemoveDir(dataDir) {
+		return fmt.Errorf("refusing to remove instance under unsafe data_dir %q", dataDir)
+	}
+	if !safeRemoveDir(confDir) {
+		return fmt.Errorf("refusing to remove options file under unsafe config_dir %q", confDir)
+	}
+
 	return operator.ExecuteRemote(host, user, identity, sudoPass, func(op operator.CommandOperator) error {
 		prefix := ""
 		if sudoPass != "" {
-			prefix = fmt.Sprintf("echo '%s' | sudo -S ", sudoPass)
+			prefix = fmt.Sprintf("echo %s | sudo -S ", shellSingleQuote(sudoPass))
 		} else if user != "root" {
 			prefix = "sudo "
 		}
+		instanceDataPath := strings.TrimRight(dataDir, "/") + "/" + instance
+		instanceOptionsPath := strings.TrimRight(confDir, "/") + "/" + instance + ".options"
 		cmds := []string{
 			fmt.Sprintf("%ssystemctl stop %s || true", prefix, unit),
 			fmt.Sprintf("%ssystemctl disable %s || true", prefix, unit),
 			fmt.Sprintf("%srm -f /etc/systemd/system/%s", prefix, unit),
 			fmt.Sprintf("%ssystemctl daemon-reload || true", prefix),
-			fmt.Sprintf("%srm -rf %s/%s", prefix, dataDir, instance),
-			fmt.Sprintf("%srm -f %s/%s.options", prefix, confDir, instance),
+			fmt.Sprintf("%srm -rf %s", prefix, shellSingleQuote(instanceDataPath)),
+			fmt.Sprintf("%srm -f %s", prefix, shellSingleQuote(instanceOptionsPath)),
 		}
 		for _, c := range cmds {
 			if err := op.Execute(c); err != nil {
@@ -535,4 +567,48 @@ func loadClusterSpec(configFile string) (*spec.Specification, error) {
 	}
 
 	return clusterSpec, nil
+}
+
+// shellSingleQuote safely wraps s for use as a single-quoted shell argument.
+// Any embedded single quote is escaped as '\'' (close-quote, literal quote,
+// reopen-quote). Duplicated from pkg/cluster/manager/manager_lifecycle.go to
+// avoid introducing an import cycle between cmd and manager.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// safeRemoveDir rejects obviously dangerous base directories so a misconfigured
+// data_dir/config_dir cannot turn scale-in into `rm -rf /...`.
+func safeRemoveDir(dir string) bool {
+	d := strings.TrimSpace(dir)
+	if d == "" {
+		return false
+	}
+	if d == "/" {
+		return false
+	}
+	// Require an absolute path with at least one non-empty segment.
+	if !strings.HasPrefix(d, "/") {
+		return false
+	}
+	trimmed := strings.Trim(d, "/")
+	return trimmed != ""
+}
+
+// healthyMaster performs a fast best-effort GET against a master's
+// /cluster/status endpoint. It returns true only if the endpoint responds
+// with a 2xx within a short timeout. This is used by scale-in to pick a
+// responsive master out of the configured list.
+func healthyMaster(masterURL string) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(masterURL, "/")+"/cluster/status", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }

@@ -105,7 +105,10 @@ func postNode(client HTTPClient, endpoint, node string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read drain response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("POST %s: status %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
