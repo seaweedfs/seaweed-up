@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"syscall"
 	"time"
@@ -286,6 +291,17 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		}
 	}
 
+	// Probe the currently-running cluster version so that rollback has a target
+	// to restore to. If probing fails we proceed with previousVersion="" and
+	// rollback will be disabled for this run.
+	if current, err := probeCurrentClusterVersion(clusterSpec); err != nil {
+		color.Yellow("⚠️  Could not determine current cluster version (%v); rollback will be disabled.", err)
+		mgr.Version = ""
+	} else {
+		color.Cyan("ℹ️  Current cluster version detected: %s", current)
+		mgr.Version = current
+	}
+
 	upgradeOpts := manager.UpgradeOptions{
 		RollbackOnFailure: opts.RollbackOnFailure,
 		DryRun:            opts.DryRun,
@@ -302,6 +318,83 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		color.Green("✅ Cluster upgraded to %s", opts.Version)
 	}
 	return nil
+}
+
+// versionRegex captures semver-ish version tokens like "3.64" or "v3.64.1".
+var versionRegex = regexp.MustCompile(`v?\d+\.\d+(?:\.\d+)?`)
+
+// probeCurrentClusterVersion asks one of the master hosts for its running
+// version. It tries /cluster/status first and falls back to /dir/status,
+// looking in both the JSON body and the Server response header.
+//
+// TODO: plumb the cluster CA bundle through so we can set
+// InsecureSkipVerify=false. For now we intentionally skip verification so
+// upgrades work on self-signed clusters out of the box.
+func probeCurrentClusterVersion(clusterSpec *spec.Specification) (string, error) {
+	if len(clusterSpec.MasterServers) == 0 {
+		return "", fmt.Errorf("no master servers in spec")
+	}
+	scheme := "http"
+	if clusterSpec.GlobalOptions.TLSEnabled {
+		scheme = "https"
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, //nolint:gosec // see TODO above
+			},
+		},
+	}
+	var lastErr error
+	for _, ms := range clusterSpec.MasterServers {
+		for _, path := range []string{"/cluster/status", "/dir/status"} {
+			url := fmt.Sprintf("%s://%s:%d%s", scheme, ms.Ip, ms.Port, path)
+			req, err := http.NewRequest(http.MethodGet, url, nil)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				lastErr = fmt.Errorf("status %d from %s", resp.StatusCode, url)
+				continue
+			}
+			// Try common JSON fields.
+			var payload map[string]interface{}
+			if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
+				for _, key := range []string{"Version", "version"} {
+					if v, ok := payload[key].(string); ok && v != "" {
+						if m := versionRegex.FindString(v); m != "" {
+							return m, nil
+						}
+						return v, nil
+					}
+				}
+			}
+			// Fall back to the Server response header.
+			if s := resp.Header.Get("Server"); s != "" {
+				if m := versionRegex.FindString(s); m != "" {
+					return m, nil
+				}
+			}
+			// Last-ditch: regex scan the raw body.
+			if m := versionRegex.FindString(string(body)); m != "" {
+				return m, nil
+			}
+			lastErr = fmt.Errorf("no version found in response from %s", url)
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no master responded")
+	}
+	return "", lastErr
 }
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {
