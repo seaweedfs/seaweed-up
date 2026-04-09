@@ -18,7 +18,28 @@ func (m *Manager) shouldInstall(c string) bool {
 	return m.ComponentToDeploy == "" || m.ComponentToDeploy == c
 }
 
+// validateS3Prerequisites ensures that any S3 gateway in the spec has a filer
+// it can talk to — either via an explicit `filer:` on the S3 entry, or via a
+// filer_servers section that the deploy logic can default to.
+func validateS3Prerequisites(specification *spec.Specification) error {
+	if len(specification.S3Servers) == 0 {
+		return nil
+	}
+	if len(specification.FilerServers) > 0 {
+		return nil
+	}
+	for _, s3 := range specification.S3Servers {
+		if s3.Filer == "" {
+			return fmt.Errorf("invalid cluster spec: S3 gateway requires a filer; define filer_servers or set `filer:` on each s3_servers entry")
+		}
+	}
+	return nil
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
+	if err := validateS3Prerequisites(specification); err != nil {
+		return err
+	}
 	m.prepare(specification)
 
 	var masters []string

@@ -48,7 +48,7 @@ func (m *Manager) deployS3Instance(op operator.CommandOperator, component, compo
 	defer func() { _ = op.Execute("rm -rf " + dir) }()
 
 	if err := op.Execute("mkdir -p " + dir + "/config"); err != nil {
-		return fmt.Errorf("error received during installation: %s", err)
+		return fmt.Errorf("error received during installation: %w", err)
 	}
 
 	data := map[string]interface{}{
@@ -73,48 +73,49 @@ func (m *Manager) deployS3Instance(op operator.CommandOperator, component, compo
 	}
 
 	if err := op.Upload(installScript, fmt.Sprintf("%s/install_%s.sh", dir, componentInstance), "0755"); err != nil {
-		return fmt.Errorf("error received during upload install script: %s", err)
+		return fmt.Errorf("error received during upload install script: %w", err)
 	}
 
 	if err := op.Upload(cliOptions, fmt.Sprintf("%s/config/%s.options", dir, component), "0644"); err != nil {
-		return fmt.Errorf("error received during upload %s.options: %s", component, err)
+		return fmt.Errorf("error received during upload %s.options: %w", component, err)
 	}
 
 	if s3Config != nil {
 		if err := op.Upload(s3Config, fmt.Sprintf("%s/config/s3.json", dir), "0644"); err != nil {
-			return fmt.Errorf("error received during upload s3.json: %s", err)
+			return fmt.Errorf("error received during upload s3.json: %w", err)
 		}
 	}
 
 	info("Installing " + componentInstance + "...")
 	if err := op.Execute(fmt.Sprintf("cat %s/install_%s.sh | SUDO_PASS=\"%s\" sh -\n", dir, componentInstance, m.sudoPass)); err != nil {
-		return fmt.Errorf("error received during installation: %s", err)
+		return fmt.Errorf("error received during installation: %w", err)
 	}
 
 	info("Done.")
 	return nil
 }
 
+// runS3Systemctl connects to the remote host for the given S3 spec and runs
+// `systemctl <action> seaweed_s3<index>.service` via sudo. It is shared by
+// Start/Stop; Reset uses a similar shape but runs `rm -Rf`.
+func (m *Manager) runS3Systemctl(s *spec.S3ServerSpec, index int, action string) error {
+	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", s.Ip, s.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+		componentInstance := fmt.Sprintf("s3%d", index)
+		return m.sudo(op, fmt.Sprintf("systemctl %s seaweed_%s.service", action, componentInstance))
+	})
+}
+
 func (m *Manager) ResetS3Server(s *spec.S3ServerSpec, index int) error {
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", s.Ip, s.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-		component := "s3"
-		componentInstance := fmt.Sprintf("%s%d", component, index)
+		componentInstance := fmt.Sprintf("s3%d", index)
 		return m.sudo(op, fmt.Sprintf("rm -Rf %s/%s/*", m.dataDir, componentInstance))
 	})
 }
 
 func (m *Manager) StartS3Server(s *spec.S3ServerSpec, index int) error {
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", s.Ip, s.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-		component := "s3"
-		componentInstance := fmt.Sprintf("%s%d", component, index)
-		return m.sudo(op, fmt.Sprintf("systemctl start seaweed_%s.service", componentInstance))
-	})
+	return m.runS3Systemctl(s, index, "start")
 }
 
 func (m *Manager) StopS3Server(s *spec.S3ServerSpec, index int) error {
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", s.Ip, s.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-		component := "s3"
-		componentInstance := fmt.Sprintf("%s%d", component, index)
-		return m.sudo(op, fmt.Sprintf("systemctl stop seaweed_%s.service", componentInstance))
-	})
+	return m.runS3Systemctl(s, index, "stop")
 }

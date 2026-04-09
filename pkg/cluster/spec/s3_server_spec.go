@@ -16,10 +16,9 @@ type S3ServerSpec struct {
 	MetricsPort int                    `yaml:"metrics_port,omitempty"`
 	// Filer is the ip:port of the filer this gateway connects to. If empty,
 	// the deploy logic will default it to the first filer in the spec.
-	Filer    string                 `yaml:"filer,omitempty"`
-	Config   map[string]interface{} `yaml:"config,omitempty"`
-	Arch     string                 `yaml:"arch,omitempty"`
-	OS       string                 `yaml:"os,omitempty"`
+	Filer string `yaml:"filer,omitempty"`
+	Arch  string `yaml:"arch,omitempty"`
+	OS    string `yaml:"os,omitempty"`
 	// S3Config is the contents of s3.json (IAM / identities). When set, it
 	// is uploaded next to s3.options and wired in via -config.
 	S3Config map[string]interface{} `yaml:"s3_config,omitempty"`
