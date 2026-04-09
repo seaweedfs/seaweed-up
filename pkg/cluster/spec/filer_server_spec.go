@@ -3,6 +3,8 @@ package spec
 import (
 	"bytes"
 	"strings"
+
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/filer"
 )
 
 type FilerServerSpec struct {
@@ -24,6 +26,14 @@ type FilerServerSpec struct {
 	S3Port             int                    `yaml:"s3.port" default:"8333"`
 	Webdav             bool                   `yaml:"webdav" default:"false"`
 	WebdavPort         int                    `yaml:"webdav.port" default:"7333"`
+}
+
+// BackendFromConfig resolves the filer storage backend described by the
+// spec's free-form Config map. It returns the default LevelDB2 backend
+// when no configuration is provided. The returned Backend is already
+// validated.
+func (f *FilerServerSpec) BackendFromConfig() (filer.Backend, error) {
+	return filer.FromConfig(f.Config)
 }
 
 func (f *FilerServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {

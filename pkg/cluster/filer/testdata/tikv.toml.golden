@@ -1,0 +1,4 @@
+[tikv]
+enabled = true
+pdaddrs = ["pd1:2379", "pd2:2379"]
+deleterange_concurrency = 4

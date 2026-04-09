@@ -1,0 +1,5 @@
+[redis2]
+enabled = true
+address = "redis.internal:6379"
+password = "pw"
+database = 1

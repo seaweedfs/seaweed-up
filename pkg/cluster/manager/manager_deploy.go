@@ -305,6 +305,7 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		return fmt.Errorf("error received during upload %s.options: %s", component, err)
 	}
 
+	// Upload any per-component extra configuration files (e.g. filer.toml, s3.json).
 	for _, extra := range extras {
 		if extra.Content == nil {
 			continue
