@@ -1,0 +1,139 @@
+name: Observability Integration
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  observability:
+    name: node_exporter install + metrics
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Run unit tests (observability)
+        run: go test ./pkg/cluster/observability/... -count=1
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start test host
+        run: |
+          docker run -d \
+            --name seaweed-up-host1 \
+            --hostname host1 \
+            --privileged \
+            --cgroupns=host \
+            --network seaweed-up-net \
+            --ip 172.28.0.10 \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            geerlingguy/docker-ubuntu2204-ansible:latest
+
+          echo "Waiting for systemd..."
+          for i in {1..60}; do
+            state=$(docker exec seaweed-up-host1 systemctl is-system-running 2>/dev/null || echo "starting")
+            if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+              echo "Systemd ready on host1"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install SSH
+        run: |
+          docker exec seaweed-up-host1 bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+          docker exec seaweed-up-host1 bash -c "mkdir -p /run/sshd"
+          docker exec seaweed-up-host1 bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+          docker exec seaweed-up-host1 bash -c "systemctl enable ssh && systemctl start ssh"
+
+          for j in {1..30}; do
+            if nc -z 172.28.0.10 22 2>/dev/null; then
+              echo "SSH ready on 172.28.0.10"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          docker exec seaweed-up-host1 bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+          docker exec seaweed-up-host1 bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+          docker exec seaweed-up-host1 bash -c "chmod 600 /root/.ssh/authorized_keys"
+
+      - name: Install node_exporter via seaweed-up
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster node-exporter install test-obs \
+            -f testdata/cluster-single.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test
+
+      - name: Verify node_exporter metrics
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://172.28.0.10:9100/metrics | grep -q node_exporter_build_info; then
+              echo "node_exporter metrics verified"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "node_exporter_build_info not found"
+          curl -v http://172.28.0.10:9100/metrics || true
+          exit 1
+
+      - name: Verify prometheus-config output
+        working-directory: test/integration
+        run: |
+          out=$(../../seaweed-up cluster prometheus-config test-obs -f testdata/cluster-single.yaml)
+          echo "$out"
+          echo "$out" | grep -q "scrape_configs" || { echo "missing scrape_configs"; exit 1; }
+          echo "$out" | grep -q ":9100" || { echo "missing :9100 target"; exit 1; }
+
+      - name: Save logs
+        if: always()
+        run: |
+          mkdir -p observability-logs
+          docker ps -a > observability-logs/docker-ps.txt
+          docker logs seaweed-up-host1 > observability-logs/host1.log 2>&1 || true
+          docker exec seaweed-up-host1 systemctl status node_exporter > observability-logs/node_exporter.txt 2>&1 || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: observability-logs
+          path: observability-logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 || true
+          docker rm seaweed-up-host1 || true
+          docker network rm seaweed-up-net || true
