@@ -37,8 +37,8 @@ func TestSftpServerSpec_WriteToBuffer_AllOptions(t *testing.T) {
 		"ip.bind=0.0.0.0\n" +
 		"port=2222\n" +
 		"filer=10.0.0.1:8888\n" +
-		"sftp.host_key=/etc/seaweed/ssh_host_key\n" +
-		"sftp.auth_file=/etc/seaweed/sftp.json\n" +
+		"sshPrivateKey=/etc/seaweed/ssh_host_key\n" +
+		"userStoreFile=/etc/seaweed/sftp.json\n" +
 		"metricsPort=9876\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("WriteToBuffer full options mismatch:\n got: %q\nwant: %q", got, want)
@@ -77,13 +77,11 @@ func TestSftpServerSpec_WriteToBuffer_ConfigReservedKeysSkipped(t *testing.T) {
 		AuthFile:    "/etc/seaweed/sftp.json",
 		Config: map[string]interface{}{
 			// All of these should be ignored since explicit fields own them.
-			"ip":             "9.9.9.9",
-			"port":           9999,
-			"filer":          "evil:1",
-			"sftp.host_key":  "/tmp/hijack",
-			"sftp.auth_file": "/tmp/hijack.json",
-			"sshPrivateKey":  "/tmp/hijack_key",
-			"userStoreFile":  "/tmp/hijack_users",
+			"ip":            "9.9.9.9",
+			"port":          9999,
+			"filer":         "evil:1",
+			"sshPrivateKey": "/tmp/hijack_key",
+			"userStoreFile": "/tmp/hijack_users",
 			// Non-reserved extra passes through.
 			"logLevel": "debug",
 		},
@@ -94,8 +92,8 @@ func TestSftpServerSpec_WriteToBuffer_ConfigReservedKeysSkipped(t *testing.T) {
 	want := "ip=10.0.0.5\n" +
 		"port=2222\n" +
 		"filer=10.0.0.1:8888\n" +
-		"sftp.host_key=/etc/seaweed/ssh_host_key\n" +
-		"sftp.auth_file=/etc/seaweed/sftp.json\n" +
+		"sshPrivateKey=/etc/seaweed/ssh_host_key\n" +
+		"userStoreFile=/etc/seaweed/sftp.json\n" +
 		"logLevel=debug\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("WriteToBuffer reserved-key guard mismatch:\n got: %q\nwant: %q", got, want)

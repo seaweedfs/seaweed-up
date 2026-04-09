@@ -117,19 +117,36 @@ jobs:
             --yes
 
           echo "Waiting for services..."
-          sleep 25
+          wait_for_port() {
+            local host=$1 port=$2 label=$3
+            for i in $(seq 1 60); do
+              if nc -z "$host" "$port" 2>/dev/null; then
+                echo "$label ($host:$port) is listening"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "$label ($host:$port) did not come up in time"
+            return 1
+          }
 
           echo "=== Listening ports on host1 ==="
           docker exec seaweed-up-host1 ss -tlnp 2>&1 || true
           echo "=== Seaweed services ==="
           docker exec seaweed-up-host1 systemctl list-units 'seaweed*' --all --no-pager 2>&1 || true
+          echo "=== master service journal ==="
+          docker exec seaweed-up-host1 journalctl -u 'seaweed_master*' --no-pager -n 60 2>&1 || true
+          echo "=== volume service journal ==="
+          docker exec seaweed-up-host1 journalctl -u 'seaweed_volume*' --no-pager -n 60 2>&1 || true
+          echo "=== filer service journal ==="
+          docker exec seaweed-up-host1 journalctl -u 'seaweed_filer*' --no-pager -n 60 2>&1 || true
           echo "=== sftp service journal ==="
           docker exec seaweed-up-host1 journalctl -u 'seaweed_sftp*' --no-pager -n 80 2>&1 || true
 
-          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
-          nc -z 172.28.0.10 8382 || (echo "Volume not running" && exit 1)
-          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
-          nc -z 172.28.0.10 2022 || (echo "SFTP gateway not running" && exit 1)
+          wait_for_port 172.28.0.10 9333 "Master"  || exit 1
+          wait_for_port 172.28.0.10 8382 "Volume"  || exit 1
+          wait_for_port 172.28.0.10 8888 "Filer"   || exit 1
+          wait_for_port 172.28.0.10 2022 "SFTP gateway" || exit 1
           echo "All services verified including SFTP gateway on port 2022"
 
       - name: Archive logs

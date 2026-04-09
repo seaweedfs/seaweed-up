@@ -31,15 +31,13 @@ type SftpServerSpec struct {
 // SftpServerSpec fields. Any matching entries in Config are ignored so that
 // typed fields remain the source of truth and cannot be silently overridden.
 var sftpReservedConfigKeys = map[string]struct{}{
-	"ip":             {},
-	"ip.bind":        {},
-	"port":           {},
-	"filer":          {},
-	"sftp.host_key":  {},
-	"sshPrivateKey":  {},
-	"sftp.auth_file": {},
-	"userStoreFile":  {},
-	"metricsPort":    {},
+	"ip":            {},
+	"ip.bind":       {},
+	"port":          {},
+	"filer":         {},
+	"sshPrivateKey": {},
+	"userStoreFile": {},
+	"metricsPort":   {},
 }
 
 func (s *SftpServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
@@ -47,8 +45,8 @@ func (s *SftpServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "ip.bind", s.IpBind)
 	addToBufferInt(buf, "port", s.Port, 2022)
 	addToBuffer(buf, "filer", s.Filer)
-	addToBuffer(buf, "sftp.host_key", s.HostKeyPath)
-	addToBuffer(buf, "sftp.auth_file", s.AuthFile)
+	addToBuffer(buf, "sshPrivateKey", s.HostKeyPath)
+	addToBuffer(buf, "userStoreFile", s.AuthFile)
 	addToBufferInt(buf, "metricsPort", s.MetricsPort, 0)
 
 	if len(s.Config) == 0 {
