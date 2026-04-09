@@ -1,0 +1,188 @@
+name: Integration Scale-In Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scale-in-test:
+    name: Scale-In Drain Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start 4 systemd containers
+        run: |
+          for pair in "host1 172.28.0.10" "host2 172.28.0.11" "host3 172.28.0.12" "host4 172.28.0.13"; do
+            name=$(echo $pair | cut -d' ' -f1)
+            ip=$(echo $pair | cut -d' ' -f2)
+            docker run -d \
+              --name seaweed-up-$name \
+              --hostname $name \
+              --privileged \
+              --cgroupns=host \
+              --network seaweed-up-net \
+              --ip $ip \
+              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+              geerlingguy/docker-ubuntu2204-ansible:latest
+          done
+
+          echo "Waiting for containers to start..."
+          sleep 10
+          docker ps -a
+
+          # Wait for systemd to be ready in each container
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4; do
+            echo "Checking systemd on $host..."
+            for i in {1..60}; do
+              status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+              if [ "$status" != "running" ]; then
+                echo "Container $host not running (status: $status)"
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Timeout waiting for systemd on $host"
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Install SSH on containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4; do
+            echo "Installing SSH on $host..."
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+          done
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12 172.28.0.13; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                echo "SSH ready on $ip"
+                break
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+          done
+
+      - name: Deploy 4-host cluster
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-scale-in \
+            -f testdata/cluster-scale-in.yaml \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+          echo "Waiting 30s for services to initialize..."
+          sleep 30
+
+          nc -z 172.28.0.10 9333 || (echo "Master not running" && exit 1)
+          nc -z 172.28.0.11 8080 || (echo "Volume1 not running" && exit 1)
+          nc -z 172.28.0.12 8080 || (echo "Volume2 not running" && exit 1)
+          nc -z 172.28.0.13 8080 || (echo "Volume3 not running" && exit 1)
+          nc -z 172.28.0.10 8888 || (echo "Filer not running" && exit 1)
+          echo "All services running."
+
+      - name: Write file via filer
+        run: |
+          docker exec seaweed-up-host1 bash -c "echo hello-scale-in > /tmp/test.txt"
+          docker exec seaweed-up-host1 bash -c "curl -sf -F file=@/tmp/test.txt http://172.28.0.10:8888/test/"
+          echo "Upload OK"
+
+      - name: Scale-in host4
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster scale in test-scale-in \
+            -f testdata/cluster-scale-in.yaml \
+            --remove-node 172.28.0.13 \
+            --yes
+
+      - name: Read file back via filer
+        run: |
+          for i in {1..15}; do
+            body=$(curl -sf http://172.28.0.10:8888/test/test.txt || echo "")
+            if echo "$body" | grep -q hello-scale-in; then
+              echo "File verified after scale-in"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Failed to read back test file after scale-in"
+          exit 1
+
+      - name: Archive logs
+        if: always()
+        working-directory: test/integration
+        run: |
+          echo "=== Container Status ===" > scale-in.log
+          docker ps -a >> scale-in.log
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4; do
+            echo "=== Logs for $host ===" >> scale-in.log
+            docker logs $host >> scale-in.log 2>&1 || true
+            echo "=== seaweed journal for $host ===" >> scale-in.log
+            docker exec $host journalctl -u 'seaweed*' --no-pager -n 100 >> scale-in.log 2>&1 || true
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scale-in-test-logs
+          path: test/integration/scale-in.log
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4 || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-host4 || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh
