@@ -925,8 +925,12 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 	if masterPort == 0 {
 		masterPort = 9333
 	}
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterIp, masterSshPort), user, identity, sudoPass, func(op operator.CommandOperator) error {
-		cmd := fmt.Sprintf("echo 'volumeServer.evacuate -node=%s -apply' | weed shell -master=%s:%d 2>&1", nodeAddr, masterIp, masterPort)
+	sshHost := net.JoinHostPort(masterIp, strconv.Itoa(masterSshPort))
+	masterAddr := net.JoinHostPort(masterIp, strconv.Itoa(masterPort))
+	return operator.ExecuteRemote(sshHost, user, identity, sudoPass, func(op operator.CommandOperator) error {
+		evacuateCmd := fmt.Sprintf("volumeServer.evacuate -node=%s -apply", nodeAddr)
+		cmd := fmt.Sprintf("echo %s | weed shell -master=%s 2>&1",
+			shellSingleQuote(evacuateCmd), shellSingleQuote(masterAddr))
 		out, err := op.Output(cmd)
 		text := string(out)
 		if len(text) > 0 {
