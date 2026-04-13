@@ -803,13 +803,12 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		if drainTimeout <= 0 {
 			drainTimeout = 30 * time.Minute
 		}
-		drainErr := scale.Drain(masterAddr, nodeAddr, drainTimeout)
-		if drainErr != nil {
-			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
-			masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
-			if fbErr := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
-				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
-			}
+		masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
+		if err := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); err != nil {
+			return fmt.Errorf("drain %s: %w", nodeAddr, err)
+		}
+		if err := scale.WaitForDrain(masterAddr, nodeAddr, drainTimeout); err != nil {
+			return fmt.Errorf("drain %s: %w", nodeAddr, err)
 		}
 		color.Green("Drain complete for %s", nodeAddr)
 
@@ -913,8 +912,12 @@ func currentSSHCreds(userOverride, identityOverride string) (user, identity, sud
 	return user, identity, sudoPass, nil
 }
 
-// drainViaWeedShell runs `weed shell ... volume.evacuate -node=<target>`
-// on a master host via SSH, as a fallback when HTTP drain is unavailable.
+// drainViaWeedShell runs `weed shell ... volumeServer.evacuate -node=<target> -apply`
+// on a master host via SSH. This is the only mechanism SeaweedFS exposes to
+// move volumes off a server — there is no master HTTP endpoint for it.
+//
+// `weed shell` exits 0 even when the command is unknown or evacuation fails,
+// so we capture stdout/stderr and inspect it for known failure phrases.
 func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, identity, sudoPass, nodeAddr string) error {
 	if masterSshPort == 0 {
 		masterSshPort = 22
@@ -923,8 +926,23 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 		masterPort = 9333
 	}
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterIp, masterSshPort), user, identity, sudoPass, func(op operator.CommandOperator) error {
-		cmd := fmt.Sprintf("echo 'volume.evacuate -node=%s' | weed shell -master=%s:%d", nodeAddr, masterIp, masterPort)
-		return op.Execute(cmd)
+		cmd := fmt.Sprintf("echo 'volumeServer.evacuate -node=%s -apply' | weed shell -master=%s:%d 2>&1", nodeAddr, masterIp, masterPort)
+		out, err := op.Output(cmd)
+		text := string(out)
+		if len(text) > 0 {
+			fmt.Println(strings.TrimRight(text, "\n"))
+		}
+		if err != nil {
+			return fmt.Errorf("weed shell volumeServer.evacuate: %w", err)
+		}
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "unknown command") {
+			return fmt.Errorf("weed shell rejected volumeServer.evacuate (output: %s)", strings.TrimSpace(text))
+		}
+		if strings.Contains(lower, "no such") || strings.Contains(lower, "failed to evacuate") {
+			return fmt.Errorf("weed shell volumeServer.evacuate reported failure: %s", strings.TrimSpace(text))
+		}
+		return nil
 	})
 }
 

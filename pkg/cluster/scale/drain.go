@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
 
-// HTTPClient is the subset of http.Client that Drain uses. It is defined as
-// an interface so tests can supply a custom transport / client.
+// HTTPClient is the subset of http.Client that WaitForDrain uses. It is
+// defined as an interface so tests can supply a custom transport / client.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -25,19 +24,23 @@ var defaultClient HTTPClient = &http.Client{Timeout: 30 * time.Second}
 // package variable so tests can override it.
 var pollInterval = 2 * time.Second
 
-// Drain marks the given target volume server read-only on the master and
-// asks the master to evacuate all volumes off the node. It polls the master
-// until the target reports 0 volumes or the timeout expires.
+// WaitForDrain polls the master's /dir/status until the target volume server
+// reports 0 volumes (or is no longer present in the topology) or the timeout
+// expires. It does NOT initiate the drain itself — SeaweedFS exposes no
+// master HTTP endpoint for that, so the caller is expected to have already
+// kicked off `volumeServer.evacuate` via `weed shell`. This function exists
+// as an independent verification that evacuation actually completed.
 //
-// masterAddr is expected in the form "host:port" (no scheme). targetNode is
-// the volume server address as seen by the master, typically "ip:port".
-func Drain(masterAddr, targetNode string, timeout time.Duration) error {
-	return DrainWithClient(defaultClient, masterAddr, targetNode, timeout)
+// masterAddr is expected in the form "host:port" (scheme optional).
+// targetNode is the volume server address as seen by the master,
+// typically "ip:port".
+func WaitForDrain(masterAddr, targetNode string, timeout time.Duration) error {
+	return WaitForDrainWithClient(defaultClient, masterAddr, targetNode, timeout)
 }
 
-// DrainWithClient is like Drain but uses the supplied HTTP client. This is
-// primarily intended for testing against httptest servers.
-func DrainWithClient(client HTTPClient, masterAddr, targetNode string, timeout time.Duration) error {
+// WaitForDrainWithClient is like WaitForDrain but uses the supplied HTTP
+// client. This is primarily intended for testing against httptest servers.
+func WaitForDrainWithClient(client HTTPClient, masterAddr, targetNode string, timeout time.Duration) error {
 	if client == nil {
 		client = defaultClient
 	}
@@ -49,19 +52,6 @@ func DrainWithClient(client HTTPClient, masterAddr, targetNode string, timeout t
 	}
 
 	base := normalizeMaster(masterAddr)
-
-	// Best-effort mark read-only. A non-2xx is logged-equivalent but does
-	// not abort; the evacuate call is the authoritative step.
-	if err := postNode(client, base+"/cluster/volumeServer.markReadonly", targetNode); err != nil {
-		// mark read-only may not be supported on all versions; continue.
-		_ = err
-	}
-
-	// Kick off evacuation. If this fails outright, return the error so the
-	// caller can fall back to the `weed shell` path over SSH.
-	if err := postNode(client, base+"/cluster/evacuate", targetNode); err != nil {
-		return fmt.Errorf("drain: evacuate request failed: %w", err)
-	}
 
 	deadline := time.Now().Add(timeout)
 	for {
@@ -85,34 +75,6 @@ func normalizeMaster(masterAddr string) string {
 		return strings.TrimRight(masterAddr, "/")
 	}
 	return "http://" + strings.TrimRight(masterAddr, "/")
-}
-
-func postNode(client HTTPClient, endpoint, node string) error {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return err
-	}
-	q := u.Query()
-	q.Set("node", node)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequest(http.MethodPost, u.String(), nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read drain response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: status %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	return nil
 }
 
 // targetVolumeCount fetches /dir/status and returns the number of volumes
@@ -175,8 +137,8 @@ func stripScheme(addr string) string {
 	return addr
 }
 
-// dirStatus matches the pieces of /dir/status that Drain consumes. Extra
-// fields are ignored.
+// dirStatus matches the pieces of /dir/status that WaitForDrain consumes.
+// Extra fields are ignored.
 type dirStatus struct {
 	Topology topology `json:"Topology"`
 }
