@@ -760,13 +760,20 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 	if clusterSpec.GlobalOptions.TLSEnabled {
 		scheme = "https://"
 	}
+	// HTTP client aware of the cluster CA when TLS is enabled. Used for the
+	// master health probe and for the post-drain verification poll, both of
+	// which hit the master over HTTPS on TLS clusters.
+	masterHTTPClient := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: newUpgradeHTTPTransport(false, clusterSpec.Name),
+	}
 	var master *spec.MasterServerSpec
 	var masterPort int
 	var masterAddr string
 	for _, candidate := range clusterSpec.MasterServers {
 		port := nonZero(candidate.Port, 9333)
 		addr := fmt.Sprintf("%s%s:%d", scheme, candidate.Ip, port)
-		if healthyMaster(addr) {
+		if healthyMasterWithClient(masterHTTPClient, addr) {
 			master = candidate
 			masterPort = port
 			masterAddr = addr
@@ -803,13 +810,12 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		if drainTimeout <= 0 {
 			drainTimeout = 30 * time.Minute
 		}
-		drainErr := scale.Drain(masterAddr, nodeAddr, drainTimeout)
-		if drainErr != nil {
-			color.Yellow("HTTP drain failed (%v); falling back to weed shell over SSH", drainErr)
-			masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
-			if fbErr := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); fbErr != nil {
-				return fmt.Errorf("drain %s: %w", nodeAddr, fbErr)
-			}
+		masterSshPort := nonZero(master.PortSsh, opts.SSHPort)
+		if err := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); err != nil {
+			return fmt.Errorf("drain %s: %w", nodeAddr, err)
+		}
+		if err := scale.WaitForDrainWithClient(masterHTTPClient, masterAddr, nodeAddr, drainTimeout); err != nil {
+			return fmt.Errorf("drain %s: %w", nodeAddr, err)
 		}
 		color.Green("Drain complete for %s", nodeAddr)
 
@@ -913,8 +919,12 @@ func currentSSHCreds(userOverride, identityOverride string) (user, identity, sud
 	return user, identity, sudoPass, nil
 }
 
-// drainViaWeedShell runs `weed shell ... volume.evacuate -node=<target>`
-// on a master host via SSH, as a fallback when HTTP drain is unavailable.
+// drainViaWeedShell runs `weed shell ... volumeServer.evacuate -node=<target> -apply`
+// on a master host via SSH. This is the only mechanism SeaweedFS exposes to
+// move volumes off a server — there is no master HTTP endpoint for it.
+//
+// `weed shell` exits 0 even when the command is unknown or evacuation fails,
+// so we capture stdout/stderr and inspect it for known failure phrases.
 func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, identity, sudoPass, nodeAddr string) error {
 	if masterSshPort == 0 {
 		masterSshPort = 22
@@ -922,9 +932,35 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 	if masterPort == 0 {
 		masterPort = 9333
 	}
-	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", masterIp, masterSshPort), user, identity, sudoPass, func(op operator.CommandOperator) error {
-		cmd := fmt.Sprintf("echo 'volume.evacuate -node=%s' | weed shell -master=%s:%d", nodeAddr, masterIp, masterPort)
-		return op.Execute(cmd)
+	sshHost := net.JoinHostPort(masterIp, strconv.Itoa(masterSshPort))
+	masterAddr := net.JoinHostPort(masterIp, strconv.Itoa(masterPort))
+	return operator.ExecuteRemote(sshHost, user, identity, sudoPass, func(op operator.CommandOperator) error {
+		// `volumeServer.evacuate -apply` calls confirmIsLocked, so the weed
+		// shell session must acquire the admin lock first. Pipe `lock`,
+		// then the evacuate command, then `unlock`. Use `printf '%s\n'` so
+		// the evacuate line is not subject to printf format interpretation.
+		evacuateCmd := fmt.Sprintf("volumeServer.evacuate -node=%s -apply", nodeAddr)
+		cmd := fmt.Sprintf("printf '%%s\\n' lock %s unlock | weed shell -master=%s 2>&1",
+			shellSingleQuote(evacuateCmd), shellSingleQuote(masterAddr))
+		out, err := op.Output(cmd)
+		text := string(out)
+		if len(text) > 0 {
+			fmt.Println(strings.TrimRight(text, "\n"))
+		}
+		if err != nil {
+			return fmt.Errorf("weed shell volumeServer.evacuate: %w", err)
+		}
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "unknown command") {
+			return fmt.Errorf("weed shell rejected volumeServer.evacuate (output: %s)", strings.TrimSpace(text))
+		}
+		if strings.Contains(lower, `need to run "lock" first`) {
+			return fmt.Errorf("weed shell refused evacuate: admin lock not acquired (output: %s)", strings.TrimSpace(text))
+		}
+		if strings.Contains(lower, "no such") || strings.Contains(lower, "failed to evacuate") {
+			return fmt.Errorf("weed shell volumeServer.evacuate reported failure: %s", strings.TrimSpace(text))
+		}
+		return nil
 	})
 }
 
@@ -1199,17 +1235,18 @@ func safeRemoveDir(dir string) bool {
 	return trimmed != ""
 }
 
-// healthyMaster performs a fast best-effort GET against a master's
+// healthyMasterWithClient performs a fast best-effort GET against a master's
 // /cluster/status endpoint. It returns true only if the endpoint responds
-// with a 2xx within a short timeout. This is used by scale-in to pick a
-// responsive master out of the configured list.
-func healthyMaster(masterURL string) bool {
-	client := &http.Client{Timeout: 3 * time.Second}
+// with a 2xx within a short timeout. The caller supplies the HTTP client so
+// TLS clusters can pass one that trusts the cluster CA.
+func healthyMasterWithClient(client *http.Client, masterURL string) bool {
+	probe := *client
+	probe.Timeout = 3 * time.Second
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(masterURL, "/")+"/cluster/status", nil)
 	if err != nil {
 		return false
 	}
-	resp, err := client.Do(req)
+	resp, err := probe.Do(req)
 	if err != nil {
 		return false
 	}
