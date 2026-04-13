@@ -935,8 +935,12 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 	sshHost := net.JoinHostPort(masterIp, strconv.Itoa(masterSshPort))
 	masterAddr := net.JoinHostPort(masterIp, strconv.Itoa(masterPort))
 	return operator.ExecuteRemote(sshHost, user, identity, sudoPass, func(op operator.CommandOperator) error {
+		// `volumeServer.evacuate -apply` calls confirmIsLocked, so the weed
+		// shell session must acquire the admin lock first. Pipe `lock`,
+		// then the evacuate command, then `unlock`. Use `printf '%s\n'` so
+		// the evacuate line is not subject to printf format interpretation.
 		evacuateCmd := fmt.Sprintf("volumeServer.evacuate -node=%s -apply", nodeAddr)
-		cmd := fmt.Sprintf("echo %s | weed shell -master=%s 2>&1",
+		cmd := fmt.Sprintf("printf '%%s\\n' lock %s unlock | weed shell -master=%s 2>&1",
 			shellSingleQuote(evacuateCmd), shellSingleQuote(masterAddr))
 		out, err := op.Output(cmd)
 		text := string(out)
@@ -949,6 +953,9 @@ func drainViaWeedShell(masterIp string, masterSshPort, masterPort int, user, ide
 		lower := strings.ToLower(text)
 		if strings.Contains(lower, "unknown command") {
 			return fmt.Errorf("weed shell rejected volumeServer.evacuate (output: %s)", strings.TrimSpace(text))
+		}
+		if strings.Contains(lower, `need to run "lock" first`) {
+			return fmt.Errorf("weed shell refused evacuate: admin lock not acquired (output: %s)", strings.TrimSpace(text))
 		}
 		if strings.Contains(lower, "no such") || strings.Contains(lower, "failed to evacuate") {
 			return fmt.Errorf("weed shell volumeServer.evacuate reported failure: %s", strings.TrimSpace(text))
