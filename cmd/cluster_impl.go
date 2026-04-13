@@ -760,13 +760,20 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 	if clusterSpec.GlobalOptions.TLSEnabled {
 		scheme = "https://"
 	}
+	// HTTP client aware of the cluster CA when TLS is enabled. Used for the
+	// master health probe and for the post-drain verification poll, both of
+	// which hit the master over HTTPS on TLS clusters.
+	masterHTTPClient := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: newUpgradeHTTPTransport(false, clusterSpec.Name),
+	}
 	var master *spec.MasterServerSpec
 	var masterPort int
 	var masterAddr string
 	for _, candidate := range clusterSpec.MasterServers {
 		port := nonZero(candidate.Port, 9333)
 		addr := fmt.Sprintf("%s%s:%d", scheme, candidate.Ip, port)
-		if healthyMaster(addr) {
+		if healthyMasterWithClient(masterHTTPClient, addr) {
 			master = candidate
 			masterPort = port
 			masterAddr = addr
@@ -807,7 +814,7 @@ func runClusterScaleIn(clusterName string, opts *ClusterScaleInOptions) error {
 		if err := drainViaWeedShell(master.Ip, masterSshPort, masterPort, sshUser, sshIdentity, sudoPass, nodeAddr); err != nil {
 			return fmt.Errorf("drain %s: %w", nodeAddr, err)
 		}
-		if err := scale.WaitForDrain(masterAddr, nodeAddr, drainTimeout); err != nil {
+		if err := scale.WaitForDrainWithClient(masterHTTPClient, masterAddr, nodeAddr, drainTimeout); err != nil {
 			return fmt.Errorf("drain %s: %w", nodeAddr, err)
 		}
 		color.Green("Drain complete for %s", nodeAddr)
@@ -1221,17 +1228,18 @@ func safeRemoveDir(dir string) bool {
 	return trimmed != ""
 }
 
-// healthyMaster performs a fast best-effort GET against a master's
+// healthyMasterWithClient performs a fast best-effort GET against a master's
 // /cluster/status endpoint. It returns true only if the endpoint responds
-// with a 2xx within a short timeout. This is used by scale-in to pick a
-// responsive master out of the configured list.
-func healthyMaster(masterURL string) bool {
-	client := &http.Client{Timeout: 3 * time.Second}
+// with a 2xx within a short timeout. The caller supplies the HTTP client so
+// TLS clusters can pass one that trusts the cluster CA.
+func healthyMasterWithClient(client *http.Client, masterURL string) bool {
+	probe := *client
+	probe.Timeout = 3 * time.Second
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(masterURL, "/")+"/cluster/status", nil)
 	if err != nil {
 		return false
 	}
-	resp, err := client.Do(req)
+	resp, err := probe.Do(req)
 	if err != nil {
 		return false
 	}
