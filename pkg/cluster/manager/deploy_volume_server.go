@@ -185,19 +185,28 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 
 // probeDiskUUID reads the filesystem UUID of path via blkid. After mkfs the
 // superblock is written but udev may not yet have re-read it, so we let it
-// settle and retry a few times before giving up. Returning an error here
-// aborts the deploy rather than writing a broken fstab entry that would leave
-// the host unable to boot.
+// settle and retry a few times before giving up. blkid needs root to read
+// raw block devices on most distros (and -p always needs root), so we wrap
+// it the same way m.sudo does. Returning an error here aborts the deploy
+// rather than writing a broken fstab entry that would leave the host unable
+// to boot.
 func (m *Manager) probeDiskUUID(op operator.CommandOperator, path string) (string, error) {
 	// Best-effort settle. Ignore errors — `udevadm` is missing on some
 	// minimal images and that's OK; the retry loop below will still pick
 	// up the UUID once it's available.
 	_ = m.sudo(op, "command -v udevadm >/dev/null 2>&1 && udevadm settle || true")
 
+	// -p bypasses the blkid cache and re-probes the superblock directly,
+	// which is what we want right after mkfs.
+	probeCmd := fmt.Sprintf("blkid -p -s UUID -o value %s", shellSingleQuote(path))
+	if m.sudoPass != "" {
+		probeCmd = fmt.Sprintf("echo %s | sudo -S %s", shellSingleQuote(m.sudoPass), probeCmd)
+	}
+
 	const attempts = 5
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		out, err := op.Output(fmt.Sprintf("blkid -s UUID -o value %s", shellSingleQuote(path)))
+		out, err := op.Output(probeCmd)
 		if err == nil {
 			uuid := strings.TrimSpace(string(out))
 			if uuid != "" {
