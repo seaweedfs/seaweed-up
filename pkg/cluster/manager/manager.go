@@ -51,6 +51,7 @@ type Manager struct {
 	ProxyUrl           string // proxy URL for binary download
 	ComponentToDeploy  string
 	Version            string
+	EnvoyVersion       string // envoy release to pin; when empty the latest is looked up from github.com/envoyproxy/envoy
 	SshPort            int
 	PrepareVolumeDisks bool
 	HostPrep           bool

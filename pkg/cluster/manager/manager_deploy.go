@@ -318,12 +318,16 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("envoy") && len(specification.EnvoyServers) > 0 {
-		latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
-		if err != nil {
-			return errors.Wrapf(err, "unable to get latest version number, define a version manually with the --version flag")
+		defaultVersion := m.EnvoyVersion
+		if defaultVersion == "" {
+			latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
+			if err != nil {
+				return errors.Wrapf(err, "unable to get latest envoy version, pin one with --envoy-version")
+			}
+			defaultVersion = latest.Version
 		}
 		for index, envoySpec := range specification.EnvoyServers {
-			envoySpec.Version = utils.Nvl(envoySpec.Version, latest.Version)
+			envoySpec.Version = utils.Nvl(envoySpec.Version, defaultVersion)
 			if err := m.DeployEnvoyServer(specification.FilerServers, envoySpec, index); err != nil {
 				return fmt.Errorf("deploy to envoy server %s:%d :%v", envoySpec.Ip, envoySpec.PortSsh, err)
 			}
