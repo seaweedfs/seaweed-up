@@ -1116,6 +1116,8 @@ func runClusterList(opts *ClusterListOptions) error {
 			Masters    int       `json:"masters"`
 			Volumes    int       `json:"volumes"`
 			Filers     int       `json:"filers"`
+			Admins     int       `json:"admins"`
+			Workers    int       `json:"workers"`
 		}
 		out := make([]jsonEntry, 0, len(entries))
 		for _, e := range entries {
@@ -1127,6 +1129,8 @@ func runClusterList(opts *ClusterListOptions) error {
 				Masters:    len(e.Spec.MasterServers),
 				Volumes:    len(e.Spec.VolumeServers),
 				Filers:     len(e.Spec.FilerServers),
+				Admins:     len(e.Spec.AdminServers),
+				Workers:    len(e.Spec.WorkerServers),
 			})
 		}
 		data, err := json.MarshalIndent(out, "", "  ")
@@ -1144,20 +1148,22 @@ func runClusterList(opts *ClusterListOptions) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tHOSTS\tMASTERS\tVOLUMES\tFILERS\tDEPLOYED")
+	_, _ = fmt.Fprintln(tw, "NAME\tVERSION\tHOSTS\tMASTERS\tVOLUMES\tFILERS\tADMINS\tWORKERS\tDEPLOYED")
 	for _, e := range entries {
 		deployed := e.Meta.DeployedAt.Local().Format("2006-01-02 15:04:05")
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
 			e.Meta.Name,
 			e.Meta.Version,
 			len(e.Meta.Hosts),
 			len(e.Spec.MasterServers),
 			len(e.Spec.VolumeServers),
 			len(e.Spec.FilerServers),
+			len(e.Spec.AdminServers),
+			len(e.Spec.WorkerServers),
 			deployed,
 		)
 		if opts.Verbose && len(e.Meta.Hosts) > 0 {
-			_, _ = fmt.Fprintf(tw, "  hosts: %s\t\t\t\t\t\t\n", strings.Join(e.Meta.Hosts, ", "))
+			_, _ = fmt.Fprintf(tw, "  hosts: %s\t\t\t\t\t\t\t\t\n", strings.Join(e.Meta.Hosts, ", "))
 		}
 	}
 	return tw.Flush()

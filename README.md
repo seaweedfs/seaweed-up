@@ -4,7 +4,7 @@ Bootstrap and manage SeaweedFS clusters over SSH.
 
 ## Install
 
-```
+```bash
 git clone https://github.com/seaweedfs/seaweed-up.git
 cd seaweed-up
 go install
@@ -40,13 +40,13 @@ Two example specs live under `examples/`:
 
 ## Deploy
 
-```
+```bash
 seaweed-up cluster deploy -f examples/typical.yaml
 ```
 
 Deploy only a specific component:
 
-```
+```bash
 seaweed-up cluster deploy -f cluster.yaml --component=admin
 seaweed-up cluster deploy -f cluster.yaml --component=worker
 ```
@@ -59,7 +59,7 @@ Supported `--component` values:
 Start, stop, or restart every service in the cluster, or scope the operation
 to a single component:
 
-```
+```bash
 seaweed-up cluster start   -f cluster.yaml
 seaweed-up cluster stop    -f cluster.yaml --component=worker
 seaweed-up cluster restart -f cluster.yaml --component=admin
@@ -67,7 +67,7 @@ seaweed-up cluster restart -f cluster.yaml --component=admin
 
 ## Other operations
 
-```
+```bash
 # Prepare hosts (ulimits, sysctls, firewall, time sync)
 seaweed-up cluster prepare -f cluster.yaml
 

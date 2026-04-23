@@ -47,6 +47,11 @@ volume_servers:
 # Filers share a single external metadata store (e.g. PostgreSQL, MySQL,
 # Redis, Cassandra, TiKV) configured under `config:`. All three filers must
 # point at the same store so they present a consistent namespace.
+#
+# Replace the CHANGE_ME placeholders below (and the admin_password further
+# down) with real secrets before deploying. Prefer loading credentials from
+# a secret manager or environment-scoped config rather than committing them
+# to source control.
 
 filer_servers:
   - ip: 10.0.0.31
@@ -55,8 +60,8 @@ filer_servers:
       type: postgres
       hostname: 10.0.0.41
       port: 5432
-      username: seaweed
-      password: seaweed
+      username: CHANGE_ME
+      password: CHANGE_ME
       database: seaweedfs
       sslmode: disable
   - ip: 10.0.0.32
@@ -65,8 +70,8 @@ filer_servers:
       type: postgres
       hostname: 10.0.0.41
       port: 5432
-      username: seaweed
-      password: seaweed
+      username: CHANGE_ME
+      password: CHANGE_ME
       database: seaweedfs
       sslmode: disable
   - ip: 10.0.0.33
@@ -75,8 +80,8 @@ filer_servers:
       type: postgres
       hostname: 10.0.0.41
       port: 5432
-      username: seaweed
-      password: seaweed
+      username: CHANGE_ME
+      password: CHANGE_ME
       database: seaweedfs
       sslmode: disable
 
@@ -98,7 +103,7 @@ admin_servers:
   - ip: 10.0.0.61
     port: 23646
     admin_user: admin
-    admin_password: change-me
+    admin_password: CHANGE_ME
 
 worker_servers:
   - ip: 10.0.0.71
