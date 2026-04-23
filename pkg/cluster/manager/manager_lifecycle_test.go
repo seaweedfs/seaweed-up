@@ -27,14 +27,27 @@ func sampleSpec() *spec.Specification {
 		EnvoyServers: []*spec.EnvoyServerSpec{
 			{Ip: "10.0.0.4", PortSsh: 22},
 		},
+		S3Servers: []*spec.S3ServerSpec{
+			{Ip: "10.0.0.7", PortSsh: 22},
+		},
+		SftpServers: []*spec.SftpServerSpec{
+			{Ip: "10.0.0.8", PortSsh: 22},
+		},
+		AdminServers: []*spec.AdminServerSpec{
+			{Ip: "10.0.0.5", PortSsh: 22},
+		},
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "10.0.0.6", PortSsh: 22},
+			{Ip: "10.0.0.6", PortSsh: 22},
+		},
 	}
 }
 
 func TestUniqueHosts(t *testing.T) {
 	s := sampleSpec()
 	hosts := uniqueHosts(s, "")
-	if len(hosts) != 4 {
-		t.Fatalf("expected 4 unique hosts, got %d", len(hosts))
+	if len(hosts) != 8 {
+		t.Fatalf("expected 8 unique hosts, got %d", len(hosts))
 	}
 
 	if got := uniqueHosts(s, "master"); len(got) != 1 || got[0].ip != "10.0.0.1" {
@@ -48,6 +61,18 @@ func TestUniqueHosts(t *testing.T) {
 	}
 	if got := uniqueHosts(s, "envoy"); len(got) != 1 || got[0].ip != "10.0.0.4" {
 		t.Errorf("envoy filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "s3"); len(got) != 1 || got[0].ip != "10.0.0.7" {
+		t.Errorf("s3 filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "sftp"); len(got) != 1 || got[0].ip != "10.0.0.8" {
+		t.Errorf("sftp filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "admin"); len(got) != 1 || got[0].ip != "10.0.0.5" {
+		t.Errorf("admin filter wrong: %+v", got)
+	}
+	if got := uniqueHosts(s, "worker"); len(got) != 1 || got[0].ip != "10.0.0.6" {
+		t.Errorf("worker filter wrong: %+v", got)
 	}
 }
 
@@ -98,6 +123,26 @@ func TestServicesForHost(t *testing.T) {
 	}
 	if got := servicesForHost(s, "10.0.0.4", "envoy"); len(got) != 1 || got[0] != "seaweed_envoy0.service" {
 		t.Errorf("envoy filter: %v", got)
+	}
+
+	if got := servicesForHost(s, "10.0.0.5", "admin"); len(got) != 1 || got[0] != "seaweed_admin0.service" {
+		t.Errorf("admin filter: %v", got)
+	}
+
+	if got := servicesForHost(s, "10.0.0.7", "s3"); len(got) != 1 || got[0] != "seaweed_s30.service" {
+		t.Errorf("s3 filter: %v", got)
+	}
+	if got := servicesForHost(s, "10.0.0.8", "sftp"); len(got) != 1 || got[0] != "seaweed_sftp0.service" {
+		t.Errorf("sftp filter: %v", got)
+	}
+
+	// Two worker instances co-located on the same host should both surface.
+	workerSvcs := servicesForHost(s, "10.0.0.6", "worker")
+	if len(workerSvcs) != 2 {
+		t.Fatalf("expected 2 worker services, got %v", workerSvcs)
+	}
+	if workerSvcs[0] != "seaweed_worker0.service" || workerSvcs[1] != "seaweed_worker1.service" {
+		t.Errorf("worker services wrong: %v", workerSvcs)
 	}
 }
 

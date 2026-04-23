@@ -95,6 +95,8 @@ func runClusterPrepare(cmd *cobra.Command, args []string, opts *ClusterPrepareOp
 		fmt.Printf("  Volumes: %d\n", len(clusterSpec.VolumeServers))
 		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
 		fmt.Printf("  Envoys:  %d\n", len(clusterSpec.EnvoyServers))
+		fmt.Printf("  Admins:  %d\n", len(clusterSpec.AdminServers))
+		fmt.Printf("  Workers: %d\n", len(clusterSpec.WorkerServers))
 		if !utils.PromptForConfirmation("Proceed with host preparation?") {
 			color.Yellow("Host preparation cancelled by user")
 			return nil

@@ -131,9 +131,24 @@ download_and_install() {
     LARGE_SUFFIX="_large_disk"
     # ASSET_PREFIX is "" for OSS and "weed-enterprise-" for enterprise.
     ASSET_PREFIX="{{.AssetPrefix}}"
-    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
     RELEASE_OWNER="{{.ReleaseOwner}}"
     RELEASE_REPO="{{.ReleaseRepo}}"
+
+    # Upstream SeaweedFS only publishes the "_full" OSS tarball for
+    # amd64; arm64 and other architectures only get the non-full
+    # variant. When FULL_SUFFIX is set, probe the release asset with
+    # a HEAD request and fall back to the non-full name if the full
+    # tarball isn't published for this arch/version. This keeps amd64
+    # (where _full exists) on the full variant unchanged.
+    if [ -n "$FULL_SUFFIX" ]; then
+      fullAsset="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
+      fullURL="https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${fullAsset}"
+      if ! curl {{.ProxyConfig}} -sfIL -o /dev/null "$fullURL"; then
+        info "${fullAsset} is not published for ${SUFFIX}; falling back to non-full variant"
+        FULL_SUFFIX=""
+      fi
+    fi
+    assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
 
     info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
     curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"

@@ -1,0 +1,112 @@
+# Typical production SeaweedFS cluster.
+#
+# Three-layer topology:
+#   - Storage layer:       3 masters (Raft quorum) + 3 volume servers
+#   - File access layer:   3 filers (metadata DB is external) + 2 S3 gateways
+#   - Backend operations:  1 admin + 2 workers (off the data path)
+#
+# Scale each layer independently. Increase volume_servers for capacity /
+# throughput, increase s3_servers if S3 traffic saturates a gateway, and
+# increase worker_servers if background maintenance queues back up.
+
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 30000
+  replication: "010"
+
+# Storage layer -------------------------------------------------------------
+
+master_servers:
+  - ip: 10.0.0.11
+    port: 9333
+  - ip: 10.0.0.12
+    port: 9333
+  - ip: 10.0.0.13
+    port: 9333
+
+volume_servers:
+  - ip: 10.0.0.21
+    port: 8382
+    folders:
+      - folder: /data/seaweed
+        disk: ssd
+  - ip: 10.0.0.22
+    port: 8382
+    folders:
+      - folder: /data/seaweed
+        disk: ssd
+  - ip: 10.0.0.23
+    port: 8382
+    folders:
+      - folder: /data/seaweed
+        disk: ssd
+
+# File access layer ---------------------------------------------------------
+#
+# Filers share a single external metadata store (e.g. PostgreSQL, MySQL,
+# Redis, Cassandra, TiKV) configured under `config:`. All three filers must
+# point at the same store so they present a consistent namespace.
+#
+# Replace the CHANGE_ME placeholders below (and the admin_password further
+# down) with real secrets before deploying. Prefer loading credentials from
+# a secret manager or environment-scoped config rather than committing them
+# to source control.
+
+filer_servers:
+  - ip: 10.0.0.31
+    port: 8888
+    config:
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: CHANGE_ME
+      password: CHANGE_ME
+      database: seaweedfs
+      sslmode: disable
+  - ip: 10.0.0.32
+    port: 8888
+    config:
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: CHANGE_ME
+      password: CHANGE_ME
+      database: seaweedfs
+      sslmode: disable
+  - ip: 10.0.0.33
+    port: 8888
+    config:
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: CHANGE_ME
+      password: CHANGE_ME
+      database: seaweedfs
+      sslmode: disable
+
+s3_servers:
+  - ip: 10.0.0.51
+    port: 8333
+    filer: 10.0.0.31:8888
+  - ip: 10.0.0.52
+    port: 8333
+    filer: 10.0.0.32:8888
+
+# Backend operations --------------------------------------------------------
+#
+# The admin server coordinates balancing, EC encoding, vacuum, etc. It is
+# NOT on the data path: restarting it does not affect object store reads
+# or writes. One admin is enough for normal operation.
+
+admin_servers:
+  - ip: 10.0.0.61
+    port: 23646
+    admin_user: admin
+    admin_password: CHANGE_ME
+
+worker_servers:
+  - ip: 10.0.0.71
+    admin: 10.0.0.61:23646
+  - ip: 10.0.0.72
+    admin: 10.0.0.61:23646

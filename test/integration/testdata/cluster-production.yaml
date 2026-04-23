@@ -1,0 +1,90 @@
+# End-to-end production topology exercised by TestProductionSetup.
+#
+# Three-layer deployment spread across the three systemd-enabled
+# containers provided by test/integration/docker-compose.yml:
+#
+#   host1 (172.28.0.10): master0, filer0, admin0
+#   host2 (172.28.0.11): master1, volume0, filer1, s3-0
+#   host3 (172.28.0.12): master2, volume1, filer2, worker0
+#
+# All three filers share a single external PostgreSQL database
+# provisioned by the CI workflow at 172.28.0.20.
+global:
+  dir.conf: "/etc/seaweed"
+  dir.data: "/opt/seaweed"
+  volumeSizeLimitMB: 100
+  replication: "000"
+
+# Storage layer -------------------------------------------------------------
+
+master_servers:
+  - ip: 172.28.0.10
+    port: 9333
+  - ip: 172.28.0.11
+    port: 9333
+  - ip: 172.28.0.12
+    port: 9333
+
+volume_servers:
+  - ip: 172.28.0.11
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/vol0
+        disk: ""
+  - ip: 172.28.0.12
+    port: 8382
+    folders:
+      - folder: /opt/seaweed/vol0
+        disk: ""
+
+# File access layer ---------------------------------------------------------
+
+filer_servers:
+  - ip: 172.28.0.10
+    port: 8888
+    config:
+      type: postgres
+      hostname: 172.28.0.20
+      port: 5432
+      username: seaweed
+      password: seaweedpw
+      database: seaweedfs
+      schema: public
+      sslmode: disable
+  - ip: 172.28.0.11
+    port: 8888
+    config:
+      type: postgres
+      hostname: 172.28.0.20
+      port: 5432
+      username: seaweed
+      password: seaweedpw
+      database: seaweedfs
+      schema: public
+      sslmode: disable
+  - ip: 172.28.0.12
+    port: 8888
+    config:
+      type: postgres
+      hostname: 172.28.0.20
+      port: 5432
+      username: seaweed
+      password: seaweedpw
+      database: seaweedfs
+      schema: public
+      sslmode: disable
+
+s3_servers:
+  - ip: 172.28.0.11
+    port: 8333
+    filer: 172.28.0.11:8888
+
+# Backend operations --------------------------------------------------------
+
+admin_servers:
+  - ip: 172.28.0.10
+    port: 23646
+
+worker_servers:
+  - ip: 172.28.0.12
+    admin: 172.28.0.10:23646
