@@ -85,6 +85,7 @@ SeaweedFS components across the target hosts using SSH.`,
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
 	cmd.Flags().StringVar(&opts.Version, "version", "", "SeaweedFS version to deploy")
+	cmd.Flags().StringVar(&opts.EnvoyVersion, "envoy-version", "", "envoy release to pin (skips the GitHub latest-release lookup)")
 	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to deploy [master|volume|filer|s3|sftp|admin|envoy|worker]")
 	cmd.Flags().BoolVar(&opts.MountDisks, "mount-disks", true, "auto mount disks on volume servers")
 	cmd.Flags().BoolVar(&opts.HostPrep, "host-prep", false, "run host preparation (ulimits, sysctls, firewall, time sync) before deploy")

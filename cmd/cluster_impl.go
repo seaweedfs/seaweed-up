@@ -43,6 +43,7 @@ type ClusterDeployOptions struct {
 	SSHPort      int
 	IdentityFile string
 	Version      string
+	EnvoyVersion string
 	Component    string
 	MountDisks   bool
 	HostPrep     bool
@@ -133,6 +134,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr := manager.NewManager()
 	mgr.SshPort = opts.SSHPort
 	mgr.Version = opts.Version
+	mgr.EnvoyVersion = opts.EnvoyVersion
 	mgr.ComponentToDeploy = opts.Component
 	mgr.PrepareVolumeDisks = opts.MountDisks
 	mgr.HostPrep = opts.HostPrep
