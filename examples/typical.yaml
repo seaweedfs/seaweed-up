@@ -52,30 +52,33 @@ filer_servers:
   - ip: 10.0.0.31
     port: 8888
     config:
-      postgres.enabled: true
-      postgres.hostname: 10.0.0.41
-      postgres.port: 5432
-      postgres.username: seaweed
-      postgres.password: seaweed
-      postgres.database: seaweedfs
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: seaweed
+      password: seaweed
+      database: seaweedfs
+      sslmode: disable
   - ip: 10.0.0.32
     port: 8888
     config:
-      postgres.enabled: true
-      postgres.hostname: 10.0.0.41
-      postgres.port: 5432
-      postgres.username: seaweed
-      postgres.password: seaweed
-      postgres.database: seaweedfs
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: seaweed
+      password: seaweed
+      database: seaweedfs
+      sslmode: disable
   - ip: 10.0.0.33
     port: 8888
     config:
-      postgres.enabled: true
-      postgres.hostname: 10.0.0.41
-      postgres.port: 5432
-      postgres.username: seaweed
-      postgres.password: seaweed
-      postgres.database: seaweedfs
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: seaweed
+      password: seaweed
+      database: seaweedfs
+      sslmode: disable
 
 s3_servers:
   - ip: 10.0.0.51
