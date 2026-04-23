@@ -1,0 +1,203 @@
+name: Integration Tests (Production Setup)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  production-setup-test:
+    name: Three-Layer Production Topology
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Install aws CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli
+
+      - name: Build seaweed-up binary
+        run: go build -v -o seaweed-up .
+
+      - name: Create Docker network
+        run: |
+          docker network create --driver bridge --subnet 172.28.0.0/16 seaweed-up-net
+
+      - name: Start postgres metadata store
+        run: |
+          docker run -d \
+            --name seaweed-up-postgres \
+            --network seaweed-up-net \
+            --ip 172.28.0.20 \
+            -e POSTGRES_USER=seaweed \
+            -e POSTGRES_PASSWORD=seaweedpw \
+            -e POSTGRES_DB=seaweedfs \
+            postgres:15
+
+          echo "Waiting for postgres to be ready..."
+          for i in {1..60}; do
+            if docker exec seaweed-up-postgres pg_isready -U seaweed -d seaweedfs >/dev/null 2>&1; then
+              echo "postgres ready"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "postgres failed to become ready"
+              docker logs seaweed-up-postgres
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Start three systemd-enabled host containers
+        run: |
+          for i in 1 2 3; do
+            ip_suffix=$((9 + i))
+            docker run -d \
+              --name seaweed-up-host$i \
+              --hostname host$i \
+              --privileged \
+              --cgroupns=host \
+              --network seaweed-up-net \
+              --ip 172.28.0.$ip_suffix \
+              -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+              geerlingguy/docker-ubuntu2204-ansible:latest
+          done
+
+          sleep 10
+          docker ps -a
+
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            status=$(docker inspect -f '{{.State.Status}}' $host 2>/dev/null || echo "not found")
+            if [ "$status" != "running" ]; then
+              echo "Container $host is not running (status: $status)"
+              docker logs $host 2>&1 || true
+              exit 1
+            fi
+          done
+
+          echo "Waiting for systemd to initialize..."
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            for i in {1..60}; do
+              state=$(docker exec $host systemctl is-system-running 2>/dev/null || echo "starting")
+              if [ "$state" = "running" ] || [ "$state" = "degraded" ]; then
+                echo "Systemd ready on $host (state: $state)"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Timeout waiting for systemd on $host"
+                docker logs $host 2>&1 || true
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - name: Install SSH on host containers
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl netcat-openbsd"
+            docker exec $host bash -c "mkdir -p /run/sshd"
+            docker exec $host bash -c "sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config"
+            docker exec $host bash -c "systemctl enable ssh && systemctl start ssh"
+          done
+
+          sleep 5
+          for ip in 172.28.0.10 172.28.0.11 172.28.0.12; do
+            for j in {1..30}; do
+              if nc -z $ip 22 2>/dev/null; then
+                echo "SSH ready on $ip"
+                break
+              fi
+              if [ $j -eq 30 ]; then
+                echo "SSH not ready on $ip"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Setup SSH keys
+        working-directory: test/integration
+        run: |
+          mkdir -p .ssh
+          ssh-keygen -t rsa -b 2048 -f .ssh/id_rsa_test -N "" -q
+          PUB_KEY=$(cat .ssh/id_rsa_test.pub)
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker exec $host bash -c "mkdir -p /root/.ssh && chmod 700 /root/.ssh"
+            docker exec $host bash -c "echo '$PUB_KEY' > /root/.ssh/authorized_keys"
+            docker exec $host bash -c "chmod 600 /root/.ssh/authorized_keys && chown root:root /root/.ssh/authorized_keys"
+          done
+
+      - name: Run production setup test
+        working-directory: test/integration
+        env:
+          # Tell the harness to skip docker-compose and use the externally
+          # provisioned containers (network + systemd hosts + postgres)
+          # started in the steps above.
+          SEAWEED_UP_EXTERNAL_ENV: "1"
+        run: |
+          go test -v -tags=integration -timeout=40m \
+            -run '^TestProductionSetup$' \
+            .
+
+      - name: Dump systemd and seaweed state on failure
+        if: failure()
+        run: |
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            echo "========== $host =========="
+            docker exec $host systemctl list-units 'seaweed*' --all --no-pager || true
+            docker exec $host journalctl -u 'seaweed*' --no-pager -n 200 || true
+            docker exec $host ss -tlnp || true
+          done
+          echo "========== postgres =========="
+          docker exec seaweed-up-postgres psql -U seaweed -d seaweedfs -c "\dt" || true
+          docker exec seaweed-up-postgres psql -U seaweed -d seaweedfs -c "SELECT count(*) FROM filemeta;" || true
+
+      - name: Archive logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          docker ps -a > artifacts/docker-ps.log
+          docker logs seaweed-up-postgres > artifacts/postgres.log 2>&1 || true
+          for host in seaweed-up-host1 seaweed-up-host2 seaweed-up-host3; do
+            docker logs $host > artifacts/$host.log 2>&1 || true
+            docker exec $host journalctl -u 'seaweed*' --no-pager > artifacts/$host-seaweed.log 2>&1 || true
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-setup-logs
+          path: artifacts/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-postgres || true
+          docker rm seaweed-up-host1 seaweed-up-host2 seaweed-up-host3 seaweed-up-postgres || true
+          docker network rm seaweed-up-net || true
+          rm -rf test/integration/.ssh
