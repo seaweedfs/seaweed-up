@@ -81,7 +81,7 @@ func newClusterRestartCmd() *cobra.Command {
 
 func addLifecycleFlags(cmd *cobra.Command, opts *ClusterLifecycleOptions) {
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required)")
-	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to target [master|volume|filer|envoy]")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to target [master|volume|filer|envoy|admin|worker]")
 	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
@@ -95,9 +95,9 @@ func runClusterLifecycle(verb manager.LifecycleVerb, opts *ClusterLifecycleOptio
 	}
 
 	switch opts.Component {
-	case "", "master", "volume", "filer", "envoy":
+	case "", "master", "volume", "filer", "envoy", "admin", "worker":
 	default:
-		return fmt.Errorf("invalid --component value %q (want master|volume|filer|envoy)", opts.Component)
+		return fmt.Errorf("invalid --component value %q (want master|volume|filer|envoy|admin|worker)", opts.Component)
 	}
 
 	if !opts.SkipConfirm {
