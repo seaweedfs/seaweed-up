@@ -27,16 +27,25 @@ setup_env() {
 
   MOUNT_POINT={{.MountPoint}}
   DEVICE_PATH={{.DevicePath}}
+  DEVICE_UUID={{.DeviceUUID}}
 }
 
 setup_mount() {
 
   info "Setup Mount Point"
   $SUDO mkdir -p -m 755 ${MOUNT_POINT}
-  info "add ${DEVICE_PATH} ${MOUNT_POINT} to fstab"
-  echo "${DEVICE_PATH} ${MOUNT_POINT} ext4 noatime 0 2" | $SUDO tee -a /etc/fstab
-  info "mount ${DEVICE_PATH} ${MOUNT_POINT}"
-  $SUDO mount ${DEVICE_PATH} ${MOUNT_POINT}
+  if grep -qE "^UUID=${DEVICE_UUID}[[:space:]]" /etc/fstab; then
+    info "UUID=${DEVICE_UUID} already in fstab; skipping append"
+  else
+    info "add UUID=${DEVICE_UUID} (${DEVICE_PATH}) ${MOUNT_POINT} to fstab"
+    echo "UUID=${DEVICE_UUID} ${MOUNT_POINT} ext4 noatime 0 2" | $SUDO tee -a /etc/fstab
+  fi
+  if mountpoint -q "${MOUNT_POINT}"; then
+    info "${MOUNT_POINT} already mounted; skipping mount"
+  else
+    info "mount ${DEVICE_PATH} (UUID=${DEVICE_UUID}) at ${MOUNT_POINT}"
+    $SUDO mount ${MOUNT_POINT}
+  fi
 
   return 0
 }
