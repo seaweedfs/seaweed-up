@@ -64,7 +64,7 @@ func TestValidate_errors(t *testing.T) {
 			want: "unknown role",
 		},
 		{
-			name: "duplicate ip+role+port",
+			name: "duplicate ip+role",
 			yaml: "hosts:\n  - ip: 10.0.0.1\n    roles: [volume]\n  - ip: 10.0.0.1\n    roles: [volume]\n",
 			want: "twice",
 		},
@@ -86,30 +86,16 @@ func TestValidate_errors(t *testing.T) {
 	}
 }
 
-func TestValidate_allowsDupIPAcrossPorts(t *testing.T) {
-	// The design permits multi-instance volume servers on the same host
-	// (distinguished by port). Make sure validation doesn't reject that.
-	path := filepath.Join(t.TempDir(), "inv.yaml")
-	y := "hosts:\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8080\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8081\n"
-	if err := writeFile(path, y); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(path); err != nil {
-		t.Fatalf("multi-instance on same host should validate: %v", err)
-	}
-}
-
 func TestValidate_rejectsConflictingSSHForSameTarget(t *testing.T) {
-	// Multi-instance rows share one SSH session keyed by ip:ssh-port. If
-	// the rows disagree on user/identity the dedup silently picks a winner
-	// and the JSON output can't record the divergence. Reject at parse
-	// time so the bug surfaces before a probe ever runs.
+	// A host with multiple roles shares one SSH session (dedup keyed on
+	// ip:ssh-port). If two rows disagree on user/identity the dedup would
+	// silently pick a winner and the JSON output couldn't record the
+	// divergence. Reject at parse time so the bug surfaces before a
+	// probe ever runs.
 	path := filepath.Join(t.TempDir(), "inv.yaml")
 	y := "defaults:\n  ssh:\n    user: ubuntu\nhosts:\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8080\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8081\n    ssh: { user: deploy }\n"
+		"  - ip: 10.0.0.1\n    roles: [master]\n" +
+		"  - ip: 10.0.0.1\n    roles: [filer]\n    ssh: { user: deploy }\n"
 	if err := writeFile(path, y); err != nil {
 		t.Fatal(err)
 	}
@@ -123,12 +109,11 @@ func TestValidate_rejectsConflictingSSHForSameTarget(t *testing.T) {
 }
 
 func TestValidate_allowsSameSSHForSameTarget(t *testing.T) {
-	// Rows sharing ip:ssh-port with identical effective SSH are fine —
-	// the dedup just folds them onto one probe session.
+	// A host appearing in multiple roles at the same SSH creds is the
+	// common case (master + filer colocated) — must validate.
 	path := filepath.Join(t.TempDir(), "inv.yaml")
 	y := "defaults:\n  ssh:\n    user: ubuntu\nhosts:\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8080\n" +
-		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8081\n" +
+		"  - ip: 10.0.0.1\n    roles: [master]\n" +
 		"  - ip: 10.0.0.1\n    roles: [filer]\n"
 	if err := writeFile(path, y); err != nil {
 		t.Fatal(err)
@@ -172,26 +157,26 @@ func TestProbeHosts_skipsExternal(t *testing.T) {
 }
 
 func TestProbeHosts_dedupsBySSHTarget(t *testing.T) {
-	// Multi-instance volume hosts share one SSH target — one probe per
-	// (ip, ssh-port) is enough; the planner fans the result out later.
+	// A host appearing in multiple roles (common: master + filer colocated)
+	// shares one SSH target — one probe is enough; the planner fans the
+	// result out later. Different SSH ports on the same IP stay distinct.
 	inv := &Inventory{
 		Hosts: []Host{
-			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8080},
-			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8081},
-			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8082, SSH: &SSHConfig{Port: 2222}},
-			{IP: "10.0.0.2", Roles: []string{"volume"}, Port: 8080},
+			{IP: "10.0.0.1", Roles: []string{"master"}},
+			{IP: "10.0.0.1", Roles: []string{"filer"}},
+			{IP: "10.0.0.1", Roles: []string{"worker"}, SSH: &SSHConfig{Port: 2222}},
+			{IP: "10.0.0.2", Roles: []string{"volume"}},
 		},
 	}
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
 	got := inv.ProbeHosts()
-	// Expected: 10.0.0.1:22 (first entry), 10.0.0.1:2222 (third, different SSH port),
-	// and 10.0.0.2:22. The second entry's SSH target dupes the first, so it's dropped.
+	// Expected: 10.0.0.1:22 (first entry — second dedups into it),
+	// 10.0.0.1:2222 (third — distinct SSH port), 10.0.0.2:22.
 	if len(got) != 3 {
 		t.Fatalf("ProbeHosts: got %d entries, want 3: %+v", len(got), got)
 	}
-	// The retained entries should match insertion order.
 	want := []struct {
 		ip      string
 		sshPort int
