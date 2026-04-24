@@ -427,6 +427,8 @@ func TestParseFilerBackendDSN_errors(t *testing.T) {
 		{"unknown scheme", "sqlite:///db", "unsupported"},
 		{"no host", "postgres:///db", "missing host"},
 		{"redis non-integer db", "redis://10.0.0.41:6379/notanumber", "database path must be an integer"},
+		{"port too high", "postgres://host:99999/db", "out of range"},
+		{"port negative", "postgres://host:-1/db", "invalid port"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -438,6 +440,45 @@ func TestParseFilerBackendDSN_errors(t *testing.T) {
 				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantContains)
 			}
 		})
+	}
+}
+
+func TestDeriveFolders_literalExcludeDoesNotCatchSiblings(t *testing.T) {
+	// Literal exclude "/dev/nvme0n1" used to also exclude
+	// /dev/nvme0n10, /dev/nvme0n11, ... because it was stored in the
+	// same map that was swept with HasPrefix. Guard against regression.
+	disk := inventory.DiskDefaults{
+		Exclude:      []string{"/dev/nvme0n1"}, // literal
+		DiskTypeAuto: true,
+	}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
+			{Path: "/dev/nvme0n10", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
+			{Path: "/dev/nvme0n11", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
+		},
+	}
+	folders := deriveFolders(facts, disk, 5000)
+	if len(folders) != 2 {
+		t.Fatalf("expected 2 folders (nvme0n10 + nvme0n11); got %d: %+v", len(folders), folders)
+	}
+}
+
+func TestDeriveFolders_prefixExcludeStillWorks(t *testing.T) {
+	disk := inventory.DiskDefaults{
+		Exclude:      []string{"/dev/sd*"}, // prefix
+		DiskTypeAuto: true,
+	}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/sda", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(true)},
+			{Path: "/dev/sdb", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(true)},
+			{Path: "/dev/nvme0n1", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
+		},
+	}
+	folders := deriveFolders(facts, disk, 5000)
+	if len(folders) != 1 {
+		t.Fatalf("expected 1 folder (only /dev/nvme0n1), got %d", len(folders))
 	}
 }
 

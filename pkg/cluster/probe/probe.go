@@ -164,9 +164,32 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	if err != nil {
 		return nil
 	}
+
+	// Drop disks that host any partitions. lsblk emits the parent as
+	// Type=="disk" with no direct mountpoint / fstype and each partition
+	// as Type=="part" with Path that starts with the parent's Path. Left
+	// unfiltered, a boot disk (e.g. /dev/sda with /dev/sda1 mounted at
+	// /) would pass as "unmounted" at the parent level and the planner
+	// would offer it up for mkfs. Mirrors the partition-skip in
+	// prepareUnmountedDisks.
+	partitioned := make(map[string]struct{})
+	for _, d := range devs {
+		if d.Type != "part" {
+			continue
+		}
+		for _, parent := range devs {
+			if parent.Type == "disk" && strings.HasPrefix(d.Path, parent.Path) {
+				partitioned[parent.Path] = struct{}{}
+			}
+		}
+	}
+
 	out := make([]DiskFact, 0, len(devs))
 	for _, d := range devs {
 		if d.Type != "disk" {
+			continue
+		}
+		if _, isParent := partitioned[d.Path]; isParent {
 			continue
 		}
 		out = append(out, DiskFact{

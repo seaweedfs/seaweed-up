@@ -161,7 +161,10 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	if err != nil {
 		return fmt.Errorf("marshal cluster spec: %w", err)
 	}
-	if err := os.WriteFile(opts.OutputFile, body, 0o644); err != nil {
+	// The generated cluster.yaml may carry the filer metadata-store DSN
+	// (username + password) in config:, so restrict to the deploying
+	// user. Matches gosec G306 / CWE-276.
+	if err := os.WriteFile(opts.OutputFile, body, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", opts.OutputFile, err)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\n",

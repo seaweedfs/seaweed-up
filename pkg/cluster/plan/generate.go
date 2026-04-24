@@ -11,8 +11,11 @@ package plan
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/probe"
@@ -181,8 +184,9 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 	// Post-process: wire S3 and SFTP gateways to the first filer if not
 	// overridden. Matches the convention in examples/typical.yaml and
 	// avoids failing validation in the filer-prerequisite check.
+	// net.JoinHostPort handles IPv6 literals (wraps in brackets).
 	if len(out.FilerServers) > 0 {
-		defaultFiler := fmt.Sprintf("%s:%d", out.FilerServers[0].Ip, DefaultFilerPort)
+		defaultFiler := net.JoinHostPort(out.FilerServers[0].Ip, strconv.Itoa(DefaultFilerPort))
 		for _, s := range out.S3Servers {
 			if s.Filer == "" {
 				s.Filer = defaultFiler
@@ -198,7 +202,7 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 	// Workers point at the first admin server when no explicit admin is
 	// set. Matches the precedence in resolveWorkerDefaultAdmins.
 	if len(out.AdminServers) > 0 {
-		defaultAdmin := fmt.Sprintf("%s:%d", out.AdminServers[0].Ip, DefaultAdminPort)
+		defaultAdmin := net.JoinHostPort(out.AdminServers[0].Ip, strconv.Itoa(DefaultAdminPort))
 		for _, w := range out.WorkerServers {
 			if w.Admin == "" {
 				w.Admin = defaultAdmin
@@ -325,15 +329,18 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 		reservePct = 5 // documented default
 	}
 
-	excluded := make(map[string]struct{}, len(disk.Exclude))
+	// Keep literal exclusions and prefix exclusions in separate
+	// collections. Lumping them together would make a literal like
+	// "/dev/nvme0n1" silently exclude "/dev/nvme0n10" under a naive
+	// HasPrefix sweep. inventory.validateDeviceGlob has already
+	// rejected anything fancier than an optional trailing '*'.
+	literalExcluded := make(map[string]struct{}, len(disk.Exclude))
+	var prefixExcluded []string
 	for _, e := range disk.Exclude {
-		// Exclude list was validated as glob-with-trailing-star or
-		// literal (see inventory.validateDeviceGlob). Strip trailing *
-		// to get the prefix.
 		if len(e) > 0 && e[len(e)-1] == '*' {
-			excluded[e[:len(e)-1]] = struct{}{}
+			prefixExcluded = append(prefixExcluded, e[:len(e)-1])
 		} else {
-			excluded[e] = struct{}{}
+			literalExcluded[e] = struct{}{}
 		}
 	}
 
@@ -349,7 +356,7 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 		if d.FSType != "" {
 			continue // existing filesystem we didn't create
 		}
-		if isExcluded(d.Path, excluded) {
+		if isExcluded(d.Path, literalExcluded, prefixExcluded) {
 			continue
 		}
 		eligible = append(eligible, d)
@@ -371,12 +378,12 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 	return folders
 }
 
-func isExcluded(path string, excluded map[string]struct{}) bool {
-	if _, ok := excluded[path]; ok {
-		return true // literal match
+func isExcluded(path string, literals map[string]struct{}, prefixes []string) bool {
+	if _, ok := literals[path]; ok {
+		return true
 	}
-	for prefix := range excluded {
-		if prefix != "" && len(path) >= len(prefix) && path[:len(prefix)] == prefix {
+	for _, p := range prefixes {
+		if p != "" && strings.HasPrefix(path, p) {
 			return true
 		}
 	}

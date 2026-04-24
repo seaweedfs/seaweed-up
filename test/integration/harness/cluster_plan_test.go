@@ -107,7 +107,14 @@ func TestClusterPlanGreenfield(t *testing.T) {
 // matrices are exercised by the unit tests.
 func writeInventory(path string, hosts []Host, keyPath string) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "defaults:\n  ssh:\n    user: root\n    port: 22\n    identity: %s\n\n", keyPath)
+	fmt.Fprintf(&b, "defaults:\n  ssh:\n    user: root\n    port: 22\n    identity: %s\n", keyPath)
+	// Exclude every device-path prefix a probe might surface. GitHub
+	// Actions runners expose the host's /dev/sda through privileged
+	// containers, which is partitioned but can still leak into the
+	// eligible-disk list on some runner images. Force a deterministic
+	// "no eligible disks" outcome so the test assertions don't depend
+	// on the runner's disk layout.
+	b.WriteString("  disk:\n    exclude: [\"/dev/sd*\", \"/dev/nvme*\", \"/dev/vd*\", \"/dev/xvd*\"]\n\n")
 	b.WriteString("hosts:\n")
 	for i, host := range hosts {
 		roles := []string{"master", "volume"}
@@ -116,7 +123,7 @@ func writeInventory(path string, hosts []Host, keyPath string) error {
 		}
 		fmt.Fprintf(&b, "  - ip: %s\n    roles: [%s]\n", host.IP, strings.Join(roles, ", "))
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o600)
 }
 
 // runPlan invokes the built seaweed-up binary with `cluster plan` args.

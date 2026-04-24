@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -95,9 +96,11 @@ func redisFromURL(u *url.URL) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	// net.JoinHostPort handles IPv6 literals by wrapping them in
+	// brackets so downstream Redis clients can parse "[::1]:6379".
 	out := map[string]interface{}{
 		"type":    "redis2",
-		"address": fmt.Sprintf("%s:%d", host, port),
+		"address": net.JoinHostPort(host, strconv.Itoa(port)),
 	}
 	// Redis URLs carry the password in the user-info field under the
 	// empty username ("redis://:pass@host").
@@ -131,6 +134,9 @@ func hostPort(u *url.URL, defaultPort int) (string, int, error) {
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return "", 0, fmt.Errorf("filer backend DSN: invalid port %q", portStr)
+	}
+	if port < 1 || port > 65535 {
+		return "", 0, fmt.Errorf("filer backend DSN: port %d out of range (1-65535)", port)
 	}
 	return host, port, nil
 }

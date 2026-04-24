@@ -2,11 +2,23 @@ package probe
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 )
+
+// scriptedOp wraps scriptedRunner with the rest of operator.CommandOperator
+// so probeDisks (which downcasts to the full interface for
+// disks.ListBlockDevices) can be exercised with canned lsblk output.
+type scriptedOp struct {
+	scriptedRunner
+}
+
+func (s *scriptedOp) Execute(string) error                    { return fmt.Errorf("scriptedOp: Execute not supported") }
+func (s *scriptedOp) Upload(io.Reader, string, string) error  { return fmt.Errorf("scriptedOp: Upload not supported") }
+func (s *scriptedOp) UploadFile(string, string, string) error { return fmt.Errorf("scriptedOp: UploadFile not supported") }
 
 // scriptedRunner is a Runner that returns canned outputs keyed by a
 // substring match against the command. Tests register a table; the
@@ -140,6 +152,33 @@ func TestReadSpeed_negativeReturnsZero(t *testing.T) {
 	}}
 	if got := readSpeed(r, "virt0"); got != 0 {
 		t.Errorf("readSpeed: got %d, want 0 for -1 kernel report", got)
+	}
+}
+
+func TestProbeDisks_dropsPartitionedParent(t *testing.T) {
+	// Regression: boot disks (e.g. /dev/sda with /dev/sda1 mounted at /)
+	// used to pass through as eligible disks in the probe because
+	// probeDisks only filtered by Type=="disk". The parent carries no
+	// direct FSType / MountPoint — those live on the partitions — so a
+	// naive filter would happily offer the boot disk up for mkfs.
+	//
+	// lsblk output format is KEY="value" space-separated pairs, one
+	// record per line.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sda" PATH="/dev/sda" SIZE="500000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:0" FSUSED="" ROTA="1" MODEL="Host Boot Disk"`,
+		`KNAME="sda1" PATH="/dev/sda1" SIZE="499000000000" LABEL="" UUID="11111111-1111-1111-1111-111111111111" FSTYPE="ext4" TYPE="part" MOUNTPOINT="/" MAJ:MIN="8:1" FSUSED="" ROTA="1" MODEL=""`,
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="1000000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="1" MODEL="Data HDD"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 eligible disk (partitioned parent dropped), got %d: %+v", len(disks), disks)
+	}
+	if disks[0].Path != "/dev/sdb" {
+		t.Errorf("got %q, want /dev/sdb", disks[0].Path)
 	}
 }
 
