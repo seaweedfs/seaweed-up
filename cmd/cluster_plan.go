@@ -148,7 +148,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	for _, f := range facts {
 		factsByTarget[fmt.Sprintf("%s:%d", f.IP, f.SSHPort)] = f
 	}
-	spec, err := plan.Generate(inv, factsByTarget, plan.Options{
+	spec, report, err := plan.Generate(inv, factsByTarget, plan.Options{
 		ClusterName:       opts.ClusterName,
 		VolumeSizeLimitMB: opts.VolumeSizeLimitMB,
 		FilerBackend:      backend,
@@ -156,6 +156,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	if err != nil {
 		return fmt.Errorf("generate cluster spec: %w", err)
 	}
+	printSkipReport(report)
 	body, err := plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
 	if err != nil {
 		return fmt.Errorf("marshal cluster spec: %w", err)
@@ -166,6 +167,24 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\n",
 		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers))
 	return nil
+}
+
+// printSkipReport surfaces Generate's skip decisions to stderr so the
+// operator isn't left wondering why a host they put in the inventory
+// didn't appear in cluster.yaml. Quiet when Report is zero-valued.
+func printSkipReport(report plan.Report) {
+	if len(report.ProbeFailed) > 0 {
+		_, _ = color.New(color.FgYellow).Fprintln(os.Stderr, "skipped hosts (probe failed):")
+		for _, f := range report.ProbeFailed {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", f.IP, f.Reason)
+		}
+	}
+	if len(report.VolumeHostsNoDisks) > 0 {
+		_, _ = color.New(color.FgYellow).Fprintln(os.Stderr, "dropped volume role (no eligible free disks):")
+		for _, ip := range report.VolumeHostsNoDisks {
+			fmt.Fprintf(os.Stderr, "  %s\n", ip)
+		}
+	}
 }
 
 // resolveFilerBackend picks the filer DSN from (in priority order)

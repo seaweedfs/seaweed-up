@@ -49,7 +49,7 @@ func runGolden(t *testing.T, invPath, goldenPath string, facts map[string]probe.
 		t.Fatalf("inventory.Load(%s): %v", invPath, err)
 	}
 
-	spec, err := Generate(inv, facts, opts)
+	spec, _, err := Generate(inv, facts, opts)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -135,7 +135,12 @@ func TestGenerate_mixedFiveWithFilerBackend(t *testing.T) {
 		})
 }
 
-func TestGenerate_volumeHostWithNoFreeDisks(t *testing.T) {
+func TestGenerate_volumeHostWithNoFreeDisksIsDropped(t *testing.T) {
+	// A volume role on a host with no eligible disks is dropped entirely.
+	// Emitting an entry with folders: [] would start `weed volume`
+	// without -dir, which runs against the working directory instead of
+	// failing loudly. Surfacing it in Report.VolumeHostsNoDisks lets the
+	// CLI warn the operator, who can fix the inventory and re-run.
 	inv := &inventory.Inventory{
 		Hosts: []inventory.Host{
 			{IP: "10.0.0.1", Roles: []string{"master"}},
@@ -145,18 +150,94 @@ func TestGenerate_volumeHostWithNoFreeDisks(t *testing.T) {
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	spec, err := Generate(inv, nil, Options{})
+	spec, report, err := Generate(inv, nil, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if len(spec.VolumeServers) != 1 {
-		t.Fatalf("expected 1 volume entry, got %d", len(spec.VolumeServers))
+	if len(spec.VolumeServers) != 0 {
+		t.Errorf("expected 0 volume entries (role dropped), got %d", len(spec.VolumeServers))
 	}
-	// No facts → no disks. The volume entry stands but with empty
-	// Folders so `cluster deploy` fails validation early instead of
-	// booting a volume server with no data dirs.
-	if len(spec.VolumeServers[0].Folders) != 0 {
-		t.Errorf("expected 0 folders, got %d", len(spec.VolumeServers[0].Folders))
+	if len(report.VolumeHostsNoDisks) != 1 || report.VolumeHostsNoDisks[0] != "10.0.0.2" {
+		t.Errorf("Report.VolumeHostsNoDisks = %+v, want [10.0.0.2]", report.VolumeHostsNoDisks)
+	}
+	// The master on a separate host is still emitted.
+	if len(spec.MasterServers) != 1 {
+		t.Errorf("expected 1 master entry, got %d", len(spec.MasterServers))
+	}
+}
+
+func TestGenerate_hostWithProbeErrorIsSkippedEntirely(t *testing.T) {
+	// Any host with a non-empty ProbeError is dropped from every
+	// *_servers section. Emitting partial entries for unreachable hosts
+	// produces a cluster.yaml that deploy can't actually apply.
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.1", Roles: []string{"master", "filer"}},
+			{IP: "10.0.0.2", Roles: []string{"master", "filer"}},
+			{IP: "10.0.0.3", Roles: []string{"master"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.1:22": {IP: "10.0.0.1", SSHPort: 22},
+		"10.0.0.2:22": {IP: "10.0.0.2", SSHPort: 22, ProbeError: "dial tcp: i/o timeout"},
+		"10.0.0.3:22": {IP: "10.0.0.3", SSHPort: 22},
+	}
+	spec, report, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(spec.MasterServers) != 2 {
+		t.Errorf("expected 2 masters (one dropped), got %d: %+v", len(spec.MasterServers), spec.MasterServers)
+	}
+	if len(spec.FilerServers) != 1 {
+		t.Errorf("expected 1 filer (the other host's filer role dropped too), got %d", len(spec.FilerServers))
+	}
+	if len(report.ProbeFailed) != 1 || report.ProbeFailed[0].IP != "10.0.0.2" {
+		t.Errorf("Report.ProbeFailed = %+v, want one entry for 10.0.0.2", report.ProbeFailed)
+	}
+}
+
+func TestGenerate_adminGetsChangeMePlaceholders(t *testing.T) {
+	// admin_servers require admin_user / admin_password. Leaving them
+	// empty starts the admin UI unauthenticated because
+	// AdminServerSpec.WriteToBuffer only emits auth flags when they're
+	// set. Plan writes CHANGE_ME placeholders matching the convention
+	// in examples/typical.yaml.
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.1", Roles: []string{"master"}},
+			{IP: "10.0.0.61", Roles: []string{"admin"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	spec, _, err := Generate(inv, nil, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(spec.AdminServers) != 1 {
+		t.Fatalf("expected 1 admin, got %d", len(spec.AdminServers))
+	}
+	if spec.AdminServers[0].AdminUser != "admin" {
+		t.Errorf("admin_user: got %q, want admin", spec.AdminServers[0].AdminUser)
+	}
+	if spec.AdminServers[0].AdminPassword != AdminPasswordPlaceholder {
+		t.Errorf("admin_password: got %q, want %q", spec.AdminServers[0].AdminPassword, AdminPasswordPlaceholder)
+	}
+
+	// Marshal output should warn about the CHANGE_ME placeholder in the
+	// header so operators don't miss it.
+	body, err := Marshal(spec, MarshalOptions{Now: goldenStamp})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if want := "admin_password"; !containsFold(string(body), want) ||
+		!containsFold(string(body), "CHANGE_ME") {
+		t.Errorf("expected header to warn about CHANGE_ME admin_password, got:\n%s", body)
 	}
 }
 
@@ -174,7 +255,12 @@ func TestGenerate_labelsMapToDataCenterAndRack(t *testing.T) {
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	spec, err := Generate(inv, nil, Options{})
+	// Give the volume host at least one eligible disk so the volume
+	// role isn't dropped (no-disks path is covered separately).
+	facts := map[string]probe.HostFacts{
+		"10.0.0.2:22": {IP: "10.0.0.2", SSHPort: 22, Disks: synthesizeDisks(1, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -205,7 +291,7 @@ func TestGenerate_filerBackendFannedOutToEveryFiler(t *testing.T) {
 		"hostname": "10.0.0.41",
 		"port":     5432,
 	}
-	spec, err := Generate(inv, nil, Options{FilerBackend: backend})
+	spec, _, err := Generate(inv, nil, Options{FilerBackend: backend})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -237,7 +323,7 @@ func TestGenerate_s3AndWorkerWiring(t *testing.T) {
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	spec, err := Generate(inv, nil, Options{})
+	spec, _, err := Generate(inv, nil, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

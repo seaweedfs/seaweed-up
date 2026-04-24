@@ -58,17 +58,49 @@ type Options struct {
 	FilerBackend map[string]interface{}
 }
 
-// Generate turns the inventory + probed facts into a Specification.
-// Pure function — no I/O, no side effects. Hosts that declare no SSH
-// roles (role: external only) are passed through to the role-entry
-// generation but contribute no entries; their IP may still be referenced
-// elsewhere (e.g. a filer backend DSN).
+// Report collects hosts/roles that Generate chose to skip so the CLI can
+// surface them to the operator. Zero-value (no skips) is the happy path.
+type Report struct {
+	// ProbeFailed lists hosts dropped entirely because their probe set
+	// HostFacts.ProbeError. These hosts contribute no entries to any
+	// *_servers section. The inventory can be re-run against plan once
+	// the host is reachable.
+	ProbeFailed []ProbeFailure
+
+	// VolumeHostsNoDisks lists hosts whose `volume` role was dropped
+	// because no eligible free disks were discovered on them. Other
+	// roles on the same host (master, filer, ...) are still emitted.
+	VolumeHostsNoDisks []string
+}
+
+// ProbeFailure is a single skipped host + the reason.
+type ProbeFailure struct {
+	IP     string
+	Reason string
+}
+
+// Generate turns the inventory + probed facts into a Specification plus
+// a Report describing hosts/roles that had to be skipped. Pure function —
+// no I/O, no side effects. Hosts in the `external` role contribute no
+// entries.
+//
+// Skip rules (per docs/design/inventory-and-plan.md edge-case table):
+//   - A host whose probe failed (HostFacts.ProbeError != "") is skipped
+//     entirely. All of its roles are dropped and the host is listed in
+//     Report.ProbeFailed. Emitting an entry for an unreachable host would
+//     produce a plan that looks deployable but fails only at deploy.
+//   - A host tagged `volume` whose probe returned no eligible disks is
+//     dropped from volume_servers only. Other roles on the same host
+//     still emit entries. The host is listed in Report.VolumeHostsNoDisks.
+//     An empty folders: list would start a volume server with no data
+//     dirs, which is worse than refusing to write one.
 //
 // factsByTarget is keyed by "<ip>:<ssh-port>" so callers can produce it
 // from probe.HostFacts directly.
-func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts, opts Options) (*spec.Specification, error) {
+func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts, opts Options) (*spec.Specification, Report, error) {
+	var report Report
 	if inv == nil {
-		return nil, fmt.Errorf("inventory is nil")
+		return nil, report, fmt.Errorf("inventory is nil")
 	}
 	if factsByTarget == nil {
 		factsByTarget = map[string]probe.HostFacts{}
@@ -98,6 +130,14 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 		target := sshTargetKey(h.IP, ssh.Port)
 		facts := factsByTarget[target]
 
+		// Skip the whole host if its probe failed. Emitting partial
+		// entries for unreachable hosts produces a cluster.yaml that
+		// looks usable but only fails at deploy time.
+		if facts.ProbeError != "" {
+			report.ProbeFailed = append(report.ProbeFailed, ProbeFailure{IP: h.IP, Reason: facts.ProbeError})
+			continue
+		}
+
 		for _, role := range h.Roles {
 			switch role {
 			case inventory.RoleExternal:
@@ -109,11 +149,17 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 			case inventory.RoleMaster:
 				out.MasterServers = append(out.MasterServers, newMasterSpec(h, ssh))
 			case inventory.RoleVolume:
-				vol, err := newVolumeSpec(h, ssh, facts, inv.Defaults.Disk, volumeSizeLimitMB)
-				if err != nil {
-					return nil, fmt.Errorf("volume host %s: %w", h.IP, err)
+				folders := deriveFolders(facts, inv.Defaults.Disk, volumeSizeLimitMB)
+				if len(folders) == 0 {
+					// Emitting a volume_server entry with no folders
+					// would start `weed volume` without -dir, which
+					// silently runs against the working directory
+					// rather than the intended data disks. Drop the
+					// role and warn loudly.
+					report.VolumeHostsNoDisks = append(report.VolumeHostsNoDisks, h.IP)
+					continue
 				}
-				out.VolumeServers = append(out.VolumeServers, vol)
+				out.VolumeServers = append(out.VolumeServers, newVolumeSpec(h, ssh, folders))
 			case inventory.RoleFiler:
 				out.FilerServers = append(out.FilerServers, newFilerSpec(h, ssh, opts.FilerBackend))
 			case inventory.RoleS3:
@@ -127,7 +173,7 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 			case inventory.RoleEnvoy:
 				out.EnvoyServers = append(out.EnvoyServers, newEnvoySpec(h, ssh))
 			default:
-				return nil, fmt.Errorf("unknown role %q on host %s", role, h.IP)
+				return nil, report, fmt.Errorf("unknown role %q on host %s", role, h.IP)
 			}
 		}
 	}
@@ -160,7 +206,7 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 		}
 	}
 
-	return out, nil
+	return out, report, nil
 }
 
 func sshTargetKey(ip string, port int) string {
@@ -178,17 +224,16 @@ func newMasterSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.MasterServe
 	}
 }
 
-func newVolumeSpec(h *inventory.Host, ssh inventory.SSHConfig, facts probe.HostFacts, disk inventory.DiskDefaults, volumeSizeLimitMB int) (*spec.VolumeServerSpec, error) {
-	v := &spec.VolumeServerSpec{
+func newVolumeSpec(h *inventory.Host, ssh inventory.SSHConfig, folders []*spec.FolderSpec) *spec.VolumeServerSpec {
+	return &spec.VolumeServerSpec{
 		Ip:         h.IP,
 		PortSsh:    ssh.Port,
 		Port:       DefaultVolumePort,
 		PortGrpc:   DefaultVolumeGrpcPort,
 		DataCenter: h.Labels["zone"],
 		Rack:       h.Labels["rack"],
+		Folders:    folders,
 	}
-	v.Folders = deriveFolders(facts, disk, volumeSizeLimitMB)
-	return v, nil
 }
 
 func newFilerSpec(h *inventory.Host, ssh inventory.SSHConfig, backend map[string]interface{}) *spec.FilerServerSpec {
@@ -227,11 +272,24 @@ func newSftpSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.SftpServerSpe
 	}
 }
 
+// AdminPasswordPlaceholder marks the admin_password field as unfilled.
+// Callers (Marshal, the CLI summary) detect this value and tell the
+// operator to substitute a real secret before deploy. Kept in sync with
+// the CHANGE_ME convention in examples/typical.yaml.
+const AdminPasswordPlaceholder = "CHANGE_ME"
+
 func newAdminSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.AdminServerSpec {
+	// Emit CHANGE_ME placeholders so the generated cluster.yaml matches
+	// the convention in examples/typical.yaml and, importantly, so the
+	// deployed admin UI isn't left unauthenticated by omission. The
+	// AdminServerSpec only writes auth flags when they're set, so
+	// leaving these empty silently produces an open admin UI.
 	return &spec.AdminServerSpec{
-		Ip:      h.IP,
-		PortSsh: ssh.Port,
-		Port:    DefaultAdminPort,
+		Ip:            h.IP,
+		PortSsh:       ssh.Port,
+		Port:          DefaultAdminPort,
+		AdminUser:     "admin",
+		AdminPassword: AdminPasswordPlaceholder,
 	}
 }
 

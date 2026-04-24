@@ -52,16 +52,18 @@ func TestClusterPlanGreenfield(t *testing.T) {
 		t.Fatalf("unmarshal generated cluster.yaml: %v\nbody:\n%s", err, data)
 	}
 
-	// Shape assertions: 3 masters + 3 volumes + 1 filer matching the
-	// inventory's role assignments. IPs must round-trip.
+	// Shape assertions. The harness containers expose only an overlay
+	// rootfs — no free block devices — so the volume role gets dropped
+	// (Report.VolumeHostsNoDisks, surfaced on stderr). Masters and the
+	// filer colocated with host[0] do still land in cluster.yaml.
 	if got.Name != "harness-cluster" {
 		t.Errorf("cluster_name: got %q, want harness-cluster", got.Name)
 	}
 	if len(got.MasterServers) != 3 {
 		t.Fatalf("master_servers: got %d, want 3", len(got.MasterServers))
 	}
-	if len(got.VolumeServers) != 3 {
-		t.Fatalf("volume_servers: got %d, want 3", len(got.VolumeServers))
+	if len(got.VolumeServers) != 0 {
+		t.Errorf("volume_servers: got %d, want 0 (no free disks in harness containers)", len(got.VolumeServers))
 	}
 	if len(got.FilerServers) != 1 {
 		t.Fatalf("filer_servers: got %d, want 1", len(got.FilerServers))
@@ -72,16 +74,18 @@ func TestClusterPlanGreenfield(t *testing.T) {
 	if got.MasterServers[0].Port != 9333 {
 		t.Errorf("master[0].port: got %d, want 9333", got.MasterServers[0].Port)
 	}
-	if got.VolumeServers[0].Port != 8080 {
-		t.Errorf("volume[0].port: got %d, want 8080", got.VolumeServers[0].Port)
-	}
 
 	// Probe-error sanity: every host should have been reachable; plan
 	// would still succeed on unreachable hosts but leave ProbeError in
 	// the facts. We can't read facts from -o output, so instead confirm
-	// stderr carries "ok" lines for every host, not "FAIL".
+	// stderr carries no "FAIL:" lines.
 	if strings.Contains(out, "FAIL:") {
 		t.Errorf("cluster plan reported a FAIL probe; stderr was:\n%s", out)
+	}
+	// The volume-role drop should be reported on stderr so operators
+	// aren't left wondering why volume_servers is empty.
+	if !strings.Contains(out, "dropped volume role") {
+		t.Errorf("expected stderr to report the volume-role drop; got:\n%s", out)
 	}
 
 	// --force must overwrite an existing file. Without --force, the

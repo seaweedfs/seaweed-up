@@ -57,6 +57,16 @@ func Marshal(spec *spec.Specification, opts MarshalOptions) ([]byte, error) {
 		header.WriteString("# NOTE: filer_servers[*].config is empty. Fill in the metadata-store\n")
 		header.WriteString("# credentials before deploy, or re-run plan with --filer-backend.\n")
 	}
+	// Similarly call out CHANGE_ME admin credentials. The AdminServerSpec
+	// only writes auth flags when set, so leaving CHANGE_ME in place
+	// would start an admin UI with a weak password and leaving it empty
+	// would leave the UI unauthenticated entirely.
+	if specHasPlaceholderAdminCredentials(spec) {
+		header.WriteString("#\n")
+		header.WriteString("# NOTE: admin_servers[*].admin_password is the placeholder \"CHANGE_ME\".\n")
+		header.WriteString("# Replace it with a real secret (loaded from a secret manager if possible)\n")
+		header.WriteString("# before deploy — an unfilled value is NOT ignored by the admin UI.\n")
+	}
 	header.WriteString("\n")
 
 	// yaml.Marshal always ends in a newline; concatenate directly.
@@ -69,6 +79,17 @@ func Marshal(spec *spec.Specification, opts MarshalOptions) ([]byte, error) {
 func specHasBlankFilerConfig(s *spec.Specification) bool {
 	for _, f := range s.FilerServers {
 		if len(f.Config) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// specHasPlaceholderAdminCredentials reports whether any admin_server
+// entry still carries the CHANGE_ME placeholder password.
+func specHasPlaceholderAdminCredentials(s *spec.Specification) bool {
+	for _, a := range s.AdminServers {
+		if a.AdminPassword == AdminPasswordPlaceholder {
 			return true
 		}
 	}
