@@ -1,17 +1,26 @@
 # Design: inventory → plan → deploy
 
-Status: draft · Owner: @chrislusf · Last updated: 2026-04-23
+Status: draft · Owner: @chrislusf · Last updated: 2026-04-24
 
 ## Summary
 
-Add two commands to `seaweed-up` so operators don't have to hand-author a
-full cluster YAML before their first deploy:
+Add one command — `seaweed-up cluster plan` — so operators don't have
+to hand-author a full cluster YAML before their first deploy. It grows
+in capability across three phases; in all phases it reads the same
+inventory file:
 
-- `seaweed-up cluster probe` — SSH to each host in an inventory file,
-  collect hardware facts (disks, CPU, memory, network), emit JSON.
-- `seaweed-up cluster plan` — same probe, plus synthesis of a reviewable
-  `cluster.yaml` that the existing `cluster deploy` command consumes
-  unchanged.
+- **Phase 1** (`--json`, probe-only) — SSH to each host in the
+  inventory and emit hardware facts (disks, CPU, memory, network) as
+  JSON.
+- **Phase 2** (`-o cluster.yaml`, greenfield synthesis) — same probe,
+  plus synthesis of a reviewable `cluster.yaml` that the existing
+  `cluster deploy` command consumes unchanged.
+- **Phase 3** (`-o cluster.yaml`, append-merge) — re-runs after
+  growing the inventory leave every existing entry in
+  `cluster.yaml` byte-identical and only append new hosts.
+
+Mirrors Terraform's model where `plan` subsumes the refresh step —
+users learn one verb.
 
 The inventory file is deliberately minimal: hosts, roles, SSH settings,
 and a couple of templating knobs. Everything else is discovered on the
@@ -179,12 +188,21 @@ type DiskFacts struct {
 }
 ```
 
-Probe failures are per-host and non-fatal: the host is skipped, a warning
-is printed to stderr, and no entry is emitted for it. Re-running picks it
-up once reachable.
+Probe failures are per-host and non-fatal: a warning is printed to
+stderr, and a `HostFacts` entry is still emitted with `ProbeError` set
+and the other fields left at their zero values. Emitting the failed
+entry (rather than dropping it) keeps the JSON contract 1:1 with the
+deduplicated set of SSH targets produced by `ProbeHosts` —
+one record per `ip:ssh-port` actually probed. Downstream scripts can
+distinguish "target is unreachable" from "target is absent from the
+probe plan", and Phase 2 `plan` can decide per-role whether to skip
+the host, fail fast, or retain a stale entry. Re-running picks it up
+once reachable.
 
-`cluster probe -i inventory.yaml --json` prints the `HostFacts` slice
-and exits. Handy for scripting and for debugging `plan` output.
+`cluster plan -i inventory.yaml --json` prints the `HostFacts` slice
+and exits. Handy for scripting, and — until Phase 2 lands the
+`-o cluster.yaml` synthesis mode — the primary way to see what the
+planner will observe.
 
 ## Plan: generation
 
@@ -328,27 +346,30 @@ field order, and whatever style choices the operator made.
 
 ### Keying
 
-An entry is identified by `ip:port` within a given `*_servers` section.
-SeaweedFS operators commonly run multiple volume-server processes per
-host (typically one per physical disk, to work around a single
-process's resource limits), so keying by `ip` alone would collapse those
-instances into a single slot and break the append-only guarantee. `port`
-is the service port on the entry (`Port`, defaulting to the spec's
-well-known port), not the SSH port.
+An entry in a `*_servers` section is identified by `ip:port` — the key
+that `deploy` already uses for state and reconciliation. The `port`
+field in the key is the spec's service port (`Port`), not the SSH port.
+The inventory does not carry a per-host service-port override:
+`cluster plan` emits the role's well-known default (9333, 8888, 8080,
+…) unless the operator later hand-edits `cluster.yaml`. That keeps the
+inventory minimal and avoids overloading a single `port:` field across
+roles that have different service ports.
 
-When the inventory supplies only one role-instance per host — the common
-case — `plan` picks the default service port and the key degrades
-naturally to `10.0.0.21:8080`. Multi-instance support falls out for
-free: an inventory may declare a host twice in the `volume` role with
-different `port` values, and each becomes a distinct entry.
+Inventories are host-centric; a host with `roles: [master, filer]`
+produces two entries, in two different sections, both keyed at
+`<ip>:<role's default port>`. Multi-process-per-host (e.g. several
+volume processes sharing a physical server) is a planner concern —
+nothing in Phase 1 emits it; a later phase can add a flag like
+`--volumes-per-host N` that synthesizes multiple entries with
+non-default ports.
 
 ### Rules
 
 ```
 for section in (master_servers, volume_servers, filer_servers, …):
     existing = index of existing entries by ip:port
-    for host-instance in inventory with that role:
-        key = ip ":" (inventory port OR default service port)
+    for host in inventory with that role:
+        key = ip ":" role-default-port
         if key in existing:
             # never touch. if probed facts have drifted, emit a
             # warning-only report ("10.0.0.21:8080 now has 6 disks,
@@ -384,7 +405,7 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 | --- | --- |
 | Host unreachable during probe | Skip; log warning on stderr; leave `cluster.yaml` untouched for that host. Re-runnable. |
 | Host in inventory has no role | Error at inventory-parse time. |
-| Duplicate `ip:port` pairs in inventory (same role, same port) | Error at inventory-parse time. Duplicate IPs across different ports (multi-instance) are allowed. |
+| Duplicate (ip, role) in inventory | Error at inventory-parse time. Duplicate IPs across different roles (a colocated master+filer, say) are allowed. |
 | Host IP changed (old removed, new added) | Plan sees a new host and an orphaned one. New appended; orphan warned about. No auto-migration. |
 | Role=volume but no free disks found | Emit `volume_server` entry with `folders: []` plus a `# no free disks found on $host` comment. `deploy` will fail validation — problem surfaces at plan time, not mid-deploy. |
 | `cluster.yaml` does not yet exist | Generate from scratch. Header comment: `# Generated by seaweed-up plan from inventory.yaml. Safe to hand-edit.` |
@@ -396,10 +417,11 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 
 ```
 cmd/
-  cluster_plan.go            # flags: -i, -o, --dry-run, --refresh-host,
-                             #         --filer-backend, --filer-backend-file,
-                             #         --volume-size-limit-mb, --concurrency
-  cluster_probe.go           # probe-only: JSON to stdout
+  cluster_plan.go            # unified command. flags: -i, -o, --json,
+                             #   --dry-run, --refresh-host, --filer-backend,
+                             #   --filer-backend-file, --volume-size-limit-mb,
+                             #   --concurrency. Phase 1 implements --json only;
+                             #   Phase 2 adds -o; Phase 3 adds --dry-run.
 
 pkg/cluster/
   inventory/
@@ -430,10 +452,12 @@ pkg/disks/
 
 ## Phased rollout
 
-1. **Phase 1: probe.** `seaweed-up cluster probe -i inventory.yaml --json`.
+1. **Phase 1: plan --json (probe-only).** `seaweed-up cluster plan -i inventory.yaml --json`.
    Prints `HostFacts` per host. Read-only on hosts; purely additive in
    the codebase. Validates SSH/probe plumbing before anyone depends on
-   it. Deliverable: one PR.
+   it. The command is named `plan` from day one (mirroring Terraform's
+   model where refresh is subsumed into plan); in Phase 1 it only does
+   the probe step. Deliverable: one PR.
 2. **Phase 2: plan (greenfield).** `plan -o cluster.yaml` when `-o` does
    not yet exist. Full generation, no merge yet. Golden tests for 1-host
    dev, 3+3+3 typical, 5-node mixed. Deliverable: one PR.
@@ -460,11 +484,16 @@ Phases 1–3 are the minimum product. Phase 4 is ice cream.
    `--filer-backend-file` (recommended — no `ps` leak),
    `SEAWEEDUP_FILER_BACKEND` env var, or direct `--filer-backend` flag
    (convenient but leaks the DSN via `/proc/<pid>/cmdline`).
-4. **Merge key is `ip:port`, not `ip`.** SeaweedFS operators commonly
-   run multiple volume-server processes per host; `ip` alone would
-   collapse them into a single slot and break append-only. The key
-   degrades naturally to `ip:<default-port>` for the single-instance
-   case.
+4. **Merge key is `ip:port` in `cluster.yaml`, but inventory carries
+   no service-port field.** The cluster.yaml spec already uses
+   `ip:port` and `plan` preserves that. The inventory stays minimal:
+   it does not carry a per-host service-port override. `plan` emits
+   the role's well-known default (9333, 8888, 8080, …) on synthesis,
+   and if an operator later wants multiple volume processes on one
+   host they hand-edit `cluster.yaml` or wait for a future
+   `--volumes-per-host` flag. Keeps inventory host-centric and avoids
+   overloading one `port:` field across roles with different service
+   ports.
 5. **`Max` formula makes units explicit.** `Size` from probe is bytes,
    `volumeSizeLimitMB` is MiB; convert via `Size / (1024 * 1024)`
    before the divide. The reserve is `min(5 %, 10 GiB)` as proposed in

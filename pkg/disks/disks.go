@@ -20,6 +20,18 @@ type BlockDevice struct {
 	MountPoint     string
 	SerialId       string
 	Type           string
+	// Rotational is true for spinning disks, false for SSDs/NVMe, and nil
+	// when lsblk's ROTA column is empty (virtio, loop, some
+	// device-mapper nodes). Tri-state so the planner can distinguish
+	// "known SSD" from "we couldn't tell" — treating unknown as SSD by
+	// default would silently mis-tag HDDs on quirky hardware. Parsed
+	// from lsblk's ROTA column (1 = rotational, 0 = not, empty =
+	// unknown).
+	Rotational *bool
+	// Model is the drive model string reported by lsblk's MODEL column
+	// (e.g. "Samsung SSD 870 EVO"). Purely informational — surfaced in
+	// probe output for audit/debug; not used for any decision.
+	Model string
 }
 
 func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []*BlockDevice, mountpoints map[string]struct{}, err error) {
@@ -40,6 +52,8 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				"MOUNTPOINT", // mount point
 				"MAJ:MIN",    // major/minor device numbers
 				"FSUSED",
+				"ROTA",  // 1 for rotational, 0 for non-rotational
+				"MODEL", // device model string
 			}, ","),
 		}, " "))
 	if err != nil {
@@ -90,6 +104,19 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				mountpoints[value] = struct{}{}
 			case "MAJ:MIN":
 				majorMinor = pair[2]
+			case "ROTA":
+				switch value {
+				case "1":
+					t := true
+					dev.Rotational = &t
+				case "0":
+					f := false
+					dev.Rotational = &f
+				}
+				// Empty or any other value leaves Rotational as nil
+				// ("unknown"). See the field comment above.
+			case "MODEL":
+				dev.Model = strings.TrimSpace(value)
 			}
 		}
 		if !hasValidPrefix {
