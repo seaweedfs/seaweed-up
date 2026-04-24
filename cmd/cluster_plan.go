@@ -14,34 +14,40 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/probe"
 )
 
-// ClusterProbeOptions holds flags for `cluster probe`.
-type ClusterProbeOptions struct {
+// ClusterPlanOptions holds flags for `cluster plan`.
+//
+// Phase 1 scope: SSH-probe the inventory and emit HostFacts as JSON.
+// Phase 2 will grow `-o cluster.yaml` synthesis; Phase 3 will grow
+// append-merge semantics. See docs/design/inventory-and-plan.md.
+type ClusterPlanOptions struct {
 	InventoryFile string
 	JSONOutput    bool
 	Concurrency   int
 }
 
-func newClusterProbeCmd() *cobra.Command {
-	opts := &ClusterProbeOptions{
+func newClusterPlanCmd() *cobra.Command {
+	opts := &ClusterPlanOptions{
 		JSONOutput:  true,
 		Concurrency: 10,
 	}
 
 	cmd := &cobra.Command{
-		Use:   "probe",
-		Short: "Probe hosts in an inventory for hardware facts",
-		Long: `Probe SSHes into each host in the inventory, collects disks,
-CPU, memory, and network facts, and prints them as JSON.
+		Use:   "plan",
+		Short: "Probe hosts in an inventory and (eventually) emit a reviewable cluster.yaml",
+		Long: `Plan SSHes into each host in the inventory, collects disks, CPU,
+memory, and network facts, and prints them as JSON.
 
-Intended both as a debugging tool (to see what 'cluster plan' would
-observe) and as a scripting primitive. Purely read-only — no state
-changes on the target hosts.
+This is Phase 1 of the inventory → plan → deploy flow: probe-only.
+Phase 2 will add synthesis of a reviewable cluster.yaml (via -o), and
+Phase 3 will add append-merge so growing the inventory only appends to
+the generated file. See docs/design/inventory-and-plan.md for the full
+plan and the inventory schema.
 
-See docs/design/inventory-and-plan.md for the inventory schema.`,
-		Example: `  seaweed-up cluster probe -i inventory.yaml
-  seaweed-up cluster probe -i inventory.yaml --concurrency 20 > facts.json`,
+Purely read-only — no state changes on the target hosts.`,
+		Example: `  seaweed-up cluster plan -i inventory.yaml
+  seaweed-up cluster plan -i inventory.yaml --concurrency 20 > facts.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runClusterProbe(cmd, opts)
+			return runClusterPlan(cmd, opts)
 		},
 	}
 
@@ -52,7 +58,7 @@ See docs/design/inventory-and-plan.md for the inventory schema.`,
 	return cmd
 }
 
-func runClusterProbe(cmd *cobra.Command, opts *ClusterProbeOptions) error {
+func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	inv, err := inventory.Load(opts.InventoryFile)
 	if err != nil {
 		return err
@@ -98,7 +104,15 @@ func runClusterProbe(cmd *cobra.Command, opts *ClusterProbeOptions) error {
 			return nil
 		})
 	}
-	_ = eg.Wait()
+	if err := eg.Wait(); err != nil {
+		// A goroutine returned an error (typically context cancellation
+		// from Ctrl+C). Surface it as a non-zero exit instead of emitting
+		// a half-filled JSON document with zero-value rows for the probes
+		// that never ran. Per-host SSH failures don't land here — those
+		// are stored in HostFacts.ProbeError and the goroutine still
+		// returns nil.
+		return err
+	}
 
 	if opts.JSONOutput {
 		enc := json.NewEncoder(os.Stdout)
