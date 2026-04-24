@@ -22,10 +22,10 @@ type FilerServerSpec struct {
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`
-	S3                 bool                   `yaml:"s3" default:"false"`
-	S3Port             int                    `yaml:"s3.port" default:"8333"`
-	Webdav             bool                   `yaml:"webdav" default:"false"`
-	WebdavPort         int                    `yaml:"webdav.port" default:"7333"`
+	S3                 bool                   `yaml:"s3,omitempty" default:"false"`
+	S3Port             int                    `yaml:"s3.port,omitempty" default:"8333"`
+	Webdav             bool                   `yaml:"webdav,omitempty" default:"false"`
+	WebdavPort         int                    `yaml:"webdav.port,omitempty" default:"7333"`
 }
 
 // BackendFromConfig resolves the filer storage backend described by the

@@ -12,7 +12,7 @@ type MasterServerSpec struct {
 	IpBind             string                 `yaml:"ip.bind,omitempty"`
 	Port               int                    `yaml:"port" default:"9333"`
 	PortGrpc           int                    `yaml:"port.grpc" default:"19333"`
-	VolumeSizeLimitMB  int                    `yaml:"volumeSizeLimitMB" default:"5000"`
+	VolumeSizeLimitMB  int                    `yaml:"volumeSizeLimitMB,omitempty" default:"5000"`
 	DefaultReplication string                 `yaml:"defaultReplication,omitempty"`
 	MetricsPort        int                    `yaml:"metrics_port,omitempty"`
 	Config             map[string]interface{} `yaml:"config,omitempty"`
