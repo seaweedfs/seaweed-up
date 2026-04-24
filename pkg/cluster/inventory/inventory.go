@@ -185,15 +185,26 @@ func (h *Host) HasRole(role string) bool {
 	return false
 }
 
-// ProbeHosts returns hosts that should be SSH-probed. External-only hosts
-// (e.g. a Postgres metadata store referenced by filers) are skipped.
+// ProbeHosts returns the deduplicated set of hosts to SSH-probe. External-only
+// hosts (e.g. a Postgres metadata store referenced by filers) are skipped.
+// Multi-instance inventories (several role entries at the same IP but
+// different service ports) share a single SSH target and therefore a single
+// probe — keyed by ip:<ssh-port>. The planner later fans the single result
+// back out to every role-instance entry for that host.
 func (inv *Inventory) ProbeHosts() []*Host {
 	var out []*Host
+	seen := make(map[string]struct{})
 	for i := range inv.Hosts {
 		h := &inv.Hosts[i]
 		if len(h.Roles) == 1 && h.Roles[0] == RoleExternal {
 			continue
 		}
+		ssh := inv.EffectiveSSH(h)
+		key := fmt.Sprintf("%s:%d", h.IP, ssh.Port)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		out = append(out, h)
 	}
 	return out

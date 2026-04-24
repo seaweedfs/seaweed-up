@@ -2,6 +2,7 @@ package probe
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,8 +103,10 @@ func probeCPU(r Runner) int {
 	if err != nil {
 		return 0
 	}
-	n := 0
-	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0
+	}
 	return n
 }
 
@@ -114,8 +117,10 @@ func probeMemory(r Runner) uint64 {
 	if err != nil {
 		return 0
 	}
-	var kb uint64
-	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &kb)
+	kb, err := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return 0
+	}
 	return kb * 1024
 }
 

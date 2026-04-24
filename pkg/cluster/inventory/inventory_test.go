@@ -117,6 +117,45 @@ func TestProbeHosts_skipsExternal(t *testing.T) {
 	}
 }
 
+func TestProbeHosts_dedupsBySSHTarget(t *testing.T) {
+	// Multi-instance volume hosts share one SSH target — one probe per
+	// (ip, ssh-port) is enough; the planner fans the result out later.
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8080},
+			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8081},
+			{IP: "10.0.0.1", Roles: []string{"volume"}, Port: 8082, SSH: &SSHConfig{Port: 2222}},
+			{IP: "10.0.0.2", Roles: []string{"volume"}, Port: 8080},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	got := inv.ProbeHosts()
+	// Expected: 10.0.0.1:22 (first entry), 10.0.0.1:2222 (third, different SSH port),
+	// and 10.0.0.2:22. The second entry's SSH target dupes the first, so it's dropped.
+	if len(got) != 3 {
+		t.Fatalf("ProbeHosts: got %d entries, want 3: %+v", len(got), got)
+	}
+	// The retained entries should match insertion order.
+	want := []struct {
+		ip      string
+		sshPort int
+	}{
+		{"10.0.0.1", 22},
+		{"10.0.0.1", 2222},
+		{"10.0.0.2", 22},
+	}
+	for i, h := range got {
+		if h.IP != want[i].ip {
+			t.Errorf("entry %d: got ip %s, want %s", i, h.IP, want[i].ip)
+		}
+		if port := inv.EffectiveSSH(h).Port; port != want[i].sshPort {
+			t.Errorf("entry %d: got ssh port %d, want %d", i, port, want[i].sshPort)
+		}
+	}
+}
+
 func TestHasRole(t *testing.T) {
 	h := &Host{Roles: []string{"master", "filer"}}
 	if !h.HasRole("master") || !h.HasRole("filer") {

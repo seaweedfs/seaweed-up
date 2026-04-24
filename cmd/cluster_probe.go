@@ -65,7 +65,10 @@ func runClusterProbe(cmd *cobra.Command, opts *ClusterProbeOptions) error {
 
 	facts := make([]probe.HostFacts, len(hosts))
 
-	eg, _ := errgroup.WithContext(cmd.Context())
+	// errgroup's context cancels on Ctrl+C / parent cancellation; propagate
+	// it into each probe goroutine so queued-but-not-started probes bail
+	// out instead of running against a doomed context.
+	eg, ctx := errgroup.WithContext(cmd.Context())
 	if opts.Concurrency > 0 {
 		eg.SetLimit(opts.Concurrency)
 	}
@@ -77,12 +80,17 @@ func runClusterProbe(cmd *cobra.Command, opts *ClusterProbeOptions) error {
 		i := i
 		h := hosts[i]
 		eg.Go(func() error {
+			// Queued behind SetLimit — check the context before doing
+			// anything SSH so a cancelled run doesn't open new sessions.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			facts[i] = probe.Probe(inv, h)
 
 			progressMu.Lock()
 			defer progressMu.Unlock()
 			if facts[i].ProbeError != "" {
-				color.New(color.FgRed).Fprintf(os.Stderr, "  probing %s ... FAIL: %s\n", h.IP, facts[i].ProbeError)
+				_, _ = color.New(color.FgRed).Fprintf(os.Stderr, "  probing %s ... FAIL: %s\n", h.IP, facts[i].ProbeError)
 			} else {
 				fmt.Fprintf(os.Stderr, "  probing %s ... ok (%d cores, %d disks)\n",
 					h.IP, facts[i].CPUCores, len(facts[i].Disks))
