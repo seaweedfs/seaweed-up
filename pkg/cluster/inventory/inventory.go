@@ -130,8 +130,23 @@ func (inv *Inventory) Validate() error {
 		return fmt.Errorf("inventory has no hosts")
 	}
 
-	type key struct{ ip, role string; port int }
-	seen := make(map[key]struct{})
+	type roleKey struct {
+		ip, role string
+		port     int
+	}
+	seenRoles := make(map[roleKey]struct{})
+
+	// Dedup is by ip:ssh-port (see ProbeHosts) so we collapse multi-instance
+	// entries onto one SSH session. That is only safe when all rows sharing
+	// an SSH target agree on SSH credentials — otherwise we'd silently pick
+	// one set of creds and the JSON output wouldn't record the divergence.
+	// Surface the conflict at parse time instead.
+	type sshKey struct {
+		ip   string
+		port int
+	}
+	sshSeen := make(map[sshKey]SSHConfig)
+	sshWhere := make(map[sshKey]string) // for the error message
 
 	for i, h := range inv.Hosts {
 		if h.IP == "" {
@@ -144,14 +159,39 @@ func (inv *Inventory) Validate() error {
 			if _, ok := validRoles[role]; !ok {
 				return fmt.Errorf("host %s has unknown role %q", h.IP, role)
 			}
-			k := key{ip: h.IP, role: role, port: h.Port}
-			if _, dup := seen[k]; dup {
+			rk := roleKey{ip: h.IP, role: role, port: h.Port}
+			if _, dup := seenRoles[rk]; dup {
 				return fmt.Errorf("host %s declares role %q at port %d twice", h.IP, role, h.Port)
 			}
-			seen[k] = struct{}{}
+			seenRoles[rk] = struct{}{}
+		}
+
+		// External entries don't open SSH sessions, so they don't need to
+		// agree on SSH config with anyone else.
+		if len(h.Roles) == 1 && h.Roles[0] == RoleExternal {
+			continue
+		}
+		eff := inv.EffectiveSSH(&inv.Hosts[i])
+		sk := sshKey{ip: h.IP, port: eff.Port}
+		if prev, ok := sshSeen[sk]; ok {
+			if prev != eff {
+				return fmt.Errorf(
+					"host %s at ssh port %d has conflicting ssh config: %s declares user=%q identity=%q, but earlier row %s declares user=%q identity=%q",
+					h.IP, eff.Port,
+					fmtHostRef(i), eff.User, eff.Identity,
+					sshWhere[sk], prev.User, prev.Identity,
+				)
+			}
+		} else {
+			sshSeen[sk] = eff
+			sshWhere[sk] = fmtHostRef(i)
 		}
 	}
 	return nil
+}
+
+func fmtHostRef(i int) string {
+	return fmt.Sprintf("host[%d]", i)
 }
 
 // EffectiveSSH returns the SSH config for a host, merging per-host overrides

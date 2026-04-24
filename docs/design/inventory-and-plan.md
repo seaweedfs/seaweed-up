@@ -1,17 +1,26 @@
 # Design: inventory → plan → deploy
 
-Status: draft · Owner: @chrislusf · Last updated: 2026-04-23
+Status: draft · Owner: @chrislusf · Last updated: 2026-04-24
 
 ## Summary
 
-Add two commands to `seaweed-up` so operators don't have to hand-author a
-full cluster YAML before their first deploy:
+Add one command — `seaweed-up cluster plan` — so operators don't have
+to hand-author a full cluster YAML before their first deploy. It grows
+in capability across three phases; in all phases it reads the same
+inventory file:
 
-- `seaweed-up cluster plan --json` — SSH to each host in an inventory file,
-  collect hardware facts (disks, CPU, memory, network), emit JSON.
-- `seaweed-up cluster plan` — same probe, plus synthesis of a reviewable
-  `cluster.yaml` that the existing `cluster deploy` command consumes
-  unchanged.
+- **Phase 1** (`--json`, probe-only) — SSH to each host in the
+  inventory and emit hardware facts (disks, CPU, memory, network) as
+  JSON.
+- **Phase 2** (`-o cluster.yaml`, greenfield synthesis) — same probe,
+  plus synthesis of a reviewable `cluster.yaml` that the existing
+  `cluster deploy` command consumes unchanged.
+- **Phase 3** (`-o cluster.yaml`, append-merge) — re-runs after
+  growing the inventory leave every existing entry in
+  `cluster.yaml` byte-identical and only append new hosts.
+
+Mirrors Terraform's model where `plan` subsumes the refresh step —
+users learn one verb.
 
 The inventory file is deliberately minimal: hosts, roles, SSH settings,
 and a couple of templating knobs. Everything else is discovered on the
@@ -182,11 +191,13 @@ type DiskFacts struct {
 Probe failures are per-host and non-fatal: a warning is printed to
 stderr, and a `HostFacts` entry is still emitted with `ProbeError` set
 and the other fields left at their zero values. Emitting the failed
-entry (rather than dropping it) keeps the JSON contract
-1:1 with the input inventory: downstream scripts can distinguish
-"host is unreachable" from "host is absent from the inventory", and
-Phase 2 `plan` can decide per-role whether to skip the host, fail
-fast, or retain a stale entry. Re-running picks it up once reachable.
+entry (rather than dropping it) keeps the JSON contract 1:1 with the
+deduplicated set of SSH targets produced by `ProbeHosts` —
+one record per `ip:ssh-port` actually probed. Downstream scripts can
+distinguish "target is unreachable" from "target is absent from the
+probe plan", and Phase 2 `plan` can decide per-role whether to skip
+the host, fail fast, or retain a stale entry. Re-running picks it up
+once reachable.
 
 `cluster plan -i inventory.yaml --json` prints the `HostFacts` slice
 and exits. Handy for scripting, and — until Phase 2 lands the

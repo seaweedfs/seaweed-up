@@ -101,6 +101,60 @@ func TestValidate_allowsDupIPAcrossPorts(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsConflictingSSHForSameTarget(t *testing.T) {
+	// Multi-instance rows share one SSH session keyed by ip:ssh-port. If
+	// the rows disagree on user/identity the dedup silently picks a winner
+	// and the JSON output can't record the divergence. Reject at parse
+	// time so the bug surfaces before a probe ever runs.
+	path := filepath.Join(t.TempDir(), "inv.yaml")
+	y := "defaults:\n  ssh:\n    user: ubuntu\nhosts:\n" +
+		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8080\n" +
+		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8081\n    ssh: { user: deploy }\n"
+	if err := writeFile(path, y); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected conflict error, got nil")
+	}
+	if !strings.Contains(err.Error(), "conflicting ssh config") {
+		t.Errorf("error = %q, want 'conflicting ssh config'", err.Error())
+	}
+}
+
+func TestValidate_allowsSameSSHForSameTarget(t *testing.T) {
+	// Rows sharing ip:ssh-port with identical effective SSH are fine —
+	// the dedup just folds them onto one probe session.
+	path := filepath.Join(t.TempDir(), "inv.yaml")
+	y := "defaults:\n  ssh:\n    user: ubuntu\nhosts:\n" +
+		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8080\n" +
+		"  - ip: 10.0.0.1\n    roles: [volume]\n    port: 8081\n" +
+		"  - ip: 10.0.0.1\n    roles: [filer]\n"
+	if err := writeFile(path, y); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("consistent SSH config should validate: %v", err)
+	}
+}
+
+func TestValidate_externalSkipsSSHConflictCheck(t *testing.T) {
+	// External hosts don't open SSH sessions, so they don't need to agree
+	// with co-located roles on SSH creds — in fact, they might not even
+	// share the same IP (the tag-based lookup path doesn't care).
+	// Guard that the check doesn't spuriously complain about them.
+	path := filepath.Join(t.TempDir(), "inv.yaml")
+	y := "defaults:\n  ssh:\n    user: ubuntu\nhosts:\n" +
+		"  - ip: 10.0.0.41\n    roles: [external]\n    tag: metadata\n" +
+		"  - ip: 10.0.0.1\n    roles: [master]\n"
+	if err := writeFile(path, y); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("external host should not participate in ssh conflict check: %v", err)
+	}
+}
+
 func TestProbeHosts_skipsExternal(t *testing.T) {
 	inv := &Inventory{
 		Hosts: []Host{
