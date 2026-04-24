@@ -142,7 +142,12 @@ Single SSH session per host, several commands batched:
   `BlockDevice`).
 - `cat /proc/cpuinfo | grep -c ^processor`
 - `awk '/MemTotal/{print $2}' /proc/meminfo`
-- `ip -j addr` (JSON) + `cat /sys/class/net/$if/speed` per non-lo iface
+- Network: prefer `ip -j addr` (iproute2 ≥ 4.15, shipped on every
+  distro released after early 2018). Detect JSON support with
+  `ip -j addr 2>/dev/null` and fall back to parsing text-mode `ip addr`
+  when it's missing — we still care about older LTS images like CentOS
+  7 and Ubuntu 16.04. Link speed comes from
+  `cat /sys/class/net/$if/speed` per non-lo iface.
 - `. /etc/os-release; echo "$ID $VERSION_ID"`
 - `uname -m`
 
@@ -193,28 +198,82 @@ For each inventory host (skipping `external` hosts during probe):
     `FolderSpec{Folder: "/data<N>", DiskType, Max}`.
   - `DiskType` comes from `defaults.disk.disk_type_auto` — `hdd` when
     `Rotational`, otherwise `ssd`.
-  - `Max` is `(Size * (1 - reserve_pct/100)) / volumeSizeLimitMB`,
-    with the reserve capped at 10 GiB (consistent with the PR #4 5%/10 GiB
-    rule).
+  - `Max` is the maximum volume count for the folder. `Size` from
+    `DiskFacts` is in bytes; `volumeSizeLimitMB` from `GlobalOptions`
+    is in MiB. Conversion is explicit:
+
+    ```
+    sizeMiB    = Size / (1024 * 1024)
+    reserveMiB = min(sizeMiB * reserve_pct / 100, 10 * 1024)   // cap 10 GiB
+    usableMiB  = sizeMiB - reserveMiB
+    Max        = usableMiB / volumeSizeLimitMB                 // integer div
+    ```
+
+    The reserve rule (min of 5 % and 10 GiB) is consistent with the
+    PR #4 proposal. `volumeSizeLimitMB` is read from (in priority
+    order): a `--volume-size-limit-mb` CLI flag on `plan`, the
+    `global.volumeSizeLimitMB` field in the existing `cluster.yaml`
+    when we're merging, the `GlobalOptions` struct default (5000)
+    for greenfield runs.
   - `plan` does **not** mkfs, format, or mount. It predicts the target
     layout. The existing `deploy --mount-disks` path performs the
     filesystem operations.
-- **filer**: append `FilerServerSpec{Ip, Port: 8888}`. If `--filer-backend`
-  is supplied, also populate `config:` (see below); otherwise emit a
-  TODO placeholder comment.
+- **filer**: append `FilerServerSpec{Ip, Port: 8888}`. Plan writes the
+  port explicitly (`FilerServerSpec.Port`'s `default:"9333"` struct tag
+  is a stale annotation — no defaults library consumes it; the real
+  runtime fallback in `WriteToBuffer` is 8888). If `--filer-backend` is
+  supplied, also populate `config:` (see below); otherwise emit a TODO
+  placeholder comment.
 - **s3 / sftp / admin / worker / envoy**: synthesize the matching spec
   with defaults. Role-specific required fields that cannot be inferred
   (e.g. `admin_password`) emit as `CHANGE_ME` with a comment, matching
   the convention in `examples/typical.yaml`.
 
+### Greenfield `global:` section
+
+When `cluster.yaml` doesn't exist yet, `plan` emits an explicit `global:`
+block populated from the `GlobalOptions` struct defaults, rather than
+omitting the block and relying on future deploy-time fallbacks:
+
+```yaml
+global:
+  dir.conf: /etc/seaweed
+  dir.data: /opt/seaweed
+  volumeSizeLimitMB: 5000
+  replication: "000"
+```
+
+Emitting the block explicitly makes the plan reproducible and gives
+operators an obvious place to tune values before `deploy`. During
+merge, an existing `global:` block is left untouched — including any
+hand-edits — because merge never rewrites existing nodes.
+
 ### `--filer-backend` (optional)
 
+Three equivalent ways to supply the DSN, in priority order:
+
 ```
+# 1. file (recommended: avoids leaking the password via `ps`)
+seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
+    --filer-backend-file /etc/seaweed-up/filer.dsn
+
+# 2. environment variable (good for CI)
+SEAWEEDUP_FILER_BACKEND='postgres://seaweed:s3cret@10.0.0.41/seaweedfs' \
+    seaweed-up cluster plan -i inventory.yaml -o cluster.yaml
+
+# 3. direct CLI flag (convenient, but note the security caveat below)
 seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
     --filer-backend 'postgres://seaweed:CHANGE_ME@10.0.0.41:5432/seaweedfs?sslmode=disable'
 ```
 
-Parsed as a DSN and expanded into the per-filer `config:` block:
+> ⚠ `--filer-backend` passes the password through `os.Args`, which is
+> world-readable via `/proc/<pid>/cmdline` and `ps` while the process is
+> alive. Prefer `--filer-backend-file` or `SEAWEEDUP_FILER_BACKEND`
+> whenever the DSN carries a real secret. The CLI flag remains available
+> for throwaway / dev setups where the convenience wins.
+
+Whichever form is used, the value is parsed as a DSN and expanded into
+the per-filer `config:` block:
 
 ```yaml
 filer_servers:
@@ -269,26 +328,37 @@ field order, and whatever style choices the operator made.
 
 ### Keying
 
-A host is identified by `ip` within a given `*_servers` section. If we
-ever support multiple instances per IP, the key grows to `ip:port`.
-Defer that until there's a real case.
+An entry is identified by `ip:port` within a given `*_servers` section.
+SeaweedFS operators commonly run multiple volume-server processes per
+host (typically one per physical disk, to work around a single
+process's resource limits), so keying by `ip` alone would collapse those
+instances into a single slot and break the append-only guarantee. `port`
+is the service port on the entry (`Port`, defaulting to the spec's
+well-known port), not the SSH port.
+
+When the inventory supplies only one role-instance per host — the common
+case — `plan` picks the default service port and the key degrades
+naturally to `10.0.0.21:8080`. Multi-instance support falls out for
+free: an inventory may declare a host twice in the `volume` role with
+different `port` values, and each becomes a distinct entry.
 
 ### Rules
 
 ```
 for section in (master_servers, volume_servers, filer_servers, …):
-    existing = index of existing entries by ip
-    for host in inventory with that role:
-        if host.ip in existing:
+    existing = index of existing entries by ip:port
+    for host-instance in inventory with that role:
+        key = ip ":" (inventory port OR default service port)
+        if key in existing:
             # never touch. if probed facts have drifted, emit a
-            # warning-only report ("10.0.0.21 now has 6 disks, your
-            # cluster.yaml lists 4"). do not mutate the entry.
+            # warning-only report ("10.0.0.21:8080 now has 6 disks,
+            # your cluster.yaml lists 4"). do not mutate the entry.
             continue
         else:
             append a newly-generated node to the end of the section's
             sequence
 
-for host in existing but not in inventory:
+for entry in existing but not in inventory:
     emit a warning on stderr. do not remove the entry.
 ```
 
@@ -314,7 +384,7 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 | --- | --- |
 | Host unreachable during probe | Skip; log warning on stderr; leave `cluster.yaml` untouched for that host. Re-runnable. |
 | Host in inventory has no role | Error at inventory-parse time. |
-| Duplicate IPs in inventory | Error at inventory-parse time. |
+| Duplicate `ip:port` pairs in inventory (same role, same port) | Error at inventory-parse time. Duplicate IPs across different ports (multi-instance) are allowed. |
 | Host IP changed (old removed, new added) | Plan sees a new host and an orphaned one. New appended; orphan warned about. No auto-migration. |
 | Role=volume but no free disks found | Emit `volume_server` entry with `folders: []` plus a `# no free disks found on $host` comment. `deploy` will fail validation — problem surfaces at plan time, not mid-deploy. |
 | `cluster.yaml` does not yet exist | Generate from scratch. Header comment: `# Generated by seaweed-up plan from inventory.yaml. Safe to hand-edit.` |
@@ -327,7 +397,8 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 ```
 cmd/
   cluster_plan.go            # flags: -i, -o, --dry-run, --refresh-host,
-                             #         --filer-backend, --concurrency
+                             #         --filer-backend, --filer-backend-file,
+                             #         --volume-size-limit-mb, --concurrency
   cluster_probe.go           # probe-only: JSON to stdout
 
 pkg/cluster/
@@ -382,10 +453,33 @@ Phases 1–3 are the minimum product. Phase 4 is ice cream.
 2. **`FolderSpec` is not extended.** No `block_device` / `uuid` fields in
    the YAML. Folder path remains the sole key; UUID is rediscovered at
    deploy time via `blkid` (already the case post-#65).
-3. **Filer metadata store: optional `--filer-backend` flag.** When
+3. **Filer metadata store: DSN via flag, file, or env var.** When
    absent, `plan` emits a placeholder `# TODO: config:` block per filer.
    When present, the DSN is parsed and expanded into each filer's
-   `config:` section.
+   `config:` section. Three input forms:
+   `--filer-backend-file` (recommended — no `ps` leak),
+   `SEAWEEDUP_FILER_BACKEND` env var, or direct `--filer-backend` flag
+   (convenient but leaks the DSN via `/proc/<pid>/cmdline`).
+4. **Merge key is `ip:port`, not `ip`.** SeaweedFS operators commonly
+   run multiple volume-server processes per host; `ip` alone would
+   collapse them into a single slot and break append-only. The key
+   degrades naturally to `ip:<default-port>` for the single-instance
+   case.
+5. **`Max` formula makes units explicit.** `Size` from probe is bytes,
+   `volumeSizeLimitMB` is MiB; convert via `Size / (1024 * 1024)`
+   before the divide. The reserve is `min(5 %, 10 GiB)` as proposed in
+   #4. `volumeSizeLimitMB` precedence:
+   `--volume-size-limit-mb` flag → existing `cluster.yaml`'s
+   `global.volumeSizeLimitMB` on merge → `GlobalOptions` default 5000
+   on greenfield.
+6. **Greenfield `global:` is emitted explicitly.** Rather than omit the
+   block and rely on deploy-time fallbacks, `plan` writes the defaults
+   (`dir.conf`, `dir.data`, `volumeSizeLimitMB`, `replication`) into
+   the generated YAML so the spec is self-describing and the operator
+   has an obvious tuning surface.
+7. **Network probe degrades gracefully.** Prefer `ip -j addr` (JSON,
+   iproute2 ≥ 4.15); fall back to parsing `ip addr` text output so
+   older LTS images (CentOS 7, Ubuntu 16.04) still probe.
 
 ## Open questions
 
