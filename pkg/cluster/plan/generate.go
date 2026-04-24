@@ -6,7 +6,7 @@
 // Greenfield only. Phase 3 will add append-merge via yaml.Node so
 // re-running against an existing cluster.yaml preserves comments and
 // hand edits. Until then, writing onto an existing file requires
-// --force.
+// --overwrite.
 package plan
 
 import (

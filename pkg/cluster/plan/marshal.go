@@ -48,7 +48,7 @@ func Marshal(spec *spec.Specification, opts MarshalOptions) ([]byte, error) {
 	}
 	fmt.Fprintf(&header, " on %s.\n", now.Format(time.RFC3339))
 	header.WriteString("# Safe to hand-edit. Re-running plan against this file currently\n")
-	header.WriteString("# refuses to overwrite unless --force is passed; Phase 3 will add\n")
+	header.WriteString("# refuses to overwrite unless --overwrite is passed; Phase 3 will add\n")
 	header.WriteString("# append-merge that preserves comments and hand edits.\n")
 
 	// If any filer emitted an empty Config (no --filer-backend supplied),

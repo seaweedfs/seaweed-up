@@ -27,13 +27,13 @@ const envFilerBackend = "SEAWEEDUP_FILER_BACKEND"
 //  1. --json (default, Phase 1) — probe and emit HostFacts to stdout.
 //  2. -o cluster.yaml (Phase 2, greenfield) — probe and synthesize a
 //     reviewable cluster.yaml. Refuses to overwrite an existing file
-//     unless --force is passed; append-merge lands in Phase 3.
+//     unless --overwrite is passed; append-merge lands in Phase 3.
 //
 // See docs/design/inventory-and-plan.md for the full design.
 type ClusterPlanOptions struct {
 	InventoryFile string
 	OutputFile    string
-	Force         bool
+	Overwrite     bool
 	JSONOutput    bool
 	Concurrency   int
 
@@ -59,7 +59,7 @@ memory, and network facts, and either:
     existing ` + "`cluster deploy`" + ` command consumes unchanged.
 
 Phase 2 lands the synthesis path in greenfield mode only: the command
-refuses to overwrite an existing -o file unless --force is passed.
+refuses to overwrite an existing -o file unless --overwrite is passed.
 Phase 3 will add append-merge so growing the inventory only appends to
 the generated cluster.yaml without reordering or rewriting existing
 entries. See docs/design/inventory-and-plan.md.
@@ -73,7 +73,7 @@ Purely read-only on the target hosts.`,
       --filer-backend-file /etc/seaweed-up/filer.dsn
 
   # Overwrite an existing cluster.yaml (Phase 3 will replace this)
-  seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --force`,
+  seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --overwrite`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterPlan(cmd, opts)
 		},
@@ -81,7 +81,7 @@ Purely read-only on the target hosts.`,
 
 	cmd.Flags().StringVarP(&opts.InventoryFile, "inventory", "i", "", "inventory file (required)")
 	cmd.Flags().StringVarP(&opts.OutputFile, "output", "o", "", "write a synthesized cluster.yaml to this path")
-	cmd.Flags().BoolVar(&opts.Force, "force", false, "overwrite -o if it already exists (Phase 3 will land append-merge)")
+	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite -o if it already exists (Phase 3 will land append-merge)")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "write probe facts as JSON to stdout (default when -o is absent)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 10, "max concurrent probes")
 
@@ -112,11 +112,11 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	}
 
 	// Greenfield guard: refuse to overwrite an existing cluster.yaml
-	// until Phase 3 lands append-merge. --force opts out for hand-edits
-	// that the operator has already copied elsewhere.
-	if opts.OutputFile != "" && !opts.Force {
+	// until Phase 3 lands append-merge. --overwrite opts out for
+	// hand-edits the operator has already copied elsewhere.
+	if opts.OutputFile != "" && !opts.Overwrite {
 		if _, statErr := os.Stat(opts.OutputFile); statErr == nil {
-			return fmt.Errorf("%s already exists; pass --force to overwrite (append-merge lands in Phase 3)", opts.OutputFile)
+			return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", opts.OutputFile)
 		}
 	}
 

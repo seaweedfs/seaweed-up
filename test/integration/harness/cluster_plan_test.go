@@ -88,16 +88,16 @@ func TestClusterPlanGreenfield(t *testing.T) {
 		t.Errorf("expected stderr to report the volume-role drop; got:\n%s", out)
 	}
 
-	// --force must overwrite an existing file. Without --force, the
-	// second run should refuse.
-	noForceOut, noForceErr := runPlan(h, invPath, outPath)
-	if noForceErr == nil {
-		t.Errorf("expected refusal on existing -o without --force; output:\n%s", noForceOut)
+	// --overwrite must replace an existing file. Without --overwrite,
+	// the second run should refuse.
+	noFlagOut, noFlagErr := runPlan(h, invPath, outPath)
+	if noFlagErr == nil {
+		t.Errorf("expected refusal on existing -o without --overwrite; output:\n%s", noFlagOut)
 	}
 
-	forceOut, forceErr := runPlan(h, invPath, outPath, "--force")
-	if forceErr != nil {
-		t.Errorf("cluster plan --force failed: %v\noutput:\n%s", forceErr, forceOut)
+	overwriteOut, overwriteErr := runPlan(h, invPath, outPath, "--overwrite")
+	if overwriteErr != nil {
+		t.Errorf("cluster plan --overwrite failed: %v\noutput:\n%s", overwriteErr, overwriteOut)
 	}
 }
 
