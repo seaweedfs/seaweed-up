@@ -200,9 +200,17 @@ the host, fail fast, or retain a stale entry. Re-running picks it up
 once reachable.
 
 `cluster plan -i inventory.yaml --json` prints the `HostFacts` slice
-and exits. Handy for scripting, and — until Phase 2 lands the
-`-o cluster.yaml` synthesis mode — the primary way to see what the
-planner will observe.
+to stdout and exits — handy for scripting and for seeing what the
+planner observed.
+
+When `-o cluster.yaml` is set, the same `HostFacts` slice is also
+written as a sidecar JSON file alongside the synthesized YAML
+(`cluster.yaml` → `cluster.facts.json`). The sidecar gives operators
+a record of what the probe saw without re-running it, and is the
+intended audit input for Phase 3 append-merge so a re-run can detect
+drift between previously-recorded facts and freshly-probed ones.
+Sidecar permissions are `0600` since facts include hostnames, NIC
+addresses, and disk model strings.
 
 ## Plan: generation
 

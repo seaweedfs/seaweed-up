@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,6 +51,17 @@ func TestClusterPlanGreenfield(t *testing.T) {
 	var got spec.Specification
 	if err := yaml.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal generated cluster.yaml: %v\nbody:\n%s", err, data)
+	}
+
+	// The probe facts are saved as a sidecar JSON so operators have a
+	// record of what plan saw. cluster.yaml -> cluster.facts.json.
+	factsPath := strings.TrimSuffix(outPath, ".yaml") + ".facts.json"
+	factsData, err := os.ReadFile(factsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", factsPath, err)
+	}
+	if !json.Valid(factsData) {
+		t.Errorf("facts file is not valid JSON:\n%s", factsData)
 	}
 
 	// Shape assertions. The harness containers expose only an overlay

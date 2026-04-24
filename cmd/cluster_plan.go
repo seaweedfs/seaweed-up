@@ -111,12 +111,16 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("--json and -o are mutually exclusive; use one")
 	}
 
-	// Greenfield guard: refuse to overwrite an existing cluster.yaml
-	// until Phase 3 lands append-merge. --overwrite opts out for
-	// hand-edits the operator has already copied elsewhere.
+	// Greenfield guard: refuse to overwrite an existing cluster.yaml or
+	// its sidecar facts file until Phase 3 lands append-merge.
+	// --overwrite opts out for hand-edits the operator has already
+	// copied elsewhere.
+	factsFile := factsFilePath(opts.OutputFile)
 	if opts.OutputFile != "" && !opts.Overwrite {
-		if _, statErr := os.Stat(opts.OutputFile); statErr == nil {
-			return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", opts.OutputFile)
+		for _, p := range []string{opts.OutputFile, factsFile} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", p)
+			}
 		}
 	}
 
@@ -167,9 +171,39 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	if err := os.WriteFile(opts.OutputFile, body, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", opts.OutputFile, err)
 	}
-	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\n",
-		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers))
+
+	// Write the probe facts as a sidecar JSON file alongside cluster.yaml.
+	// Useful for debugging (operators can see what plan saw without
+	// re-probing) and as audit / reproducibility input for Phase 3
+	// append-merge. Same 0o600 — facts include hostnames, NIC addresses,
+	// and disk model strings (host-enumeration data).
+	factsBody, err := json.MarshalIndent(facts, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal facts: %w", err)
+	}
+	factsBody = append(factsBody, '\n')
+	if err := os.WriteFile(factsFile, factsBody, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", factsFile, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\n",
+		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
+		factsFile, len(facts))
 	return nil
+}
+
+// factsFilePath derives the sidecar JSON path for a given cluster.yaml
+// output. cluster.yaml -> cluster.facts.json, cluster.yml ->
+// cluster.facts.json, anything-else -> anything-else.facts.json. Keeps
+// the two artifacts adjacent so a directory listing makes the
+// relationship obvious.
+func factsFilePath(outputFile string) string {
+	for _, ext := range []string{".yaml", ".yml"} {
+		if strings.HasSuffix(outputFile, ext) {
+			return outputFile[:len(outputFile)-len(ext)] + ".facts.json"
+		}
+	}
+	return outputFile + ".facts.json"
 }
 
 // printSkipReport surfaces Generate's skip decisions to stderr so the
