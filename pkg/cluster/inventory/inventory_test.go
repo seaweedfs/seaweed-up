@@ -123,6 +123,46 @@ func TestValidate_allowsSameSSHForSameTarget(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsUnsupportedDeviceGlobs(t *testing.T) {
+	// Only a literal path with an optional trailing '*' is supported.
+	// Anything fancier would silently match nothing once converted to a
+	// prefix at probe time, so reject at parse time.
+	cases := []struct {
+		name, glob string
+	}{
+		{"character class", "/dev/sd[ab]"},
+		{"interior wildcard", "/dev/sd*n*"},
+		{"leading wildcard", "*sd"},
+		{"question mark", "/dev/?d1"},
+		{"empty", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "inv.yaml")
+			y := "defaults:\n  disk:\n    device_globs: [\"" + tc.glob + "\"]\nhosts:\n" +
+				"  - ip: 10.0.0.1\n    roles: [volume]\n"
+			if err := writeFile(path, y); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatalf("expected error for glob %q", tc.glob)
+			}
+		})
+	}
+}
+
+func TestValidate_acceptsTrailingStarAndLiteralGlobs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "inv.yaml")
+	y := "defaults:\n  disk:\n    device_globs: [\"/dev/sd*\", \"/dev/nvme*\", \"/dev/xvda\"]\nhosts:\n" +
+		"  - ip: 10.0.0.1\n    roles: [volume]\n"
+	if err := writeFile(path, y); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("supported globs should validate: %v", err)
+	}
+}
+
 func TestValidate_externalSkipsSSHConflictCheck(t *testing.T) {
 	// External hosts don't open SSH sessions, so they don't need to agree
 	// with co-located roles on SSH creds — in fact, they might not even

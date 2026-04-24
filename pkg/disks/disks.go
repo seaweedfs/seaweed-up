@@ -20,11 +20,14 @@ type BlockDevice struct {
 	MountPoint     string
 	SerialId       string
 	Type           string
-	// Rotational is true for spinning disks, false for SSDs/NVMe. Parsed
-	// from lsblk's ROTA column (1 = rotational, 0 = not). Used by the
-	// planner to choose a DiskType ("hdd" vs "ssd") when auto-detection
-	// is enabled.
-	Rotational bool
+	// Rotational is true for spinning disks, false for SSDs/NVMe, and nil
+	// when lsblk's ROTA column is empty (virtio, loop, some
+	// device-mapper nodes). Tri-state so the planner can distinguish
+	// "known SSD" from "we couldn't tell" — treating unknown as SSD by
+	// default would silently mis-tag HDDs on quirky hardware. Parsed
+	// from lsblk's ROTA column (1 = rotational, 0 = not, empty =
+	// unknown).
+	Rotational *bool
 	// Model is the drive model string reported by lsblk's MODEL column
 	// (e.g. "Samsung SSD 870 EVO"). Purely informational — surfaced in
 	// probe output for audit/debug; not used for any decision.
@@ -102,7 +105,16 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 			case "MAJ:MIN":
 				majorMinor = pair[2]
 			case "ROTA":
-				dev.Rotational = value == "1"
+				switch value {
+				case "1":
+					t := true
+					dev.Rotational = &t
+				case "0":
+					f := false
+					dev.Rotational = &f
+				}
+				// Empty or any other value leaves Rotational as nil
+				// ("unknown"). See the field comment above.
 			case "MODEL":
 				dev.Model = strings.TrimSpace(value)
 			}

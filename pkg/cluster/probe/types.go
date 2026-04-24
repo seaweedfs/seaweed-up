@@ -38,13 +38,21 @@ type HostFacts struct {
 // DiskFact is one entry from lsblk, filtered by the inventory's device
 // globs. Only fields useful to the planner or to an operator reviewing
 // the probe output are kept.
+//
+// Rotational is a pointer so we can represent three states: true
+// (spinning HDD), false (SSD/NVMe), and nil (lsblk's ROTA column was
+// empty — common for virtio, loop, and some device-mapper nodes).
+// JSON rendering: `true`, `false`, or the field is omitted entirely.
+// Downstream consumers MUST treat a missing/null value as "unknown"
+// and fall back to an explicit `disk_type` in inventory rather than
+// silently picking one.
 type DiskFact struct {
 	Path       string `json:"path"`
 	Size       uint64 `json:"size_bytes"`
 	FSType     string `json:"fstype,omitempty"`
 	UUID       string `json:"uuid,omitempty"`
 	MountPoint string `json:"mountpoint,omitempty"`
-	Rotational bool   `json:"rotational"`
+	Rotational *bool  `json:"rotational,omitempty"`
 	Model      string `json:"model,omitempty"`
 }
 

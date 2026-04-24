@@ -8,6 +8,7 @@ package inventory
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -120,10 +121,21 @@ func Load(path string) (*Inventory, error) {
 // every host has an IP and at least one known role, no (ip, role) pair
 // appears twice, and no two rows sharing an ip:ssh-port target disagree
 // on SSH credentials (otherwise the probe dedup would silently pick a
-// winner).
+// winner). Disk-glob knobs are also sanity-checked up front so the
+// probe isn't left silently matching nothing.
 func (inv *Inventory) Validate() error {
 	if len(inv.Hosts) == 0 {
 		return fmt.Errorf("inventory has no hosts")
+	}
+	for _, g := range inv.Defaults.Disk.DeviceGlobs {
+		if err := validateDeviceGlob(g); err != nil {
+			return fmt.Errorf("defaults.disk.device_globs: %w", err)
+		}
+	}
+	for _, g := range inv.Defaults.Disk.Exclude {
+		if err := validateDeviceGlob(g); err != nil {
+			return fmt.Errorf("defaults.disk.exclude: %w", err)
+		}
 	}
 
 	type roleKey struct{ ip, role string }
@@ -207,6 +219,22 @@ func (h *Host) HasRole(role string) bool {
 		}
 	}
 	return false
+}
+
+// validateDeviceGlob enforces the (limited) glob vocabulary we support for
+// device-path patterns: a literal path with an optional trailing '*'.
+// Anything fancier (character classes, leading or interior wildcards) would
+// silently match nothing once we convert to a prefix below, so reject it
+// here where the operator can still fix the inventory.
+func validateDeviceGlob(g string) error {
+	if g == "" {
+		return fmt.Errorf("empty glob")
+	}
+	trimmed := strings.TrimSuffix(g, "*")
+	if strings.ContainsAny(trimmed, "*?[]{}") {
+		return fmt.Errorf("unsupported glob %q: only a literal path with an optional trailing '*' is allowed", g)
+	}
+	return nil
 }
 
 // ProbeHosts returns the deduplicated set of hosts to SSH-probe. External-only

@@ -47,7 +47,12 @@ func probeNetworkJSON(r Runner) []NetIface {
 }
 
 // ipAddrTextRE matches "    inet 10.0.0.1/24 ..." lines.
-var ipAddrTextRE = regexp.MustCompile(`^\s+inet6?\s+([0-9a-fA-F:.]+)(?:/\d+)?\s`)
+//
+// The address capture permits the IPv6 zone-id suffix ("%eth0" in
+// fe80::1%eth0) so link-local addresses aren't silently truncated to
+// their non-zoned form — the zone is part of the address's identity for
+// routing and link-local connectivity.
+var ipAddrTextRE = regexp.MustCompile(`^\s+inet6?\s+([0-9a-fA-F:.]+(?:%[A-Za-z0-9_.-]+)?)(?:/\d+)?\s`)
 
 // ifnameLineRE matches the leading "2: eth0: <BROADCAST,...>" header
 // that introduces each interface block in `ip addr` text output.

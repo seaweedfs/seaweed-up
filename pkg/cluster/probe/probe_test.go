@@ -143,6 +143,37 @@ func TestReadSpeed_negativeReturnsZero(t *testing.T) {
 	}
 }
 
+func TestProbeNetworkText_preservesIPv6ZoneID(t *testing.T) {
+	// Link-local IPv6 addresses carry a zone id (fe80::1%eth0). Dropping
+	// the zone loses routing-significant information on multi-interface
+	// hosts. Regression test for the truncation reported on PR #67.
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "ip -j addr", out: ""}, // force text-mode fallback
+		{contains: "ip addr", out: `2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 1000
+    link/ether aa:bb:cc:dd:ee:ff brd ff:ff:ff:ff:ff:ff
+    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+    inet6 fe80::aabb:ccff:fedd:eeff%eth0/64 scope link
+       valid_lft forever preferred_lft forever
+`},
+		{contains: "/sys/class/net/'eth0'/speed", out: "1000\n"},
+	}}
+
+	got := probeNetwork(r)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 iface, got %d: %+v", len(got), got)
+	}
+	addrs := got[0].Addresses
+	if len(addrs) != 2 {
+		t.Fatalf("addresses: got %+v, want 2 entries", addrs)
+	}
+	if addrs[0] != "10.0.0.5" {
+		t.Errorf("ipv4: got %q, want 10.0.0.5", addrs[0])
+	}
+	if addrs[1] != "fe80::aabb:ccff:fedd:eeff%eth0" {
+		t.Errorf("ipv6 zone id dropped: got %q", addrs[1])
+	}
+}
+
 func TestNewHostFacts_carriesSSHTarget(t *testing.T) {
 	// Inventories with the same IP but different SSH ports must produce
 	// distinguishable records, otherwise downstream consumers cannot map
