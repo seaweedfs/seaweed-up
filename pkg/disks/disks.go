@@ -20,6 +20,15 @@ type BlockDevice struct {
 	MountPoint     string
 	SerialId       string
 	Type           string
+	// Rotational is true for spinning disks, false for SSDs/NVMe. Parsed
+	// from lsblk's ROTA column (1 = rotational, 0 = not). Used by the
+	// planner to choose a DiskType ("hdd" vs "ssd") when auto-detection
+	// is enabled.
+	Rotational bool
+	// Model is the drive model string reported by lsblk's MODEL column
+	// (e.g. "Samsung SSD 870 EVO"). Purely informational — surfaced in
+	// probe output for audit/debug; not used for any decision.
+	Model string
 }
 
 func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []*BlockDevice, mountpoints map[string]struct{}, err error) {
@@ -40,6 +49,8 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				"MOUNTPOINT", // mount point
 				"MAJ:MIN",    // major/minor device numbers
 				"FSUSED",
+				"ROTA",  // 1 for rotational, 0 for non-rotational
+				"MODEL", // device model string
 			}, ","),
 		}, " "))
 	if err != nil {
@@ -90,6 +101,10 @@ func ListBlockDevices(op operator.CommandOperator, prefixes []string) (output []
 				mountpoints[value] = struct{}{}
 			case "MAJ:MIN":
 				majorMinor = pair[2]
+			case "ROTA":
+				dev.Rotational = value == "1"
+			case "MODEL":
+				dev.Model = strings.TrimSpace(value)
 			}
 		}
 		if !hasValidPrefix {

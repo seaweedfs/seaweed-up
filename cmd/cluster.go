@@ -35,6 +35,7 @@ This command group provides comprehensive cluster lifecycle management including
 	// Add cluster subcommands
 	cmd.AddCommand(newClusterDeployCmd())
 	cmd.AddCommand(newClusterCheckCmd())
+	cmd.AddCommand(newClusterProbeCmd())
 	cmd.AddCommand(newClusterStatusCmd())
 	cmd.AddCommand(newClusterUpgradeCmd())
 	cmd.AddCommand(newClusterScaleCmd())
