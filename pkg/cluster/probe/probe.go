@@ -22,13 +22,14 @@ type Runner interface {
 // collecting facts into a HostFacts. Sub-probe failures are swallowed
 // into empty fields; a connection-level failure is reported via
 // HostFacts.ProbeError.
+//
+// The returned HostFacts carries both IP and SSHPort so inventories with
+// multiple SSH targets at the same IP (uncommon but legal — see the
+// design doc) produce distinguishable records.
 func Probe(inv *inventory.Inventory, h *inventory.Host) HostFacts {
-	facts := HostFacts{
-		IP:       h.IP,
-		ProbedAt: time.Now().UTC(),
-	}
-
 	ssh := inv.EffectiveSSH(h)
+	facts := newHostFacts(h, ssh)
+
 	target := fmt.Sprintf("%s:%d", h.IP, ssh.Port)
 	err := operator.ExecuteRemote(target, ssh.User, ssh.Identity, "", func(op operator.CommandOperator) error {
 		probeInto(op, inv, h, &facts)
@@ -38,6 +39,18 @@ func Probe(inv *inventory.Inventory, h *inventory.Host) HostFacts {
 		facts.ProbeError = err.Error()
 	}
 	return facts
+}
+
+// newHostFacts builds the identity-and-timestamp shell of a HostFacts.
+// Fields populated under an SSH session (OS, CPU, disks, ...) are filled
+// in later by probeInto. Split out so tests can verify the identity
+// mapping without opening a real SSH connection.
+func newHostFacts(h *inventory.Host, ssh inventory.SSHConfig) HostFacts {
+	return HostFacts{
+		IP:       h.IP,
+		SSHPort:  ssh.Port,
+		ProbedAt: time.Now().UTC(),
+	}
 }
 
 // probeInto runs the individual probe functions against an established

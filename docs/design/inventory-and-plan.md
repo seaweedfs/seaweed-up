@@ -7,7 +7,7 @@ Status: draft · Owner: @chrislusf · Last updated: 2026-04-23
 Add two commands to `seaweed-up` so operators don't have to hand-author a
 full cluster YAML before their first deploy:
 
-- `seaweed-up cluster probe` — SSH to each host in an inventory file,
+- `seaweed-up cluster plan --json` — SSH to each host in an inventory file,
   collect hardware facts (disks, CPU, memory, network), emit JSON.
 - `seaweed-up cluster plan` — same probe, plus synthesis of a reviewable
   `cluster.yaml` that the existing `cluster deploy` command consumes
@@ -179,12 +179,19 @@ type DiskFacts struct {
 }
 ```
 
-Probe failures are per-host and non-fatal: the host is skipped, a warning
-is printed to stderr, and no entry is emitted for it. Re-running picks it
-up once reachable.
+Probe failures are per-host and non-fatal: a warning is printed to
+stderr, and a `HostFacts` entry is still emitted with `ProbeError` set
+and the other fields left at their zero values. Emitting the failed
+entry (rather than dropping it) keeps the JSON contract
+1:1 with the input inventory: downstream scripts can distinguish
+"host is unreachable" from "host is absent from the inventory", and
+Phase 2 `plan` can decide per-role whether to skip the host, fail
+fast, or retain a stale entry. Re-running picks it up once reachable.
 
-`cluster probe -i inventory.yaml --json` prints the `HostFacts` slice
-and exits. Handy for scripting and for debugging `plan` output.
+`cluster plan -i inventory.yaml --json` prints the `HostFacts` slice
+and exits. Handy for scripting, and — until Phase 2 lands the
+`-o cluster.yaml` synthesis mode — the primary way to see what the
+planner will observe.
 
 ## Plan: generation
 
@@ -396,10 +403,11 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 
 ```
 cmd/
-  cluster_plan.go            # flags: -i, -o, --dry-run, --refresh-host,
-                             #         --filer-backend, --filer-backend-file,
-                             #         --volume-size-limit-mb, --concurrency
-  cluster_probe.go           # probe-only: JSON to stdout
+  cluster_plan.go            # unified command. flags: -i, -o, --json,
+                             #   --dry-run, --refresh-host, --filer-backend,
+                             #   --filer-backend-file, --volume-size-limit-mb,
+                             #   --concurrency. Phase 1 implements --json only;
+                             #   Phase 2 adds -o; Phase 3 adds --dry-run.
 
 pkg/cluster/
   inventory/
@@ -430,10 +438,12 @@ pkg/disks/
 
 ## Phased rollout
 
-1. **Phase 1: probe.** `seaweed-up cluster probe -i inventory.yaml --json`.
+1. **Phase 1: plan --json (probe-only).** `seaweed-up cluster plan -i inventory.yaml --json`.
    Prints `HostFacts` per host. Read-only on hosts; purely additive in
    the codebase. Validates SSH/probe plumbing before anyone depends on
-   it. Deliverable: one PR.
+   it. The command is named `plan` from day one (mirroring Terraform's
+   model where refresh is subsumed into plan); in Phase 1 it only does
+   the probe step. Deliverable: one PR.
 2. **Phase 2: plan (greenfield).** `plan -o cluster.yaml` when `-o` does
    not yet exist. Full generation, no merge yet. Golden tests for 1-host
    dev, 3+3+3 typical, 5-node mixed. Deliverable: one PR.

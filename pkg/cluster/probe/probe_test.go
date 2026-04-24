@@ -142,3 +142,22 @@ func TestReadSpeed_negativeReturnsZero(t *testing.T) {
 		t.Errorf("readSpeed: got %d, want 0 for -1 kernel report", got)
 	}
 }
+
+func TestNewHostFacts_carriesSSHTarget(t *testing.T) {
+	// Inventories with the same IP but different SSH ports must produce
+	// distinguishable records, otherwise downstream consumers cannot map
+	// facts back to inventory entries.
+	h := &inventory.Host{IP: "10.0.0.1"}
+	a := newHostFacts(h, inventory.SSHConfig{Port: 22})
+	b := newHostFacts(h, inventory.SSHConfig{Port: 2222})
+
+	if a.IP != "10.0.0.1" || b.IP != "10.0.0.1" {
+		t.Errorf("IP: got %q/%q", a.IP, b.IP)
+	}
+	if a.SSHPort != 22 || b.SSHPort != 2222 {
+		t.Errorf("SSHPort: got %d/%d, want 22/2222", a.SSHPort, b.SSHPort)
+	}
+	if a.ProbedAt.IsZero() || b.ProbedAt.IsZero() {
+		t.Error("ProbedAt was not stamped")
+	}
+}

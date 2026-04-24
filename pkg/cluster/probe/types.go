@@ -1,7 +1,7 @@
 // Package probe SSHes into hosts listed in an inventory and collects
-// hardware facts (CPU, memory, disks, network, OS). The output is
-// consumed by `cluster probe --json` for scripting and by the future
-// `cluster plan` command as input for synthesizing a cluster.yaml.
+// hardware facts (CPU, memory, disks, network, OS). The output feeds
+// `cluster plan` — in Phase 1 it is emitted directly as JSON; in
+// Phase 2 it will feed the cluster.yaml synthesis step.
 //
 // Phase 1 scope (see docs/design/inventory-and-plan.md): collection only.
 // No synthesis, no YAML emission.
@@ -13,8 +13,16 @@ import "time"
 // if a single sub-probe fails, the corresponding field is left at its
 // zero value and probing continues. A full SSH failure sets ProbeError
 // and leaves the rest zero.
+//
+// The (IP, SSHPort) pair identifies which SSH target the facts came
+// from. Inventories that run multiple role-instances on the same host
+// (same IP, several service ports) dedup at the SSH-target level — see
+// Inventory.ProbeHosts — so every HostFacts maps to exactly one SSH
+// session. Downstream consumers key results back to inventory entries
+// by matching (IP, SSHPort).
 type HostFacts struct {
 	IP          string     `json:"ip"`
+	SSHPort     int        `json:"ssh_port,omitempty"`
 	Hostname    string     `json:"hostname,omitempty"`
 	OS          string     `json:"os,omitempty"`         // e.g. "ubuntu"
 	OSVersion   string     `json:"os_version,omitempty"` // e.g. "22.04"
