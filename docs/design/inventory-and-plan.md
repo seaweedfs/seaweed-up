@@ -1,0 +1,392 @@
+# Design: inventory → plan → deploy
+
+Status: draft · Owner: @chrislusf · Last updated: 2026-04-23
+
+## Summary
+
+Add two commands to `seaweed-up` so operators don't have to hand-author a
+full cluster YAML before their first deploy:
+
+- `seaweed-up cluster probe` — SSH to each host in an inventory file,
+  collect hardware facts (disks, CPU, memory, network), emit JSON.
+- `seaweed-up cluster plan` — same probe, plus synthesis of a reviewable
+  `cluster.yaml` that the existing `cluster deploy` command consumes
+  unchanged.
+
+The inventory file is deliberately minimal: hosts, roles, SSH settings,
+and a couple of templating knobs. Everything else is discovered on the
+host or derived from defaults.
+
+Re-running `plan` after growing the inventory only *appends* to the
+generated `cluster.yaml`. No existing entry is reordered, no comment is
+clobbered, no manual tuning is lost.
+
+## Goals
+
+- Onboarding flow from zero to a deployable cluster YAML without reading
+  the full schema.
+- A reviewable intermediate artifact (`cluster.yaml`) that the operator
+  can hand-edit before `deploy`. The review step is the feature — this is
+  not a plan-and-apply auto-pilot.
+- Incremental growth: add a host to the inventory, re-run `plan`, only
+  the new host's spec shows up in the diff.
+- Output format is the existing `pkg/cluster/spec.Specification`. No
+  flag-day migration; existing hand-authored `cluster.yaml` files
+  continue to work untouched.
+
+## Non-goals (initial cut)
+
+- Auto-removal of hosts. Deleting a host from the inventory does **not**
+  remove it from `cluster.yaml`; `plan` emits a warning only. Removal is
+  destructive and the user owns it.
+- Topology inference. `plan` does not decide that 3 hosts should be
+  masters or that the 4th should be a filer. Roles are assigned
+  explicitly in the inventory.
+- Replacing `cluster deploy`. `plan` is strictly additive. A user who
+  prefers to hand-write the cluster YAML keeps doing that.
+
+## User flow
+
+### First deploy
+
+```
+# 1. write a minimal inventory
+$ $EDITOR inventory.yaml
+
+# 2. probe hosts, generate cluster.yaml for review
+$ seaweed-up cluster plan -i inventory.yaml -o cluster.yaml
+  probing 10.0.0.11 ... ok (24 cores, 64 GiB, 0 free disks)
+  probing 10.0.0.21 ... ok (32 cores, 128 GiB, 4 free disks)
+  probing 10.0.0.99 ... FAIL: dial tcp: i/o timeout
+  generated cluster.yaml (3 masters, 3 volumes, 2 filers; 1 host skipped)
+
+# 3. review, fill in placeholders (e.g. filer secrets), hand-edit any tuning
+$ $EDITOR cluster.yaml
+
+# 4. deploy as today
+$ seaweed-up cluster deploy -f cluster.yaml
+```
+
+### Grow the cluster
+
+```
+# add a new host to inventory.yaml
+$ $EDITOR inventory.yaml
+
+# re-run plan; merges into the existing cluster.yaml
+$ seaweed-up cluster plan -i inventory.yaml -o cluster.yaml
+  probing 10.0.0.24 ... ok (new volume host, 6 disks)
+  appended 1 volume_server to cluster.yaml (0 existing entries changed)
+
+# deploy is idempotent for existing hosts and rolls out the new one
+$ seaweed-up cluster deploy -f cluster.yaml
+```
+
+## Inventory file
+
+```yaml
+# inventory.yaml — the full schema.
+
+defaults:
+  ssh:
+    user: ubuntu
+    port: 22
+    identity: ~/.ssh/id_rsa
+  disk:
+    device_globs: ["/dev/sd*", "/dev/nvme*"]   # candidate disks
+    exclude:      ["/dev/sda"]                  # boot disk, etc.
+    reserve_pct:  5                             # headroom; capped at 10 GiB
+    disk_type_auto: true                        # rota → hdd, !rota → ssd
+
+hosts:
+  - ip: 10.0.0.11
+    roles: [master, filer]
+    labels: { zone: a, rack: r1 }
+
+  - ip: 10.0.0.12
+    roles: [master, filer]
+    ssh: { user: deploy }                       # host-level override
+    labels: { zone: b, rack: r2 }
+
+  - ip: 10.0.0.13
+    roles: [master]
+
+  - ip: 10.0.0.21
+    roles: [volume]
+    labels: { zone: a, rack: r1 }
+
+  - ip: 10.0.0.71
+    roles: [admin, worker]
+
+  # Filer metadata store — not SSH-managed, never probed.
+  # Declared so --filer-backend can reference it by tag.
+  - ip: 10.0.0.41
+    roles: [external]
+    tag: postgres-metadata
+```
+
+Recognized roles: `master`, `volume`, `filer`, `s3`, `sftp`, `admin`,
+`worker`, `envoy`, `external`. A host may have multiple roles; `plan`
+emits one entry per role into the corresponding `*_servers` section.
+
+Per-host `ssh:` and `labels:` override `defaults`. `labels` map onto
+`DataCenter` / `Rack` on the volume spec (and future filer/s3 fields as
+they grow).
+
+## Probe
+
+Single SSH session per host, several commands batched:
+
+- `lsblk -b -P -o KNAME,PATH,SIZE,UUID,FSTYPE,TYPE,MOUNTPOINT,ROTA,MODEL`
+  reusing and extending `pkg/disks/disks.go` (adds `ROTA`, `MODEL` to
+  `BlockDevice`).
+- `cat /proc/cpuinfo | grep -c ^processor`
+- `awk '/MemTotal/{print $2}' /proc/meminfo`
+- `ip -j addr` (JSON) + `cat /sys/class/net/$if/speed` per non-lo iface
+- `. /etc/os-release; echo "$ID $VERSION_ID"`
+- `uname -m`
+
+Collected into `HostFacts`:
+
+```go
+type HostFacts struct {
+    IP          string
+    Hostname    string
+    OS          string       // "ubuntu"
+    OSVersion   string       // "22.04"
+    Arch        string       // "amd64"
+    CPUCores    int
+    MemoryBytes uint64
+    NetIfaces   []NetIface
+    Disks       []DiskFacts
+    ProbedAt    time.Time
+    ProbeError  string       // non-empty when the host is unreachable
+}
+
+type DiskFacts struct {
+    Path       string   // /dev/sdb
+    Size       uint64
+    FSType     string   // "" when unformatted
+    UUID       string
+    MountPoint string   // "" when unmounted
+    Rotational bool     // → disk_type
+    Model      string   // audit/debug comment in output
+}
+```
+
+Probe failures are per-host and non-fatal: the host is skipped, a warning
+is printed to stderr, and no entry is emitted for it. Re-running picks it
+up once reachable.
+
+`cluster probe -i inventory.yaml --json` prints the `HostFacts` slice
+and exits. Handy for scripting and for debugging `plan` output.
+
+## Plan: generation
+
+For each inventory host (skipping `external` hosts during probe):
+
+- **master**: append `MasterServerSpec{Ip, Port: 9333, PortSsh: …}`.
+- **volume**: append `VolumeServerSpec{Ip, Port: 8080, Folders: derive(facts.Disks)}`.
+  - `derive` applies the same selection rules as today's
+    `prepareUnmountedDisks`: skip partitioned parents, skip mounted,
+    skip `defaults.disk.exclude` globs. For each eligible disk emit
+    `FolderSpec{Folder: "/data<N>", DiskType, Max}`.
+  - `DiskType` comes from `defaults.disk.disk_type_auto` — `hdd` when
+    `Rotational`, otherwise `ssd`.
+  - `Max` is `(Size * (1 - reserve_pct/100)) / volumeSizeLimitMB`,
+    with the reserve capped at 10 GiB (consistent with the PR #4 5%/10 GiB
+    rule).
+  - `plan` does **not** mkfs, format, or mount. It predicts the target
+    layout. The existing `deploy --mount-disks` path performs the
+    filesystem operations.
+- **filer**: append `FilerServerSpec{Ip, Port: 8888}`. If `--filer-backend`
+  is supplied, also populate `config:` (see below); otherwise emit a
+  TODO placeholder comment.
+- **s3 / sftp / admin / worker / envoy**: synthesize the matching spec
+  with defaults. Role-specific required fields that cannot be inferred
+  (e.g. `admin_password`) emit as `CHANGE_ME` with a comment, matching
+  the convention in `examples/typical.yaml`.
+
+### `--filer-backend` (optional)
+
+```
+seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
+    --filer-backend 'postgres://seaweed:CHANGE_ME@10.0.0.41:5432/seaweedfs?sslmode=disable'
+```
+
+Parsed as a DSN and expanded into the per-filer `config:` block:
+
+```yaml
+filer_servers:
+  - ip: 10.0.0.11
+    port: 8888
+    config:
+      type: postgres
+      hostname: 10.0.0.41
+      port: 5432
+      username: seaweed
+      password: CHANGE_ME
+      database: seaweedfs
+      sslmode: disable
+```
+
+Supported schemes in the first cut:
+
+- `postgres://user:pass@host:port/db?sslmode=…`
+- `mysql://user:pass@host:port/db`
+- `redis://:pass@host:port/db` and `redis://host:port/db`
+
+Unrecognized schemes produce an error listing the supported set. The
+user can always hand-write the `config:` block after `plan`.
+
+### Labels
+
+Per-host `labels.zone` / `labels.rack` map to `DataCenter` / `Rack` on
+the volume server spec. Arbitrary other labels are preserved as a
+commented-out `# labels: { foo: bar }` annotation above the host's
+entry, for operator reference.
+
+## Plan: merge semantics
+
+This is the load-bearing piece of the design. The requirement:
+
+> Adding a host to the inventory and re-running `plan` must not move or
+> modify any existing entry in `cluster.yaml`.
+
+### Approach
+
+Parse `cluster.yaml` with `gopkg.in/yaml.v3`'s `yaml.Node` API. `yaml.Node`
+preserves, across a parse → edit → encode round-trip:
+
+- Head, line, and foot comments
+- Key order within a mapping
+- Item order within a sequence
+- Inline vs. block style of individual nodes
+
+Treat the parsed tree as mutable state. Never `yaml.Marshal(spec)` an
+existing file — that round-trips through Go structs and loses comments,
+field order, and whatever style choices the operator made.
+
+### Keying
+
+A host is identified by `ip` within a given `*_servers` section. If we
+ever support multiple instances per IP, the key grows to `ip:port`.
+Defer that until there's a real case.
+
+### Rules
+
+```
+for section in (master_servers, volume_servers, filer_servers, …):
+    existing = index of existing entries by ip
+    for host in inventory with that role:
+        if host.ip in existing:
+            # never touch. if probed facts have drifted, emit a
+            # warning-only report ("10.0.0.21 now has 6 disks, your
+            # cluster.yaml lists 4"). do not mutate the entry.
+            continue
+        else:
+            append a newly-generated node to the end of the section's
+            sequence
+
+for host in existing but not in inventory:
+    emit a warning on stderr. do not remove the entry.
+```
+
+### Stability guarantees (testable)
+
+- **No-op run** (inventory unchanged): output bytes equal input bytes,
+  byte-for-byte. Golden-file test.
+- **Append run** (inventory has +1 host): the textual diff between input
+  and output is exactly a new mapping block at the appropriate section's
+  tail. No whitespace changes anywhere else. Golden-file test.
+- **User-edit survival**: an operator edits `max: 200` into an existing
+  volume entry; re-running `plan` leaves the edit in place. Golden-file
+  test.
+
+### Refresh (deferred)
+
+`plan --refresh-host=10.0.0.21` rebuilds only that one host's entry from
+fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
+
+## Edge cases
+
+| Case | Behavior |
+| --- | --- |
+| Host unreachable during probe | Skip; log warning on stderr; leave `cluster.yaml` untouched for that host. Re-runnable. |
+| Host in inventory has no role | Error at inventory-parse time. |
+| Duplicate IPs in inventory | Error at inventory-parse time. |
+| Host IP changed (old removed, new added) | Plan sees a new host and an orphaned one. New appended; orphan warned about. No auto-migration. |
+| Role=volume but no free disks found | Emit `volume_server` entry with `folders: []` plus a `# no free disks found on $host` comment. `deploy` will fail validation — problem surfaces at plan time, not mid-deploy. |
+| `cluster.yaml` does not yet exist | Generate from scratch. Header comment: `# Generated by seaweed-up plan from inventory.yaml. Safe to hand-edit.` |
+| `-o` points to a file with a different `cluster_name` | Error: "cluster name mismatch"; require `--force` to overwrite. |
+| Probed disk is already mounted at `/data<N>` | Skip re-provisioning; emit the folder in the spec using the existing mountpoint. Matches current `prepareUnmountedDisks` skip-on-mount behavior. |
+| `plan --dry-run` | Print textual diff against `-o` to stdout; write nothing. |
+
+## Code layout
+
+```
+cmd/
+  cluster_plan.go            # flags: -i, -o, --dry-run, --refresh-host,
+                             #         --filer-backend, --concurrency
+  cluster_probe.go           # probe-only: JSON to stdout
+
+pkg/cluster/
+  inventory/
+    inventory.go             # type, load+validate
+    inventory_test.go
+  probe/
+    probe.go                 # HostFacts, orchestrator
+    disks.go                 # wraps pkg/disks
+    network.go
+    sysinfo.go               # cpu, memory, os
+    probe_test.go
+  plan/
+    generate.go              # inventory + facts → *yaml.Node
+    merge.go                 # append-merge into existing *yaml.Node
+    filer_backend.go         # DSN → config: block
+    plan_test.go
+    testdata/golden/
+      add_volume_host.before.yaml
+      add_volume_host.after.yaml
+      preserve_user_max.before.yaml
+      preserve_user_max.after.yaml
+      no_op.before.yaml
+      no_op.after.yaml
+
+pkg/disks/
+  disks.go                   # extend BlockDevice: add Rotational, Model
+```
+
+## Phased rollout
+
+1. **Phase 1: probe.** `seaweed-up cluster probe -i inventory.yaml --json`.
+   Prints `HostFacts` per host. Read-only on hosts; purely additive in
+   the codebase. Validates SSH/probe plumbing before anyone depends on
+   it. Deliverable: one PR.
+2. **Phase 2: plan (greenfield).** `plan -o cluster.yaml` when `-o` does
+   not yet exist. Full generation, no merge yet. Golden tests for 1-host
+   dev, 3+3+3 typical, 5-node mixed. Deliverable: one PR.
+3. **Phase 3: plan (append-merge).** The `yaml.Node` merge. Risky piece;
+   heavy test coverage on the stability guarantees above. This is the
+   PR that unlocks the grow-the-cluster workflow. Deliverable: one PR.
+4. **Phase 4: ergonomics.** `plan --dry-run` diff output, `--refresh-host`,
+   inventory tag references (`tag: postgres-metadata` → DSN rewrite).
+   Deferred until real use reveals what's missing.
+
+Phases 1–3 are the minimum product. Phase 4 is ice cream.
+
+## Resolved design decisions
+
+1. **Role assignment: inventory-only.** No heuristics. Every host
+   declares its roles explicitly.
+2. **`FolderSpec` is not extended.** No `block_device` / `uuid` fields in
+   the YAML. Folder path remains the sole key; UUID is rediscovered at
+   deploy time via `blkid` (already the case post-#65).
+3. **Filer metadata store: optional `--filer-backend` flag.** When
+   absent, `plan` emits a placeholder `# TODO: config:` block per filer.
+   When present, the DSN is parsed and expanded into each filer's
+   `config:` section.
+
+## Open questions
+
+None blocking Phase 1. Flag as they come up during implementation.
