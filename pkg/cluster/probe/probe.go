@@ -189,17 +189,26 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	// as Type=="part" with Path that starts with the parent's Path. Left
 	// unfiltered, a boot disk (e.g. /dev/sda with /dev/sda1 mounted at
 	// /) would pass as "unmounted" at the parent level and the planner
-	// would offer it up for mkfs. Mirrors the partition-skip in
-	// prepareUnmountedDisks.
+	// would offer it up for mkfs.
+	//
+	// We require the partition's path to be the parent path followed
+	// by a partition-suffix shape. A bare HasPrefix check is unsafe:
+	// /dev/nvme0n10p1 starts with /dev/nvme0n1, so naive prefix
+	// matching wrongly flags /dev/nvme0n1 as partitioned on hosts
+	// with ≥10 NVMe namespaces.
 	partitioned := make(map[string]struct{})
 	for _, d := range devs {
 		if d.Type != "part" {
 			continue
 		}
 		for _, parent := range devs {
-			if parent.Type == "disk" && strings.HasPrefix(d.Path, parent.Path) {
-				partitioned[parent.Path] = struct{}{}
+			if parent.Type != "disk" {
+				continue
 			}
+			if !isPartitionOf(d.Path, parent.Path) {
+				continue
+			}
+			partitioned[parent.Path] = struct{}{}
 		}
 	}
 
@@ -259,6 +268,46 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 		out = append(out, fact)
 	}
 	return out
+}
+
+// isPartitionOf returns true when partPath is a kernel-level partition
+// of parentPath. Linux uses two conventions, distinguished by whether
+// the parent name ends in a digit:
+//
+//   - parent ends in a letter (sda, vdb, xvdc) → partition is parent +
+//     digits: sda1, sda12.
+//   - parent ends in a digit  (nvme0n1, loop0, mmcblk0) → partition is
+//     parent + 'p' + digits: nvme0n1p1, loop0p3.
+//
+// Naive HasPrefix is unsafe both ways: it would treat /dev/nvme0n10 as
+// a partition of /dev/nvme0n1 on multi-namespace hosts, and treat
+// /dev/sda12 as a partition of /dev/sda1 (which is itself a partition,
+// not a parent). Encoding the kernel's separator rule here keeps the
+// match exact without parsing lsblk's PKNAME column.
+func isPartitionOf(partPath, parentPath string) bool {
+	if parentPath == "" || !strings.HasPrefix(partPath, parentPath) {
+		return false
+	}
+	suffix := partPath[len(parentPath):]
+	if suffix == "" {
+		return false
+	}
+	parentEndsInDigit := parentPath[len(parentPath)-1] >= '0' && parentPath[len(parentPath)-1] <= '9'
+	if parentEndsInDigit {
+		if suffix[0] != 'p' {
+			return false
+		}
+		suffix = suffix[1:]
+	}
+	if suffix == "" {
+		return false
+	}
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isAWSEphemeralModel returns true when the lsblk MODEL column points

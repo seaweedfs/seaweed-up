@@ -12,7 +12,6 @@ package plan
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -394,16 +393,17 @@ func newEnvoySpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.EnvoyServerS
 
 // --- disk layout derivation ----------------------------------------------
 
-// deriveFolders maps probed disks onto FolderSpec entries per the rules
-// in the design doc. Eligibility mirrors prepareUnmountedDisks: skip
-// excluded paths, partitioned disks, and anything already mounted. For
-// each eligible disk, emit a /data<N> folder and compute Max from usable
-// size (after reserve_pct headroom, capped at 10 GiB).
+// deriveFolders maps probed disks onto FolderSpec entries per the
+// design doc's three-bucket classification (cluster-claimed / fresh /
+// foreign-or-fs-without-claim). For each kept disk, emit a /data<N>
+// folder and compute Max from usable size (after reserve_pct headroom,
+// capped at 10 GiB).
 //
-// When the host has no eligible disks the result is an empty slice —
-// the planner leaves a clearly wrong volume_server entry behind so
-// `cluster deploy` fails validation, rather than silently dropping the
-// host.
+// When the host has no eligible disks the result is an empty slice;
+// Generate then drops the host's volume role entirely and records the
+// host in Report.VolumeHostsNoDisks. Emitting a volume_server with
+// `folders: []` would silently start `weed volume` against the working
+// directory because addToBuffer omits -dir for an empty list.
 func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSizeLimitMB int) []*spec.FolderSpec {
 	reservePct := disk.ReservePct
 	if reservePct == 0 {
@@ -588,15 +588,3 @@ func computeMax(sizeBytes uint64, reservePct, volumeSizeLimitMB int) int {
 	return int(usableMiB / uint64(volumeSizeLimitMB))
 }
 
-// --- identity helpers ----------------------------------------------------
-
-// ValidateHostIP returns an error when h.IP isn't a parseable IPv4 /
-// IPv6 literal. The inventory loader already rejects empty IP, but a
-// typo like "10.0.01" passes that check and then quietly breaks the
-// generated YAML. netip.ParseAddr covers both families in one call.
-func ValidateHostIP(h *inventory.Host) error {
-	if _, err := netip.ParseAddr(h.IP); err != nil {
-		return fmt.Errorf("host %s: %w", h.IP, err)
-	}
-	return nil
-}

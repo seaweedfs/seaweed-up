@@ -288,6 +288,40 @@ func TestProbeDisks_picksUpFstabClaim(t *testing.T) {
 	}
 }
 
+func TestIsPartitionOf(t *testing.T) {
+	cases := []struct {
+		part, parent string
+		want         bool
+	}{
+		// SCSI / SATA / virtio: parent + digits.
+		{"/dev/sda1", "/dev/sda", true},
+		{"/dev/sda12", "/dev/sda", true},
+		{"/dev/vdb3", "/dev/vdb", true},
+
+		// NVMe / loop / mmcblk: parent + 'p' + digits.
+		{"/dev/nvme0n1p1", "/dev/nvme0n1", true},
+		{"/dev/nvme0n1p15", "/dev/nvme0n1", true},
+		{"/dev/loop0p1", "/dev/loop0", true},
+
+		// Regression: nvme0n10 is NOT a partition of nvme0n1 on
+		// multi-namespace hosts.
+		{"/dev/nvme0n10", "/dev/nvme0n1", false},
+		{"/dev/nvme0n10p1", "/dev/nvme0n1", false},
+		{"/dev/sda12", "/dev/sda1", false}, // sda12 is on sda, not on sda1
+
+		// Edge cases.
+		{"/dev/sda", "/dev/sda", false},   // identical → not a partition
+		{"/dev/sdap", "/dev/sda", false},  // 'p' alone with no digits
+		{"/dev/sdaa", "/dev/sda", false},  // letter suffix
+		{"/dev/sda1x", "/dev/sda", false}, // mixed letter / digit
+	}
+	for _, tc := range cases {
+		if got := isPartitionOf(tc.part, tc.parent); got != tc.want {
+			t.Errorf("isPartitionOf(%q, %q) = %v, want %v", tc.part, tc.parent, got, tc.want)
+		}
+	}
+}
+
 func TestProbeDisks_dropsPartitionedParent(t *testing.T) {
 	// Regression: boot disks (e.g. /dev/sda with /dev/sda1 mounted at /)
 	// used to pass through as eligible disks in the probe because
