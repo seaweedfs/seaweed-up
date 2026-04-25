@@ -46,21 +46,21 @@ const (
 
 // Volume shapes describe how `plan` lays multiple eligible disks on a
 // host into volume_server entries. The CLI exposes these as a
-// `--volume-shape` enum so future grouping rules (per-rack,
+// `--volume-server-shape` enum so future grouping rules (per-rack,
 // per-numa-node, ...) can land without a new flag.
 const (
-	// VolumeShapePerHost — one volume_server per host, all eligible
+	// VolumeServerShapePerHost — one volume_server per host, all eligible
 	// disks listed under its folders:. The simpler default. Matches
 	// the typical example in examples/typical.yaml.
-	VolumeShapePerHost = "per-host"
+	VolumeServerShapePerHost = "per-host"
 
-	// VolumeShapePerDisk — one volume_server per eligible disk on a
+	// VolumeServerShapePerDisk — one volume_server per eligible disk on a
 	// host. Each entry carries exactly one folder and a distinct port
 	// (DefaultVolumePort + index). Matches the helm chart's "1 process
 	// per disk" replicas pattern; gives fault isolation (a single
 	// volume process crash doesn't take down sibling disks on the
 	// same host).
-	VolumeShapePerDisk = "per-disk"
+	VolumeServerShapePerDisk = "per-disk"
 )
 
 // Options knobs that influence synthesis. All optional; zero values are
@@ -79,11 +79,11 @@ type Options struct {
 	// ParseFilerBackendDSN.
 	FilerBackend map[string]interface{}
 
-	// VolumeShape controls how multiple disks on one host are mapped
-	// onto volume_server entries. "" or VolumeShapePerHost emits one
-	// volume_server with all folders; VolumeShapePerDisk emits one
+	// VolumeServerShape controls how multiple disks on one host are mapped
+	// onto volume_server entries. "" or VolumeServerShapePerHost emits one
+	// volume_server with all folders; VolumeServerShapePerDisk emits one
 	// per disk with distinct ports. See the constants above.
-	VolumeShape string
+	VolumeServerShape string
 }
 
 // Report collects hosts/roles that Generate chose to skip so the CLI can
@@ -139,11 +139,11 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 		volumeSizeLimitMB = 5000 // GlobalOptions default
 	}
 
-	switch opts.VolumeShape {
-	case "", VolumeShapePerHost, VolumeShapePerDisk:
+	switch opts.VolumeServerShape {
+	case "", VolumeServerShapePerHost, VolumeServerShapePerDisk:
 		// supported
 	default:
-		return nil, report, fmt.Errorf("unknown volume_shape %q; supported: %q, %q", opts.VolumeShape, VolumeShapePerHost, VolumeShapePerDisk)
+		return nil, report, fmt.Errorf("unknown volume_server_shape %q; supported: %q, %q", opts.VolumeServerShape, VolumeServerShapePerHost, VolumeServerShapePerDisk)
 	}
 
 	out := &spec.Specification{
@@ -194,7 +194,7 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 					report.VolumeHostsNoDisks = append(report.VolumeHostsNoDisks, h.IP)
 					continue
 				}
-				if opts.VolumeShape == VolumeShapePerDisk {
+				if opts.VolumeServerShape == VolumeServerShapePerDisk {
 					// Fan each folder out to its own volume_server. Port
 					// increments per disk so the processes don't collide
 					// on the same host (8080, 8081, 8082, ...). gRPC

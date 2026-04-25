@@ -366,7 +366,7 @@ roles that have different service ports.
 Inventories are host-centric; a host with `roles: [master, filer]`
 produces two entries, in two different sections, both keyed at
 `<ip>:<role's default port>`. Multi-process-per-host is a planner
-concern, exposed via `--volume-shape`:
+concern, exposed via `--volume-server-shape`:
 
 - `per-host` (default) — one `volume_server` per host, all eligible
   disks listed under its `folders:`. Single process owns the whole
@@ -375,7 +375,13 @@ concern, exposed via `--volume-shape`:
   ports (`8080`, `8081`, ...). Matches the helm chart's "1 process
   per disk" replicas pattern; gives fault isolation (a single
   volume-process crash doesn't take down sibling disks on the same
-  host).
+  host). The existing `cluster deploy` path supports this without
+  changes: each entry gets its own systemd unit (`seaweed_volumeN.service`)
+  and per-instance data dir (`<data_dir>/volumeN`), and the per-host
+  `prepareUnmountedDisks` mount step is idempotent across the
+  multiple SSH calls into the same host. `cluster scale-in` already
+  keys on `ip:port` so individual instances can be removed without
+  touching siblings.
 
 Future shapes (e.g. `per-rack`, `per-numa-node`) can land as
 additional enum values without a new flag.
@@ -507,7 +513,7 @@ Phases 1–3 are the minimum product. Phase 4 is ice cream.
    it does not carry a per-host service-port override. `plan` emits
    the role's well-known default (9333, 8888, 8080, …) on synthesis;
    multi-process-per-host volume layouts are reachable via
-   `--volume-shape=per-disk`, which assigns ports per-disk
+   `--volume-server-shape=per-disk`, which assigns ports per-disk
    (`8080`, `8081`, …). Keeps inventory host-centric and avoids
    overloading one `port:` field across roles with different service
    ports.

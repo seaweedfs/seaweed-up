@@ -152,7 +152,7 @@ func TestGenerate_perDiskVolumeShape(t *testing.T) {
 
 	// Per-disk should produce 3 entries with one folder each, ports
 	// 8080/8081/8082, gRPC 18080/18081/18082, and inherit DC/Rack.
-	spec, _, err = Generate(inv, facts, Options{VolumeShape: VolumeShapePerDisk})
+	spec, _, err = Generate(inv, facts, Options{VolumeServerShape: VolumeServerShapePerDisk})
 	if err != nil {
 		t.Fatalf("Generate per-disk: %v", err)
 	}
@@ -185,9 +185,9 @@ func TestGenerate_unknownVolumeShape(t *testing.T) {
 	if err := inv.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	_, _, err := Generate(inv, nil, Options{VolumeShape: "per-galaxy"})
+	_, _, err := Generate(inv, nil, Options{VolumeServerShape: "per-galaxy"})
 	if err == nil {
-		t.Fatal("expected error for unknown volume_shape")
+		t.Fatal("expected error for unknown volume_server_shape")
 	}
 }
 
