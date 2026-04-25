@@ -332,6 +332,38 @@ master_servers:
 	}
 }
 
+// TestMerge_rejectsNonSequenceSection: an existing `master_servers:`
+// hand-edited to a scalar or mapping must NOT be silently overwritten.
+// A loud error pushes the operator to clean it up before merge instead
+// of losing data.
+func TestMerge_rejectsNonSequenceSection(t *testing.T) {
+	existing := `cluster_name: broken
+master_servers: oops_a_string_not_a_list
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "broken"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	_, _, err = Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err == nil {
+		t.Fatal("expected error on non-sequence section, got nil")
+	}
+	if !strings.Contains(err.Error(), "master_servers") {
+		t.Errorf("error should name the offending section, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--overwrite") {
+		t.Errorf("error should hint at --overwrite escape hatch, got: %v", err)
+	}
+}
+
 // TestDetectIndent covers the small heuristic that picks the
 // re-encode indent from the existing input. Direct unit test because
 // the detector also runs on edge cases (empty file, comment-only,

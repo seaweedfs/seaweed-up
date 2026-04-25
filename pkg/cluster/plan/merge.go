@@ -213,6 +213,11 @@ type serverEntry struct {
 // orphans into report. keyOfNode extracts the dedup key from an
 // existing sequence item (per-section because worker/envoy don't have
 // a single service port).
+//
+// Returns an error if the section value exists but isn't a sequence
+// (operator may have hand-edited `master_servers: foo` or
+// `master_servers: {…}`). Silently overwriting that would lose data;
+// instead we ask the operator to clean it up.
 func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOfNode func(*yaml.Node) string, report *MergeReport) error {
 	seqNode := findOrCreateSection(root, sectionKey)
 	if seqNode == nil {
@@ -226,6 +231,12 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: sectionKey},
 			seqNode,
 		)
+	}
+	if seqNode.Kind != yaml.SequenceNode {
+		return fmt.Errorf("expected sequence under %s, got YAML kind %d (line %d) — "+
+			"refusing to overwrite a hand-edited mapping/scalar; clean up the section "+
+			"by hand or pass --overwrite to regenerate from scratch",
+			sectionKey, seqNode.Kind, seqNode.Line)
 	}
 
 	// Index existing entries by section-specific key. Skip entries we
