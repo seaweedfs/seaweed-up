@@ -207,8 +207,12 @@ When `-o cluster.yaml` is set, the same `HostFacts` slice is also
 written as a sidecar JSON file alongside the synthesized YAML
 (`cluster.yaml` → `cluster.facts.json`). The sidecar gives operators
 a record of what the probe saw without re-running it, and is the
-intended audit input for Phase 3 append-merge so a re-run can detect
-drift between previously-recorded facts and freshly-probed ones.
+intended audit input for Phase 4 drift detection (compare the
+previously-recorded facts against a fresh probe to surface hosts
+whose disks/NICs/CPU shape have changed since plan last ran).
+Phase 3 append-merge does not consult the sidecar — it works
+entirely off the parsed YAML — but it does refresh it on every
+run so the next plan/diff has current facts to compare against.
 Sidecar permissions are `0600` since facts include hostnames, NIC
 addresses, and disk model strings.
 
