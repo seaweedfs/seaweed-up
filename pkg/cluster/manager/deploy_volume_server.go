@@ -63,6 +63,20 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 			}
 		}
 
+		// Plan-generated specs get a runtime mountpoint check before
+		// we mkdir or start anything. The static allowlist guard above
+		// only verifies the SIDECAR has enough approved paths; it
+		// can't catch the case where prepareUnmountedDisks dropped an
+		// approved device because it acquired a partition or an
+		// unrelated mount between plan and deploy. Without this check,
+		// ensureVolumeFolders would mkdir the missing /data<N> on
+		// rootfs and weed volume would write data into the OS root.
+		if m.PlannedDisksBySSHTarget != nil {
+			if err := m.verifyVolumeFoldersAreMountpoints(op, volumeServerSpec); err != nil {
+				return err
+			}
+		}
+
 		if err := m.ensureVolumeFolders(op, volumeServerSpec); err != nil {
 			return err
 		}
@@ -70,6 +84,69 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		return m.deployComponentInstance(op, component, componentInstance, &buf)
 
 	})
+}
+
+// volumeServerFolderPaths returns every -dir / -dir.idx path the spec
+// will pass to weed volume. Empty/nil entries are skipped.
+func volumeServerFolderPaths(vs *spec.VolumeServerSpec) []string {
+	paths := make([]string, 0, len(vs.Folders)+1)
+	for _, f := range vs.Folders {
+		if f != nil && f.Folder != "" {
+			paths = append(paths, f.Folder)
+		}
+	}
+	if vs.IdxFolder != "" {
+		paths = append(paths, vs.IdxFolder)
+	}
+	return paths
+}
+
+// verifyVolumeFoldersAreMountpoints confirms each -dir / -dir.idx path
+// is a real mountpoint on the host, not a regular directory on rootfs.
+// Bridges the gap between the static allowlist count (pre-flight) and
+// the actual outcome of prepareUnmountedDisks: even with enough
+// approved paths in the sidecar, prepareUnmountedDisks can produce
+// fewer mounts if one of the devices acquired a partition, was
+// mounted elsewhere, or disappeared between plan and deploy. Without
+// this runtime check, ensureVolumeFolders would mkdir the missing
+// path on rootfs and weed volume would silently write data into the
+// OS root filesystem. Uses `mountpoint` from util-linux (universal on
+// real Linux hosts; busybox provides it on Alpine/embedded). One
+// round-trip: the script echoes any path that fails the check, so
+// the error names every drift in one go.
+func (m *Manager) verifyVolumeFoldersAreMountpoints(op operator.CommandOperator, vs *spec.VolumeServerSpec) error {
+	paths := volumeServerFolderPaths(vs)
+	if len(paths) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	for i, p := range paths {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(shellSingleQuote(p))
+	}
+	cmd := fmt.Sprintf(`for p in %s; do mountpoint -q "$p" || echo "$p"; done`, b.String())
+	out, err := op.Output(cmd)
+	if err != nil {
+		return fmt.Errorf("verify volume folder mountpoints: %v", err)
+	}
+	var missing []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			missing = append(missing, line)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"plan-approved volume folder(s) are not mountpoints after prepare on this host: %v — "+
+				"starting weed volume now would write data into the root filesystem. "+
+				"Likely cause: a device drifted between plan and deploy (acquired a partition, "+
+				"was mounted elsewhere, or disappeared). Re-run "+
+				"`cluster plan -o <spec>.yaml --overwrite` to refresh the sidecar, then re-deploy.",
+			missing)
+	}
+	return nil
 }
 
 // requiredMountsForTarget returns the number of mountpoints the

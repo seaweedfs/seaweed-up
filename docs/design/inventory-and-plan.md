@@ -251,6 +251,22 @@ the later `/data<N>` folders would be silently mkdir'd on rootfs.
 The check fires before any SSH work; the error names the host
 total, the approved count, and tells the operator to re-run plan.
 
+A static count check isn't enough on its own: a sidecar with the
+right total can still produce too few mounts at deploy time if one
+of the approved devices acquired a partition, was mounted
+elsewhere, or disappeared between plan and deploy.
+`prepareUnmountedDisks` then silently drops the drifted device from
+its candidate set, mounts the others, and the missing `/data<N>`
+falls back to a plain rootfs directory. To close that gap, a
+runtime mountpoint check runs **after** `prepareUnmountedDisks` and
+**before** `ensureVolumeFolders` mkdirs anything: every
+`-dir`/`-dir.idx` path the spec lists must be a real mountpoint on
+the host. The verification is a single SSH round-trip
+(`mountpoint -q` per path); any path that fails is reported back so
+the operator sees every drift in one error message. Hand-written
+specs (no plan marker, no sidecar) skip both the static and the
+runtime checks for backwards compatibility.
+
 **Deterministic /data<N> assignment.** `prepareUnmountedDisks` walks
 its candidate disks in path-sorted order so deploy's `/data<N>`
 assignment matches plan's. Without this, Go's randomized map

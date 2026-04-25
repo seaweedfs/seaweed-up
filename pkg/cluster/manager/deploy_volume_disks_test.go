@@ -252,3 +252,113 @@ func (nopOp) Upload(io.Reader, string, string) error         { return nil }
 func (nopOp) UploadFile(string, string, string) error        { return nil }
 func _enforceInterface(_ operator.CommandOperator)           {}
 func init()                                                  { _enforceInterface(nopOp{}) }
+
+// scriptedOp is a CommandOperator stub for tests that need to assert
+// against, or vary the response of, op.Output / op.Execute calls.
+type scriptedOp struct {
+	output func(cmd string) ([]byte, error)
+	exec   func(cmd string) error
+}
+
+func (s scriptedOp) Execute(c string) error {
+	if s.exec == nil {
+		return nil
+	}
+	return s.exec(c)
+}
+func (s scriptedOp) Output(c string) ([]byte, error) {
+	if s.output == nil {
+		return nil, nil
+	}
+	return s.output(c)
+}
+func (scriptedOp) Upload(io.Reader, string, string) error  { return nil }
+func (scriptedOp) UploadFile(string, string, string) error { return nil }
+
+// TestVerifyVolumeFoldersAreMountpoints_allMounted: the happy path —
+// prepareUnmountedDisks did its job; every -dir/-dir.idx path is a
+// real mountpoint. The check should pass cleanly.
+func TestVerifyVolumeFoldersAreMountpoints_allMounted(t *testing.T) {
+	m := NewManager()
+	vs := &spec.VolumeServerSpec{
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}, {Folder: "/data2"}},
+	}
+	op := scriptedOp{output: func(cmd string) ([]byte, error) {
+		if !strings.Contains(cmd, "mountpoint -q") {
+			t.Errorf("expected mountpoint command, got: %s", cmd)
+		}
+		return nil, nil // empty = all mounted
+	}}
+	if err := m.verifyVolumeFoldersAreMountpoints(op, vs); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+// TestVerifyVolumeFoldersAreMountpoints_oneDrifted: this is the
+// regression case for the reviewer's finding. The static count guard
+// passed (sidecar had two approved disks), but at deploy time one of
+// them acquired a partition or was mounted elsewhere, so
+// prepareUnmountedDisks only mounted one disk. The runtime check
+// fires and refuses to proceed before ensureVolumeFolders mkdirs on
+// rootfs.
+func TestVerifyVolumeFoldersAreMountpoints_oneDrifted(t *testing.T) {
+	m := NewManager()
+	vs := &spec.VolumeServerSpec{
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}, {Folder: "/data2"}},
+	}
+	op := scriptedOp{output: func(string) ([]byte, error) {
+		// /data2 isn't a mountpoint — script echoes its path.
+		return []byte("/data2\n"), nil
+	}}
+	err := m.verifyVolumeFoldersAreMountpoints(op, vs)
+	if err == nil {
+		t.Fatal("expected refusal, got nil")
+	}
+	if !strings.Contains(err.Error(), "/data2") {
+		t.Errorf("error should name the drifted path, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "root filesystem") {
+		t.Errorf("error should explain the rootfs failure mode, got: %v", err)
+	}
+}
+
+// TestVerifyVolumeFoldersAreMountpoints_idxFolderChecked: the idx
+// folder counts as a separate mountpoint and must be verified too.
+// A drifted idx disk would otherwise cause weed volume -dir.idx to
+// write index files into rootfs.
+func TestVerifyVolumeFoldersAreMountpoints_idxFolderChecked(t *testing.T) {
+	m := NewManager()
+	vs := &spec.VolumeServerSpec{
+		Folders:   []*spec.FolderSpec{{Folder: "/data2"}},
+		IdxFolder: "/data1",
+	}
+	var seen string
+	op := scriptedOp{output: func(cmd string) ([]byte, error) {
+		seen = cmd
+		return []byte("/data1\n"), nil // idx folder drifted
+	}}
+	err := m.verifyVolumeFoldersAreMountpoints(op, vs)
+	if err == nil {
+		t.Fatal("expected refusal when idx folder is not a mountpoint")
+	}
+	if !strings.Contains(seen, "/data1") || !strings.Contains(seen, "/data2") {
+		t.Errorf("check should include both data and idx folders, got: %s", seen)
+	}
+	if !strings.Contains(err.Error(), "/data1") {
+		t.Errorf("error should name /data1 (idx folder), got: %v", err)
+	}
+}
+
+// TestVerifyVolumeFoldersAreMountpoints_emptyPaths: a spec with no
+// folders is a no-op (other validation prevents this in practice).
+func TestVerifyVolumeFoldersAreMountpoints_emptyPaths(t *testing.T) {
+	m := NewManager()
+	vs := &spec.VolumeServerSpec{}
+	op := scriptedOp{output: func(string) ([]byte, error) {
+		t.Error("op.Output must not be called when there's nothing to verify")
+		return nil, nil
+	}}
+	if err := m.verifyVolumeFoldersAreMountpoints(op, vs); err != nil {
+		t.Errorf("expected nil for empty paths, got %v", err)
+	}
+}
