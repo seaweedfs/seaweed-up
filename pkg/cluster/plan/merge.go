@@ -341,7 +341,7 @@ func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNod
 // no-fresh-entries path that needs to inspect existing children
 // without mutating bytes.
 func findExistingSection(root *yaml.Node, sectionKey string) *yaml.Node {
-	for i := 0; i < len(root.Content); i += 2 {
+	for i := 0; i+1 < len(root.Content); i += 2 {
 		k := root.Content[i]
 		if k.Kind == yaml.ScalarNode && k.Value == sectionKey {
 			return root.Content[i+1]
@@ -357,7 +357,7 @@ func findExistingSection(root *yaml.Node, sectionKey string) *yaml.Node {
 // only fires on the append path — the no-fresh-entries branch uses
 // findExistingSection to keep null sections byte-stable.
 func findOrCoerceSection(root *yaml.Node, sectionKey string) *yaml.Node {
-	for i := 0; i < len(root.Content); i += 2 {
+	for i := 0; i+1 < len(root.Content); i += 2 {
 		k := root.Content[i]
 		if k.Kind == yaml.ScalarNode && k.Value == sectionKey {
 			v := root.Content[i+1]
