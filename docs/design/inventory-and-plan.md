@@ -565,10 +565,13 @@ fresh facts. Off by default; explicit opt-in. Deferred to Phase 4.
 ```
 cmd/
   cluster_plan.go            # unified command. flags: -i, -o, --json,
-                             #   --dry-run, --refresh-host, --filer-backend,
+                             #   --overwrite, --filer-backend,
                              #   --filer-backend-file, --volume-size-limit-mb,
+                             #   --volume-server-shape, --cluster-name,
                              #   --concurrency. Phase 1 implements --json only;
-                             #   Phase 2 adds -o; Phase 3 adds --dry-run.
+                             #   Phase 2 adds -o; Phase 3 adds in-place
+                             #   append-merge for an existing -o file.
+                             #   Phase 4 will add --dry-run + --refresh-host.
 
 pkg/cluster/
   inventory/

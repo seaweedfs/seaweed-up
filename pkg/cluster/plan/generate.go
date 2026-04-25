@@ -1,12 +1,18 @@
 // Package plan synthesizes a reviewable cluster.yaml (a
-// spec.Specification) from an inventory plus per-host probe facts. This
-// is Phase 2 of the inventory → plan → deploy flow described in
-// docs/design/inventory-and-plan.md.
+// spec.Specification) from an inventory plus per-host probe facts.
+// See docs/design/inventory-and-plan.md for the full design.
 //
-// Greenfield only. Phase 3 will add append-merge via yaml.Node so
-// re-running against an existing cluster.yaml preserves comments and
-// hand edits. Until then, writing onto an existing file requires
-// --overwrite.
+// Two output paths share the package:
+//
+//   - Greenfield: build a fresh spec from inventory+facts and call
+//     Marshal to render a cluster.yaml from scratch. See generate.go
+//     and marshal.go.
+//   - Append-merge: when the operator points -o at an existing
+//     cluster.yaml, Merge parses it as a yaml.Node tree and appends
+//     new inventory hosts in place, preserving every existing byte
+//     (comments, hand edits, key order, indent). See merge.go.
+//
+// `--overwrite` forces greenfield even when -o exists.
 package plan
 
 import (
