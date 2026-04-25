@@ -365,11 +365,20 @@ roles that have different service ports.
 
 Inventories are host-centric; a host with `roles: [master, filer]`
 produces two entries, in two different sections, both keyed at
-`<ip>:<role's default port>`. Multi-process-per-host (e.g. several
-volume processes sharing a physical server) is a planner concern —
-nothing in Phase 1 emits it; a later phase can add a flag like
-`--volumes-per-host N` that synthesizes multiple entries with
-non-default ports.
+`<ip>:<role's default port>`. Multi-process-per-host is a planner
+concern, exposed via `--volume-shape`:
+
+- `per-host` (default) — one `volume_server` per host, all eligible
+  disks listed under its `folders:`. Single process owns the whole
+  data layer for the box.
+- `per-disk` — one `volume_server` per eligible disk, with distinct
+  ports (`8080`, `8081`, ...). Matches the helm chart's "1 process
+  per disk" replicas pattern; gives fault isolation (a single
+  volume-process crash doesn't take down sibling disks on the same
+  host).
+
+Future shapes (e.g. `per-rack`, `per-numa-node`) can land as
+additional enum values without a new flag.
 
 ### Rules
 
@@ -496,10 +505,10 @@ Phases 1–3 are the minimum product. Phase 4 is ice cream.
    no service-port field.** The cluster.yaml spec already uses
    `ip:port` and `plan` preserves that. The inventory stays minimal:
    it does not carry a per-host service-port override. `plan` emits
-   the role's well-known default (9333, 8888, 8080, …) on synthesis,
-   and if an operator later wants multiple volume processes on one
-   host they hand-edit `cluster.yaml` or wait for a future
-   `--volumes-per-host` flag. Keeps inventory host-centric and avoids
+   the role's well-known default (9333, 8888, 8080, …) on synthesis;
+   multi-process-per-host volume layouts are reachable via
+   `--volume-shape=per-disk`, which assigns ports per-disk
+   (`8080`, `8081`, …). Keeps inventory host-centric and avoids
    overloading one `port:` field across roles with different service
    ports.
 5. **`Max` formula makes units explicit.** `Size` from probe is bytes,

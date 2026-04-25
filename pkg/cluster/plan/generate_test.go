@@ -116,6 +116,81 @@ func TestGenerate_threeByThreeByThreeTypical(t *testing.T) {
 		})
 }
 
+func TestGenerate_perDiskVolumeShape(t *testing.T) {
+	// VolumeShape=per-disk fans each eligible disk out to its own
+	// volume_server entry with a distinct port. Confirms per-host
+	// stays the default and the per-disk path produces N entries
+	// from N disks.
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.1", Roles: []string{"master"}},
+			{
+				IP:     "10.0.0.21",
+				Roles:  []string{"volume"},
+				Labels: map[string]string{"zone": "a", "rack": "r1"},
+			},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(3, 100)},
+	}
+
+	// Default (per-host) should still produce 1 entry with 3 folders.
+	spec, _, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate per-host: %v", err)
+	}
+	if len(spec.VolumeServers) != 1 {
+		t.Fatalf("per-host shape: got %d entries, want 1", len(spec.VolumeServers))
+	}
+	if got := len(spec.VolumeServers[0].Folders); got != 3 {
+		t.Errorf("per-host folders: got %d, want 3", got)
+	}
+
+	// Per-disk should produce 3 entries with one folder each, ports
+	// 8080/8081/8082, gRPC 18080/18081/18082, and inherit DC/Rack.
+	spec, _, err = Generate(inv, facts, Options{VolumeShape: VolumeShapePerDisk})
+	if err != nil {
+		t.Fatalf("Generate per-disk: %v", err)
+	}
+	if len(spec.VolumeServers) != 3 {
+		t.Fatalf("per-disk shape: got %d entries, want 3: %+v", len(spec.VolumeServers), spec.VolumeServers)
+	}
+	for i, vs := range spec.VolumeServers {
+		if vs.Ip != "10.0.0.21" {
+			t.Errorf("entry %d: ip = %q, want 10.0.0.21", i, vs.Ip)
+		}
+		if vs.Port != 8080+i {
+			t.Errorf("entry %d: port = %d, want %d", i, vs.Port, 8080+i)
+		}
+		if vs.PortGrpc != 18080+i {
+			t.Errorf("entry %d: port.grpc = %d, want %d", i, vs.PortGrpc, 18080+i)
+		}
+		if len(vs.Folders) != 1 {
+			t.Errorf("entry %d: %d folders, want 1", i, len(vs.Folders))
+		}
+		if vs.DataCenter != "a" || vs.Rack != "r1" {
+			t.Errorf("entry %d: DC/Rack lost (%q/%q)", i, vs.DataCenter, vs.Rack)
+		}
+	}
+}
+
+func TestGenerate_unknownVolumeShape(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.1", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	_, _, err := Generate(inv, nil, Options{VolumeShape: "per-galaxy"})
+	if err == nil {
+		t.Fatal("expected error for unknown volume_shape")
+	}
+}
+
 func TestGenerate_mixedFiveWithFilerBackend(t *testing.T) {
 	facts := map[string]probe.HostFacts{
 		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(2, 512)},

@@ -44,6 +44,25 @@ const (
 	DefaultAdminPort      = 23646
 )
 
+// Volume shapes describe how `plan` lays multiple eligible disks on a
+// host into volume_server entries. The CLI exposes these as a
+// `--volume-shape` enum so future grouping rules (per-rack,
+// per-numa-node, ...) can land without a new flag.
+const (
+	// VolumeShapePerHost — one volume_server per host, all eligible
+	// disks listed under its folders:. The simpler default. Matches
+	// the typical example in examples/typical.yaml.
+	VolumeShapePerHost = "per-host"
+
+	// VolumeShapePerDisk — one volume_server per eligible disk on a
+	// host. Each entry carries exactly one folder and a distinct port
+	// (DefaultVolumePort + index). Matches the helm chart's "1 process
+	// per disk" replicas pattern; gives fault isolation (a single
+	// volume process crash doesn't take down sibling disks on the
+	// same host).
+	VolumeShapePerDisk = "per-disk"
+)
+
 // Options knobs that influence synthesis. All optional; zero values are
 // fine and trigger sensible defaults.
 type Options struct {
@@ -59,6 +78,12 @@ type Options struct {
 	// FilerServerSpec. Callers supply this by parsing a DSN via
 	// ParseFilerBackendDSN.
 	FilerBackend map[string]interface{}
+
+	// VolumeShape controls how multiple disks on one host are mapped
+	// onto volume_server entries. "" or VolumeShapePerHost emits one
+	// volume_server with all folders; VolumeShapePerDisk emits one
+	// per disk with distinct ports. See the constants above.
+	VolumeShape string
 }
 
 // Report collects hosts/roles that Generate chose to skip so the CLI can
@@ -114,6 +139,13 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 		volumeSizeLimitMB = 5000 // GlobalOptions default
 	}
 
+	switch opts.VolumeShape {
+	case "", VolumeShapePerHost, VolumeShapePerDisk:
+		// supported
+	default:
+		return nil, report, fmt.Errorf("unknown volume_shape %q; supported: %q, %q", opts.VolumeShape, VolumeShapePerHost, VolumeShapePerDisk)
+	}
+
 	out := &spec.Specification{
 		Name: opts.ClusterName,
 		GlobalOptions: spec.GlobalOptions{
@@ -160,6 +192,21 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 					// rather than the intended data disks. Drop the
 					// role and warn loudly.
 					report.VolumeHostsNoDisks = append(report.VolumeHostsNoDisks, h.IP)
+					continue
+				}
+				if opts.VolumeShape == VolumeShapePerDisk {
+					// Fan each folder out to its own volume_server. Port
+					// increments per disk so the processes don't collide
+					// on the same host (8080, 8081, 8082, ...). gRPC
+					// follows SeaweedFS convention of "service port +
+					// 10000".
+					for i, folder := range folders {
+						port := DefaultVolumePort + i
+						vs := newVolumeSpec(h, ssh, []*spec.FolderSpec{folder})
+						vs.Port = port
+						vs.PortGrpc = port + 10000
+						out.VolumeServers = append(out.VolumeServers, vs)
+					}
 					continue
 				}
 				out.VolumeServers = append(out.VolumeServers, newVolumeSpec(h, ssh, folders))

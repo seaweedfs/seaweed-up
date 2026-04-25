@@ -41,6 +41,7 @@ type ClusterPlanOptions struct {
 	VolumeSizeLimitMB int
 	FilerBackend      string
 	FilerBackendFile  string
+	VolumeShape       string
 }
 
 func newClusterPlanCmd() *cobra.Command {
@@ -89,6 +90,7 @@ Purely read-only on the target hosts.`,
 	cmd.Flags().IntVar(&opts.VolumeSizeLimitMB, "volume-size-limit-mb", 0, "volumeSizeLimitMB for the generated global block (default 5000)")
 	cmd.Flags().StringVar(&opts.FilerBackend, "filer-backend", "", "filer metadata DSN, e.g. postgres://user:pass@host/db (leaks via ps; prefer --filer-backend-file)")
 	cmd.Flags().StringVar(&opts.FilerBackendFile, "filer-backend-file", "", "path to a file containing the filer metadata DSN")
+	cmd.Flags().StringVar(&opts.VolumeShape, "volume-shape", "", "how to map disks to volume_server entries: per-host (default; one entry, all disks under folders:) or per-disk (one entry per disk, distinct ports)")
 
 	_ = cmd.MarkFlagRequired("inventory")
 	return cmd
@@ -156,6 +158,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		ClusterName:       opts.ClusterName,
 		VolumeSizeLimitMB: opts.VolumeSizeLimitMB,
 		FilerBackend:      backend,
+		VolumeShape:       opts.VolumeShape,
 	})
 	if err != nil {
 		return fmt.Errorf("generate cluster spec: %w", err)
