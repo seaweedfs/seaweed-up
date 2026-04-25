@@ -100,6 +100,29 @@ func TestLoadPlannedDeployDisks_handWritten_noMarkerNoSidecar_returnsNilNil(t *t
 	}
 }
 
+// TestRunClusterPlan_dryRunRequiresOutput pins down the early-exit
+// validation: --dry-run renders a diff against -o, so without -o
+// there's no diff target to render. The check fires before any SSH
+// probe so the test doesn't need network or fake hosts.
+func TestRunClusterPlan_dryRunRequiresOutput(t *testing.T) {
+	dir := t.TempDir()
+	invPath := filepath.Join(dir, "inv.yaml")
+	if err := os.WriteFile(invPath, []byte("hosts:\n  - ip: 10.0.0.1\n    roles: [master]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := &ClusterPlanOptions{
+		InventoryFile: invPath,
+		DryRun:        true, // OutputFile left empty
+	}
+	err := runClusterPlan(nil, opts)
+	if err == nil {
+		t.Fatal("expected refusal when --dry-run is set without -o")
+	}
+	if !strings.Contains(err.Error(), "--dry-run requires -o") {
+		t.Errorf("error should explain the missing -o, got: %v", err)
+	}
+}
+
 // TestIsPlanGeneratedSpec_detectsMarker is the wiring test for the
 // PlanGenerated flag the cmd layer pushes into the Manager. The flag
 // drives the runtime mountpoint check independently of the sidecar,
