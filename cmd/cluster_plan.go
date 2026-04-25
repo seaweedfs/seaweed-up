@@ -222,9 +222,9 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 
 	// Write the probe facts as a sidecar JSON file alongside cluster.yaml.
 	// Useful for debugging (operators can see what plan saw without
-	// re-probing) and as audit / reproducibility input for Phase 3
-	// append-merge. Same 0o600 — facts include hostnames, NIC addresses,
-	// and disk model strings (host-enumeration data).
+	// re-probing) and as an audit record for the next append-merge run.
+	// Same 0o600 — facts include hostnames, NIC addresses, and disk
+	// model strings (host-enumeration data).
 	factsBody, err := json.MarshalIndent(facts, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal facts: %w", err)
