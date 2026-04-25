@@ -194,7 +194,7 @@ func isYAMLKeyStart(b []byte) bool {
 		return false
 	}
 	c := b[0]
-	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
 		return false
 	}
 	return bytes.IndexByte(b, ':') > 0
