@@ -26,21 +26,6 @@ type MergeReport struct {
 	// Append-merge never deletes — orphans surface as a warning so the
 	// operator can decide.
 	Orphaned []string
-	// Drift records a per-host warning when a previously-emitted entry
-	// would have been generated differently from this run's facts (e.g.
-	// the host's disk count changed). The existing entry is left
-	// untouched; the operator reads the warning and decides whether to
-	// re-emit by hand (or wait for Phase 4 --refresh-host).
-	Drift []DriftWarning
-}
-
-// DriftWarning is one per-entry note that the existing YAML's contents
-// no longer match what plan would synthesize today. Section + Key
-// identify the entry; Detail is a short human-readable summary.
-type DriftWarning struct {
-	Section string
-	Key     string // ip:port
-	Detail  string
 }
 
 // MergeOptions tweak append-merge behavior. Zero value is fine for
