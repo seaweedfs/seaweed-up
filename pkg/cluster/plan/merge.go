@@ -92,7 +92,9 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 	// Each *_servers section is keyed differently in inventory vs. spec
 	// (e.g. `master_servers`), but both ends agree on the YAML key. The
 	// per-section helpers below own the marshalling of fresh entries to
-	// yaml.Node fragments.
+	// yaml.Node fragments and bubble up any encoding error so an
+	// inventory host can't be silently dropped from the merged output.
+	//
 	// Per-section plan: section name + how to key fresh entries + how
 	// to key existing entries. Most sections key on ip:port, but
 	// worker/envoy have no single service port — they dedupe on ip
@@ -100,22 +102,26 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 	// rows from different sections.
 	type sectionPlan struct {
 		key       string
-		entries   []serverEntry
+		build     func() ([]serverEntry, error)
 		keyOfNode func(node *yaml.Node) string
 	}
 	plans := []sectionPlan{
-		{key: "master_servers", entries: masterEntries(fresh.MasterServers), keyOfNode: ipPortKeyOfNode},
-		{key: "volume_servers", entries: volumeEntries(fresh.VolumeServers), keyOfNode: ipPortKeyOfNode},
-		{key: "filer_servers", entries: filerEntries(fresh.FilerServers), keyOfNode: ipPortKeyOfNode},
-		{key: "s3_servers", entries: s3Entries(fresh.S3Servers), keyOfNode: ipPortKeyOfNode},
-		{key: "sftp_servers", entries: sftpEntries(fresh.SftpServers), keyOfNode: ipPortKeyOfNode},
-		{key: "admin_servers", entries: adminEntries(fresh.AdminServers), keyOfNode: ipPortKeyOfNode},
-		{key: "envoy_servers", entries: envoyEntries(fresh.EnvoyServers), keyOfNode: ipSentinelKeyFn("envoy")},
-		{key: "worker_servers", entries: workerEntries(fresh.WorkerServers), keyOfNode: ipSentinelKeyFn("worker")},
+		{key: "master_servers", build: func() ([]serverEntry, error) { return masterEntries(fresh.MasterServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "volume_servers", build: func() ([]serverEntry, error) { return volumeEntries(fresh.VolumeServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "filer_servers", build: func() ([]serverEntry, error) { return filerEntries(fresh.FilerServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "s3_servers", build: func() ([]serverEntry, error) { return s3Entries(fresh.S3Servers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "sftp_servers", build: func() ([]serverEntry, error) { return sftpEntries(fresh.SftpServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "admin_servers", build: func() ([]serverEntry, error) { return adminEntries(fresh.AdminServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "envoy_servers", build: func() ([]serverEntry, error) { return envoyEntries(fresh.EnvoyServers) }, keyOfNode: ipSentinelKeyFn("envoy")},
+		{key: "worker_servers", build: func() ([]serverEntry, error) { return workerEntries(fresh.WorkerServers) }, keyOfNode: ipSentinelKeyFn("worker")},
 	}
 
 	for _, p := range plans {
-		if err := mergeSection(root, p.key, p.entries, p.keyOfNode, report); err != nil {
+		entries, err := p.build()
+		if err != nil {
+			return nil, nil, fmt.Errorf("build %s entries: %w", p.key, err)
+		}
+		if err := mergeSection(root, p.key, entries, p.keyOfNode, report); err != nil {
 			return nil, nil, fmt.Errorf("merge %s: %w", p.key, err)
 		}
 	}
@@ -357,7 +363,15 @@ func ipSentinelKeyFn(suffix string) func(*yaml.Node) string {
 // what greenfield Marshal would emit — appended entries are
 // indistinguishable from same-section entries written on first run.
 
-func masterEntries(ms []*spec.MasterServerSpec) []serverEntry {
+// Each helper returns an error rather than silently swallowing
+// specToYAMLNode failures: silently skipping an inventory host would
+// make it disappear from the merged cluster.yaml without any warning,
+// and the operator would only notice when deploy didn't reach that
+// host. yaml.Marshal failing on a well-formed Go struct is exotic,
+// but propagating the error costs nothing and keeps the signal-loss
+// fail-closed.
+
+func masterEntries(ms []*spec.MasterServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(ms))
 	for _, m := range ms {
 		if m == nil {
@@ -365,14 +379,14 @@ func masterEntries(ms []*spec.MasterServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(m)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode master_server %s:%d: %w", m.Ip, m.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(m.Ip, m.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func volumeEntries(vs []*spec.VolumeServerSpec) []serverEntry {
+func volumeEntries(vs []*spec.VolumeServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(vs))
 	for _, v := range vs {
 		if v == nil {
@@ -380,14 +394,14 @@ func volumeEntries(vs []*spec.VolumeServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(v)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode volume_server %s:%d: %w", v.Ip, v.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(v.Ip, v.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func filerEntries(fs []*spec.FilerServerSpec) []serverEntry {
+func filerEntries(fs []*spec.FilerServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(fs))
 	for _, f := range fs {
 		if f == nil {
@@ -395,14 +409,14 @@ func filerEntries(fs []*spec.FilerServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(f)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode filer_server %s:%d: %w", f.Ip, f.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(f.Ip, f.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func s3Entries(ss []*spec.S3ServerSpec) []serverEntry {
+func s3Entries(ss []*spec.S3ServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(ss))
 	for _, s := range ss {
 		if s == nil {
@@ -410,14 +424,14 @@ func s3Entries(ss []*spec.S3ServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(s)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode s3_server %s:%d: %w", s.Ip, s.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(s.Ip, s.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func sftpEntries(ss []*spec.SftpServerSpec) []serverEntry {
+func sftpEntries(ss []*spec.SftpServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(ss))
 	for _, s := range ss {
 		if s == nil {
@@ -425,14 +439,14 @@ func sftpEntries(ss []*spec.SftpServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(s)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode sftp_server %s:%d: %w", s.Ip, s.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(s.Ip, s.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func adminEntries(as []*spec.AdminServerSpec) []serverEntry {
+func adminEntries(as []*spec.AdminServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(as))
 	for _, a := range as {
 		if a == nil {
@@ -440,14 +454,14 @@ func adminEntries(as []*spec.AdminServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(a)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode admin_server %s:%d: %w", a.Ip, a.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(a.Ip, a.Port), node: node})
 	}
-	return out
+	return out, nil
 }
 
-func envoyEntries(es []*spec.EnvoyServerSpec) []serverEntry {
+func envoyEntries(es []*spec.EnvoyServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(es))
 	for _, e := range es {
 		if e == nil {
@@ -455,7 +469,7 @@ func envoyEntries(es []*spec.EnvoyServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(e)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode envoy_server %s: %w", e.Ip, err)
 		}
 		// Envoy has no single service port (it terminates filer/s3/
 		// webdav on different ones), so dedupe by IP. Inventory schema
@@ -463,10 +477,10 @@ func envoyEntries(es []*spec.EnvoyServerSpec) []serverEntry {
 		// safe and matches the worker convention.
 		out = append(out, serverEntry{key: e.Ip + ":envoy", node: node})
 	}
-	return out
+	return out, nil
 }
 
-func workerEntries(ws []*spec.WorkerServerSpec) []serverEntry {
+func workerEntries(ws []*spec.WorkerServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(ws))
 	for _, w := range ws {
 		if w == nil {
@@ -474,7 +488,7 @@ func workerEntries(ws []*spec.WorkerServerSpec) []serverEntry {
 		}
 		node, err := specToYAMLNode(w)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("encode worker_server %s: %w", w.Ip, err)
 		}
 		// Worker has no service Port; use a stable sentinel so the
 		// append index doesn't collapse multiple worker entries on the
@@ -482,7 +496,7 @@ func workerEntries(ws []*spec.WorkerServerSpec) []serverEntry {
 		// entries already, so per-IP keying is safe.
 		out = append(out, serverEntry{key: w.Ip + ":worker", node: node})
 	}
-	return out
+	return out, nil
 }
 
 // keyOf builds the ip:port lookup key. Workers use a string sentinel
