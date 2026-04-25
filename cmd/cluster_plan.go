@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sort"
 	"strings"
@@ -130,8 +132,20 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	deployDisksFile := deployDisksFilePath(opts.OutputFile)
 	mergeMode := false
 	if opts.OutputFile != "" && !opts.Overwrite {
-		if _, statErr := os.Stat(opts.OutputFile); statErr == nil {
+		// Discriminate ErrNotExist (legitimate greenfield) from other
+		// stat failures (EACCES, EIO, NFS hiccup, …). Treating every
+		// non-nil error as "no file" would silently fall back to the
+		// greenfield path and the later WriteFile would clobber the
+		// hand-edited cluster.yaml as soon as access was restored —
+		// the exact data-loss path append-merge exists to prevent.
+		_, statErr := os.Stat(opts.OutputFile)
+		switch {
+		case statErr == nil:
 			mergeMode = true
+		case errors.Is(statErr, fs.ErrNotExist):
+			// Greenfield path; nothing to merge into.
+		default:
+			return fmt.Errorf("stat %s: %w", opts.OutputFile, statErr)
 		}
 	}
 
