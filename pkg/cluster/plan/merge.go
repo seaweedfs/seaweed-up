@@ -422,21 +422,15 @@ func keyOf(ip string, port int) string {
 	return fmt.Sprintf("%s:%d", ip, port)
 }
 
-// specToYAMLNode marshals v through yaml.v3 and returns the inner
-// mapping node (the yaml.Node any sequence would store). Going via
-// yaml.Marshal means the per-field tag order, omitempty rules, and
-// scalar styles match greenfield Marshal output.
+// specToYAMLNode encodes v directly to a yaml.Node, skipping the
+// Marshal→Unmarshal round-trip the previous implementation used. The
+// resulting node honors the same field order, omitempty rules, and
+// scalar styles yaml.Marshal would produce, so an appended entry is
+// indistinguishable from one written by greenfield Marshal.
 func specToYAMLNode(v interface{}) (*yaml.Node, error) {
-	body, err := yaml.Marshal(v)
-	if err != nil {
+	var n yaml.Node
+	if err := n.Encode(v); err != nil {
 		return nil, err
 	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return nil, err
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil, fmt.Errorf("marshalled spec has no content")
-	}
-	return doc.Content[0], nil
+	return &n, nil
 }
