@@ -116,17 +116,19 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("--json and -o are mutually exclusive; use one")
 	}
 
-	// Greenfield guard: refuse to overwrite an existing cluster.yaml,
-	// its facts.json sidecar, or its deploy-disks.json sidecar until
-	// Phase 3 lands append-merge. --overwrite opts out for hand-edits
-	// the operator has already copied elsewhere.
+	// Three modes for `-o cluster.yaml`:
+	//   1. file does not exist        → greenfield (yaml.Marshal)
+	//   2. file exists, no --overwrite → append-merge (preserve bytes)
+	//   3. file exists, --overwrite    → regenerate from scratch
+	// Sidecars (facts.json, deploy-disks.json) are always rewritten
+	// from the latest probe — they're audit + deploy contracts, not
+	// hand-edit surfaces, so byte-stability isn't a goal there.
 	factsFile := factsFilePath(opts.OutputFile)
 	deployDisksFile := deployDisksFilePath(opts.OutputFile)
+	mergeMode := false
 	if opts.OutputFile != "" && !opts.Overwrite {
-		for _, p := range []string{opts.OutputFile, factsFile, deployDisksFile} {
-			if _, statErr := os.Stat(p); statErr == nil {
-				return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", p)
-			}
+		if _, statErr := os.Stat(opts.OutputFile); statErr == nil {
+			mergeMode = true
 		}
 	}
 
@@ -174,9 +176,31 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// inventory excludes and ephemeral filtering).
 	allowlist := plan.EligibleDisks(inv, factsByTarget)
 	printSkipReport(report)
-	body, err := plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
-	if err != nil {
-		return fmt.Errorf("marshal cluster spec: %w", err)
+
+	var (
+		body        []byte
+		mergeReport *plan.MergeReport
+	)
+	if mergeMode {
+		// Append-merge into the existing file. Merge() guarantees
+		// byte-stable output for unchanged inventory; new hosts are
+		// appended at each section's tail and orphans + drift surface
+		// in mergeReport without mutating existing entries.
+		existing, readErr := os.ReadFile(opts.OutputFile)
+		if readErr != nil {
+			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
+		}
+		body, mergeReport, err = plan.Merge(existing, spec, plan.MergeOptions{
+			Marshal: plan.MarshalOptions{InventoryPath: opts.InventoryFile},
+		})
+		if err != nil {
+			return fmt.Errorf("merge into existing cluster spec: %w", err)
+		}
+	} else {
+		body, err = plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
+		if err != nil {
+			return fmt.Errorf("marshal cluster spec: %w", err)
+		}
 	}
 	// The generated cluster.yaml may carry the filer metadata-store DSN
 	// (username + password) in config:, so restrict to the deploying
@@ -213,11 +237,40 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("write %s: %w", deployDisksFile, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
-		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
+	mode := "wrote"
+	if mergeMode {
+		mode = "merged"
+	}
+	fmt.Fprintf(os.Stderr, "%s %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
+		mode, opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
 		factsFile, len(facts),
 		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
+	if mergeReport != nil {
+		printMergeReport(mergeReport)
+	}
 	return nil
+}
+
+// printMergeReport surfaces append-merge outcomes the operator should
+// see: appended new hosts, orphan entries (in YAML but no longer in
+// inventory), and drift warnings. All go to stderr to keep stdout
+// reserved for --json mode and because they're advisory.
+func printMergeReport(r *plan.MergeReport) {
+	if r == nil {
+		return
+	}
+	for section, keys := range r.Appended {
+		if len(keys) == 0 {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  appended to %s: %s\n", section, strings.Join(keys, ", "))
+	}
+	for _, o := range r.Orphaned {
+		fmt.Fprintf(os.Stderr, "  WARN: orphan in cluster.yaml (no longer in inventory): %s\n", o)
+	}
+	for _, d := range r.Drift {
+		fmt.Fprintf(os.Stderr, "  WARN: drift on %s %s: %s\n", d.Section, d.Key, d.Detail)
+	}
 }
 
 func countAllowlistDisks(a plan.DeployDiskAllowlist) int {

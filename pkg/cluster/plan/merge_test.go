@@ -1,0 +1,326 @@
+package plan
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/probe"
+)
+
+// buildBaseSpec generates a small but realistic cluster spec we can
+// reuse across merge tests. Three masters + one volume host with three
+// disks. Stable enough that golden-style byte comparisons hold.
+func buildBaseSpec(t *testing.T) ([]byte, *baseState) {
+	t.Helper()
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.12", Roles: []string{"master"}},
+			{IP: "10.0.0.13", Roles: []string{"master"}},
+			{IP: "10.0.0.21", Roles: []string{"volume"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(3, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	body, err := Marshal(spec, MarshalOptions{
+		InventoryPath: "inventory.yaml",
+		Now:           goldenStamp,
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return body, &baseState{inv: inv, facts: facts}
+}
+
+// baseState wraps an inventory + facts pair so tests can mutate either
+// side and re-Generate without rebuilding the whole closure.
+type baseState struct {
+	inv   *inventory.Inventory
+	facts map[string]probe.HostFacts
+}
+
+// TestMerge_noOpRun_byteIdentical is the core contract: a re-run with
+// the same inventory+facts must produce a byte-for-byte identical
+// cluster.yaml. yaml.Node's preservation guarantees + our "never touch
+// existing entries" rule are what get us there.
+func TestMerge_noOpRun_byteIdentical(t *testing.T) {
+	base, st := buildBaseSpec(t)
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge(base, spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if string(merged) != string(base) {
+		t.Errorf("no-op merge changed bytes\n--- want ---\n%s\n--- got ---\n%s", base, merged)
+	}
+	if len(report.Appended) != 0 {
+		t.Errorf("no-op merge appended entries: %+v", report.Appended)
+	}
+	if len(report.Orphaned) != 0 {
+		t.Errorf("no-op merge reported orphans: %+v", report.Orphaned)
+	}
+}
+
+// TestMerge_appendOneVolumeHost is the grow-the-cluster contract: add
+// a host to inventory, merge, the new entry shows up at the right
+// section's tail. Existing bytes (above the tail) are unchanged.
+func TestMerge_appendOneVolumeHost(t *testing.T) {
+	base, st := buildBaseSpec(t)
+
+	// Add a second volume host.
+	st.inv.Hosts = append(st.inv.Hosts, inventory.Host{IP: "10.0.0.22", Roles: []string{"volume"}})
+	st.facts["10.0.0.22:22"] = probe.HostFacts{IP: "10.0.0.22", SSHPort: 22, Disks: synthesizeDisks(2, 100)}
+
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge(base, spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	got := string(merged)
+	want := string(base)
+
+	// The new entry's IP must appear in the merged output and NOT in
+	// the base — proves it was actually appended.
+	if !strings.Contains(got, "10.0.0.22") {
+		t.Errorf("appended host 10.0.0.22 not found in merged output:\n%s", got)
+	}
+	if strings.Contains(want, "10.0.0.22") {
+		t.Fatalf("test setup error: base already contains 10.0.0.22")
+	}
+
+	// All bytes of the base (header, comments, existing entries) must
+	// still be present in the merged output as a contiguous prefix or
+	// substring. Cheap structural check: every line of base appears in
+	// merged in the same relative order.
+	prev := -1
+	for _, line := range strings.Split(want, "\n") {
+		if line == "" {
+			continue
+		}
+		idx := strings.Index(got[max(prev, 0):], line)
+		if idx < 0 {
+			t.Errorf("base line %q lost in merged output", line)
+			continue
+		}
+		prev += idx + len(line)
+	}
+
+	// Append went into the right section.
+	if appended := report.Appended["volume_servers"]; len(appended) != 1 || appended[0] != "10.0.0.22:8080" {
+		t.Errorf("Report.Appended[volume_servers] = %+v, want [10.0.0.22:8080]", appended)
+	}
+	if len(report.Orphaned) != 0 {
+		t.Errorf("unexpected orphans on append: %+v", report.Orphaned)
+	}
+}
+
+// TestMerge_userEditPreserved: an operator hand-edits a folder's
+// `max:` value. Re-running plan must leave that edit alone — we never
+// re-emit existing entries. This is the "user-edit survival" guarantee.
+func TestMerge_userEditPreserved(t *testing.T) {
+	base, st := buildBaseSpec(t)
+
+	// The default volumeSizeLimitMB (5000) gives a 100 GiB SSD a max
+	// of 19. Find the first occurrence under /data1 and bump it to a
+	// distinctive value the operator would never get from a fresh run.
+	const userMax = "max: 9999"
+	lines := strings.Split(string(base), "\n")
+	editedAtLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "folder: /data1") {
+			// the next two lines are `disk: <type>` and `max: <n>`.
+			for j := i + 1; j < len(lines) && j <= i+4; j++ {
+				if strings.Contains(lines[j], "max:") {
+					lines[j] = strings.Replace(lines[j], strings.TrimSpace(lines[j]), userMax, 1)
+					editedAtLine = j
+					break
+				}
+			}
+			break
+		}
+	}
+	if editedAtLine < 0 {
+		t.Fatalf("test setup: couldn't find a max: line under /data1\nbase=%s", base)
+	}
+	edited := strings.Join(lines, "\n")
+
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(edited), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if !strings.Contains(string(merged), userMax) {
+		t.Errorf("hand edit %q lost on merge\n--- got ---\n%s", userMax, merged)
+	}
+	if got := strings.Count(string(merged), userMax); got != 1 {
+		t.Errorf("hand edit appeared %d times in merged output, want 1\n%s", got, merged)
+	}
+}
+
+// TestMerge_orphanedHostWarned: a host removed from inventory shows up
+// in MergeReport.Orphaned but the existing YAML entry stays untouched.
+// Append-merge never deletes — the operator decides.
+func TestMerge_orphanedHostWarned(t *testing.T) {
+	base, st := buildBaseSpec(t)
+
+	// Drop the volume host from inventory; masters stay.
+	var kept []inventory.Host
+	for _, h := range st.inv.Hosts {
+		if h.IP != "10.0.0.21" {
+			kept = append(kept, h)
+		}
+	}
+	st.inv.Hosts = kept
+	delete(st.facts, "10.0.0.21:22")
+
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge(base, spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	if !strings.Contains(string(merged), "10.0.0.21") {
+		t.Errorf("orphan entry 10.0.0.21 was deleted on merge:\n%s", merged)
+	}
+	found := false
+	for _, o := range report.Orphaned {
+		if strings.Contains(o, "volume_servers") && strings.Contains(o, "10.0.0.21:8080") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Report.Orphaned should list 10.0.0.21:8080 under volume_servers, got %+v", report.Orphaned)
+	}
+}
+
+// TestMerge_emptyExistingFallsBackToGreenfield: a plan run against a
+// brand-new (empty / non-existent) -o file should be indistinguishable
+// from a fresh Marshal. Lets the cmd layer call Merge unconditionally
+// without first checking whether the file already has content.
+func TestMerge_emptyExistingFallsBackToGreenfield(t *testing.T) {
+	_, st := buildBaseSpec(t)
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	greenfield, err := Marshal(spec, MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, in := range [][]byte{nil, {}, []byte("   \n  \n")} {
+		merged, _, err := Merge(in, spec, MergeOptions{
+			Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		})
+		if err != nil {
+			t.Fatalf("Merge(%q): %v", in, err)
+		}
+		if string(merged) != string(greenfield) {
+			t.Errorf("Merge(empty=%q) diverged from greenfield Marshal", in)
+		}
+	}
+}
+
+// TestMerge_inlineCommentSurvives: a hand-written cluster.yaml carries
+// an inline comment on a folder entry. Merge must not drop or move
+// that comment. Exercises yaml.v3's head/line/foot comment preservation
+// through the parse → mutate → encode round-trip.
+func TestMerge_inlineCommentSurvives(t *testing.T) {
+	existing := `cluster_name: hand
+master_servers:
+    - ip: 10.0.0.11   # primary master, do not move
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.12", Roles: []string{"master"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if !strings.Contains(string(merged), "primary master, do not move") {
+		t.Errorf("inline comment lost on merge:\n%s", merged)
+	}
+	if !strings.Contains(string(merged), "10.0.0.12") {
+		t.Errorf("new master not appended:\n%s", merged)
+	}
+}
+
+// TestMerge_handWrittenSpec_noMarkerSurvives: merging into a hand-
+// written cluster.yaml (no plan marker) doesn't sneak the marker in.
+// Whether the file gets the marker is the writer's call, not Merge's;
+// preserving "this is a hand-written file" is part of byte stability.
+func TestMerge_handWrittenSpec_noMarkerSurvives(t *testing.T) {
+	existing := `# my hand-rolled cluster
+cluster_name: hand
+master_servers:
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}}}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if strings.Contains(string(merged), PlanGeneratedMarker) {
+		t.Errorf("Merge stamped the plan marker onto a hand-written file:\n%s", merged)
+	}
+	if !strings.Contains(string(merged), "my hand-rolled cluster") {
+		t.Errorf("hand-written header comment lost on merge:\n%s", merged)
+	}
+}
+
