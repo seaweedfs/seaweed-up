@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/plan"
 )
 
 func TestFactsFilePath(t *testing.T) {
@@ -40,13 +42,20 @@ func TestDeployDisksFilePath(t *testing.T) {
 	}
 }
 
+// writeMarkerSpec writes a stub cluster.yaml carrying the
+// planGeneratedMarker so isPlanGeneratedSpec recognizes it.
+func writeMarkerSpec(t *testing.T, path string) {
+	t.Helper()
+	body := plan.PlanGeneratedMarker + "\n# stub for tests\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadPlannedDeployDisks_readsSidecar(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
-	// Both sidecars must be present for plan-generated detection.
-	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeMarkerSpec(t, specPath)
 	body := `{
   "10.0.0.21:22":   ["/dev/nvme0n1", "/dev/nvme2n1"],
   "10.0.0.21:2222": ["/dev/sdb"],
@@ -74,11 +83,15 @@ func TestLoadPlannedDeployDisks_readsSidecar(t *testing.T) {
 	}
 }
 
-func TestLoadPlannedDeployDisks_handWritten_noSidecars_returnsNilNil(t *testing.T) {
-	// Hand-written cluster.yaml: neither facts.json nor deploy-disks
-	// sidecar exists. (nil, nil) means deploy keeps its legacy
-	// scan-everything path so existing operators aren't broken.
-	got, err := loadPlannedDeployDisks(filepath.Join(t.TempDir(), "cluster.yaml"))
+func TestLoadPlannedDeployDisks_handWritten_noMarkerNoSidecar_returnsNilNil(t *testing.T) {
+	// Hand-written cluster.yaml: no marker, no sidecar.
+	// (nil, nil) so deploy keeps its legacy scan-everything path.
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "cluster.yaml")
+	if err := os.WriteFile(specPath, []byte("# hand-written spec\nmaster_servers: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadPlannedDeployDisks(specPath)
 	if err != nil {
 		t.Fatalf("expected no error for hand-written spec, got %v", err)
 	}
@@ -87,16 +100,15 @@ func TestLoadPlannedDeployDisks_handWritten_noSidecars_returnsNilNil(t *testing.
 	}
 }
 
-func TestLoadPlannedDeployDisks_planGenerated_missingDeployDisks_failsClosed(t *testing.T) {
-	// facts.json present, deploy-disks.json missing (operator deleted
-	// it / sidecar was lost in transit). MUST fail rather than fall
-	// back to scan-everything, because that would format disks plan
-	// classified out (excludes, ephemeral, foreign mounts).
+func TestLoadPlannedDeployDisks_planMarker_missingSidecar_failsClosed(t *testing.T) {
+	// Spec carries the plan marker (it's plan-generated) but the
+	// sidecar is missing — operator scp'd just the YAML, or the
+	// sidecar was lost in transit. MUST fail closed: silent fallback
+	// to scan-everything would format disks the planner deliberately
+	// excluded (excludes, ephemeral, foreign mounts).
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
-	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeMarkerSpec(t, specPath)
 	got, err := loadPlannedDeployDisks(specPath)
 	if err == nil {
 		t.Fatalf("expected fail-closed error, got allowlist %+v", got)
@@ -106,13 +118,10 @@ func TestLoadPlannedDeployDisks_planGenerated_missingDeployDisks_failsClosed(t *
 	}
 }
 
-func TestLoadPlannedDeployDisks_planGenerated_corruptDeployDisks_failsClosed(t *testing.T) {
-	// Same fail-closed contract for an unparseable sidecar.
+func TestLoadPlannedDeployDisks_planMarker_corruptSidecar_failsClosed(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
-	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeMarkerSpec(t, specPath)
 	if err := os.WriteFile(deployDisksFilePath(specPath), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -128,9 +137,7 @@ func TestLoadPlannedDeployDisks_emptyMap_isAuthoritative(t *testing.T) {
 	// by plan still gets refused at deploy.
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
-	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeMarkerSpec(t, specPath)
 	if err := os.WriteFile(deployDisksFilePath(specPath), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

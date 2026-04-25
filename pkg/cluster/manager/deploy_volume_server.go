@@ -14,6 +14,28 @@ import (
 )
 
 func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.VolumeServerSpec, index int) error {
+	target := fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh)
+
+	// When the spec is plan-generated (PlannedDisksBySSHTarget non-nil),
+	// every emitted volume_server must have at least one allowlisted
+	// disk for its SSH target. Without this guard, a target absent from
+	// the allowlist would empty the candidate disks at
+	// prepareUnmountedDisks time, ensureVolumeFolders would mkdir the
+	// folders on the OS rootfs, and `weed volume` would happily start
+	// writing data there. Refusing here preserves the planner's
+	// "disks-only-on-disks" guarantee and points the operator at the
+	// inconsistency (likely an inventory edit without re-running plan,
+	// or a stale .deploy-disks.json).
+	if m.PlannedDisksBySSHTarget != nil && len(volumeServerSpec.Folders) > 0 {
+		if len(m.PlannedDisksBySSHTarget[target]) == 0 {
+			return fmt.Errorf(
+				"volume_server %s has %d folder(s) in cluster.yaml but %s has no plan-approved disks; "+
+					"refusing to start volume on root filesystem — re-run `cluster plan -o <spec>.yaml --overwrite` "+
+					"or hand-edit cluster.yaml + delete the .deploy-disks.json sidecar",
+				target, len(volumeServerSpec.Folders), target)
+		}
+	}
+
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh), m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 
 		component := "volume"
@@ -22,7 +44,6 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		volumeServerSpec.WriteToBuffer(masters, &buf)
 
 		if m.PrepareVolumeDisks {
-			target := fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh)
 			if err := m.prepareUnmountedDisksOnce(op, target); err != nil {
 				return fmt.Errorf("prepare disks: %v", err)
 			}

@@ -2,12 +2,73 @@ package manager
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
+
+// TestDeployVolumeServer_refusesUnknownTargetWhenAllowlistSet locks
+// in the safety guard: when the spec is plan-generated (allowlist
+// is non-nil) but a volume_server's SSH target has no entry in the
+// allowlist, deploy refuses the host instead of running the volume
+// on plain root directories. The check must fire before any SSH
+// work, so we don't even need a working operator to exercise it.
+func TestDeployVolumeServer_refusesUnknownTargetWhenAllowlistSet(t *testing.T) {
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	// Non-nil but doesn't contain "10.0.0.21:22" — that target was
+	// dropped from the plan but somehow kept in cluster.yaml (stale
+	// hand edit, or a broken sidecar regen).
+	m.PlannedDisksBySSHTarget = map[string]map[string]struct{}{
+		"10.0.0.99:22": {"/dev/sdb": {}},
+	}
+	vs := &spec.VolumeServerSpec{
+		Ip:      "10.0.0.21",
+		PortSsh: 22,
+		Port:    8080,
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}},
+	}
+	err := m.DeployVolumeServer(nil, vs, 0)
+	if err == nil {
+		t.Fatal("expected refusal for unallowlisted target, got nil")
+	}
+	if !strings.Contains(err.Error(), "no plan-approved disks") {
+		t.Errorf("error should explain the missing allowlist entry, got: %v", err)
+	}
+	// Also: it must NOT reach ExecuteRemote — we never opened SSH so
+	// the failure isn't a connection error.
+	if strings.Contains(strings.ToLower(err.Error()), "dial") {
+		t.Errorf("guard should fire before SSH dial; got network-shaped error: %v", err)
+	}
+}
+
+// When the allowlist is nil (hand-written cluster.yaml, no plan),
+// the guard must be inactive — otherwise we'd break every existing
+// hand-written deploy.
+func TestDeployVolumeServer_noGuardWhenAllowlistNil(t *testing.T) {
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	// PlannedDisksBySSHTarget left nil (default for hand-written specs).
+	vs := &spec.VolumeServerSpec{
+		Ip:      "127.0.0.1",
+		PortSsh: 1, // unroutable; ExecuteRemote will error fast
+		Port:    8080,
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}},
+	}
+	err := m.DeployVolumeServer(nil, vs, 0)
+	if err == nil {
+		t.Fatal("expected SSH connect error since :1 is unroutable, got nil")
+	}
+	// The guard must NOT have fired: no "no plan-approved disks"
+	// in the message. The error should look like a network failure.
+	if strings.Contains(err.Error(), "no plan-approved disks") {
+		t.Errorf("guard fired with nil allowlist (would break hand-written specs): %v", err)
+	}
+}
 
 // TestPrepareUnmountedDisksOnce_perHost confirms the sync.Once gate
 // dedups calls per host IP. With the per-disk volume_server shape,
