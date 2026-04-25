@@ -113,13 +113,14 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("--json and -o are mutually exclusive; use one")
 	}
 
-	// Greenfield guard: refuse to overwrite an existing cluster.yaml or
-	// its sidecar facts file until Phase 3 lands append-merge.
-	// --overwrite opts out for hand-edits the operator has already
-	// copied elsewhere.
+	// Greenfield guard: refuse to overwrite an existing cluster.yaml,
+	// its facts.json sidecar, or its deploy-disks.json sidecar until
+	// Phase 3 lands append-merge. --overwrite opts out for hand-edits
+	// the operator has already copied elsewhere.
 	factsFile := factsFilePath(opts.OutputFile)
+	deployDisksFile := deployDisksFilePath(opts.OutputFile)
 	if opts.OutputFile != "" && !opts.Overwrite {
-		for _, p := range []string{opts.OutputFile, factsFile} {
+		for _, p := range []string{opts.OutputFile, factsFile, deployDisksFile} {
 			if _, statErr := os.Stat(p); statErr == nil {
 				return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", p)
 			}
@@ -154,7 +155,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// Synthesize a cluster.yaml from the facts + inventory.
 	factsByTarget := make(map[string]probe.HostFacts, len(facts))
 	for _, f := range facts {
-		factsByTarget[fmt.Sprintf("%s:%d", f.IP, f.SSHPort)] = f
+		factsByTarget[plan.SSHTargetKey(f.IP, f.SSHPort)] = f
 	}
 	spec, report, err := plan.Generate(inv, factsByTarget, plan.Options{
 		ClusterName:       opts.ClusterName,
@@ -165,6 +166,10 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	if err != nil {
 		return fmt.Errorf("generate cluster spec: %w", err)
 	}
+	// Compute the deploy allowlist alongside the spec so plan and
+	// deploy share one source of truth on disk eligibility (including
+	// inventory excludes and ephemeral filtering).
+	allowlist := plan.EligibleDisks(inv, factsByTarget)
 	printSkipReport(report)
 	body, err := plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
 	if err != nil {
@@ -191,10 +196,33 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("write %s: %w", factsFile, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\n",
+	// Write the explicit deploy-disks allowlist next to the spec.
+	// `cluster deploy` reads this in preference to reconstructing
+	// from facts.json so inventory excludes and the ephemeral skip
+	// flow through unambiguously. deployDisksFile path was already
+	// computed (and overwrite-checked) above.
+	allowBody, err := json.MarshalIndent(allowlist, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal deploy disks: %w", err)
+	}
+	allowBody = append(allowBody, '\n')
+	if err := os.WriteFile(deployDisksFile, allowBody, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", deployDisksFile, err)
+	}
+
+	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
 		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
-		factsFile, len(facts))
+		factsFile, len(facts),
+		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
 	return nil
+}
+
+func countAllowlistDisks(a plan.DeployDiskAllowlist) int {
+	n := 0
+	for _, paths := range a {
+		n += len(paths)
+	}
+	return n
 }
 
 // factsFilePath derives the sidecar JSON path for a given cluster.yaml
@@ -211,62 +239,46 @@ func factsFilePath(outputFile string) string {
 	return outputFile + ".facts.json"
 }
 
-// loadPlannedDisksFromFacts reads the facts.json sidecar that
-// `cluster plan -o` writes alongside cluster.yaml and returns the
-// per-host set of disk paths deploy is allowed to mkfs+mount.
-// Returns nil when the sidecar is missing, unreadable, or empty —
-// callers fall back to the historical "scan every prefix-matching
-// disk" behavior. The disk-classification rules here mirror
-// pkg/cluster/plan.deriveFolders so plan and deploy agree on which
-// devices are eligible.
-func loadPlannedDisksFromFacts(specPath string) map[string]map[string]struct{} {
-	data, err := os.ReadFile(factsFilePath(specPath))
+// deployDisksFilePath derives the explicit allowlist sidecar path
+// that `cluster plan -o` writes alongside cluster.yaml. Unlike
+// facts.json (raw probe data), this file carries plan's actual
+// classification result — including the inventory's
+// defaults.disk.exclude rules — so deploy can honor every skip plan
+// made without re-deriving (and risking divergence from) the same
+// logic.
+func deployDisksFilePath(outputFile string) string {
+	for _, ext := range []string{".yaml", ".yml"} {
+		if strings.HasSuffix(outputFile, ext) {
+			return outputFile[:len(outputFile)-len(ext)] + ".deploy-disks.json"
+		}
+	}
+	return outputFile + ".deploy-disks.json"
+}
+
+// loadPlannedDeployDisks reads the deploy-disks.json sidecar `cluster
+// plan -o` writes alongside cluster.yaml and returns the per-SSH-target
+// set of disk paths deploy is allowed to mkfs+mount. Keyed by
+// `<ip>:<ssh-port>` (the SSH target identity Inventory.ProbeHosts uses).
+// Returns nil when the sidecar is missing, unreadable, or empty.
+func loadPlannedDeployDisks(specPath string) map[string]map[string]struct{} {
+	data, err := os.ReadFile(deployDisksFilePath(specPath))
 	if err != nil {
 		return nil
 	}
-	var facts []probe.HostFacts
-	if err := json.Unmarshal(data, &facts); err != nil {
+	var allow plan.DeployDiskAllowlist
+	if err := json.Unmarshal(data, &allow); err != nil {
 		return nil
 	}
-	out := make(map[string]map[string]struct{})
-	for _, h := range facts {
-		if h.ProbeError != "" {
-			continue
-		}
-		approved := make(map[string]struct{})
-		for _, d := range h.Disks {
-			if d.Ephemeral {
-				continue
-			}
-			// Effective mountpoint: kernel's view first, fstab as
-			// fallback. Same logic as plan's classifier.
-			effective := d.MountPoint
-			if effective == "" {
-				effective = d.FstabMountPoint
-			}
-			if effective != "" {
-				// Foreign mounts (anything not /data\d+) are excluded
-				// from the allowlist. Cluster-claimed /dataN mounts are
-				// approved — deploy will idempotently leave them be.
-				if !strings.HasPrefix(effective, "/data") {
-					continue
-				}
-				approved[d.Path] = struct{}{}
-				continue
-			}
-			if d.FSType != "" {
-				// Has a filesystem but no claim — plan skipped it,
-				// deploy should too.
-				continue
-			}
-			approved[d.Path] = struct{}{}
-		}
-		if len(approved) > 0 {
-			out[h.IP] = approved
-		}
-	}
-	if len(out) == 0 {
+	if len(allow) == 0 {
 		return nil
+	}
+	out := make(map[string]map[string]struct{}, len(allow))
+	for target, paths := range allow {
+		set := make(map[string]struct{}, len(paths))
+		for _, p := range paths {
+			set[p] = struct{}{}
+		}
+		out[target] = set
 	}
 	return out
 }

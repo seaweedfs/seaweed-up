@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
-	"github.com/seaweedfs/seaweed-up/pkg/disks"
+	disksLib "github.com/seaweedfs/seaweed-up/pkg/disks"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/scripts"
 )
@@ -21,7 +21,8 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		volumeServerSpec.WriteToBuffer(masters, &buf)
 
 		if m.PrepareVolumeDisks {
-			if err := m.prepareUnmountedDisksOnce(op, volumeServerSpec.Ip); err != nil {
+			target := fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh)
+			if err := m.prepareUnmountedDisksOnce(op, target); err != nil {
 				return fmt.Errorf("prepare disks: %v", err)
 			}
 		}
@@ -36,17 +37,19 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 }
 
 // prepareUnmountedDisksOnce gates prepareUnmountedDisks behind a
-// per-host sync.Once. With the per-disk volume_server shape (multiple
-// volume_servers on the same IP), DeployCluster fans the deploys out
-// concurrently and each would independently call prepareUnmountedDisks,
-// racing on mkfs/mount assignment. Routing through a once-per-IP gate
-// makes disk prep effectively a per-host pre-step while keeping the
-// existing DeployVolumeServer signature.
-func (m *Manager) prepareUnmountedDisksOnce(op operator.CommandOperator, hostIP string) error {
-	v, _ := m.prepareDisksOnce.LoadOrStore(hostIP, &prepareDisksGate{})
+// per-SSH-target sync.Once. With the per-disk volume_server shape
+// (multiple volume_servers on the same IP), DeployCluster fans the
+// deploys out concurrently and each would independently call
+// prepareUnmountedDisks, racing on mkfs/mount assignment. Routing
+// through a once-per-target gate makes disk prep effectively a
+// per-host pre-step while keeping the existing DeployVolumeServer
+// signature. target is `<ip>:<ssh-port>` so inventories where two
+// SSH endpoints share an IP each get their own gate.
+func (m *Manager) prepareUnmountedDisksOnce(op operator.CommandOperator, target string) error {
+	v, _ := m.prepareDisksOnce.LoadOrStore(target, &prepareDisksGate{})
 	gate := v.(*prepareDisksGate)
 	gate.once.Do(func() {
-		gate.err = m.prepareUnmountedDisks(op, hostIP)
+		gate.err = m.prepareUnmountedDisks(op, target)
 	})
 	return gate.err
 }
@@ -98,8 +101,21 @@ func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, inde
 	})
 }
 
-func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, hostIP string) error {
+func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target string) error {
 	println("prepareUnmountedDisks...")
+
+	// Realize any pending fstab entries before we look at the kernel's
+	// mount table. Without this, a previously-deployed disk that
+	// hasn't auto-mounted yet (boot race, manual umount, fstab edited
+	// but no `mount -a`) would appear as MountPoint="" with FSType
+	// set; our existing skip-if-fstype-set rule then leaves it out of
+	// the disks map. The downstream allocation loop would then pick a
+	// fresh /data<N> and try to mount with a different mountpoint than
+	// the fstab entry, which fails (or worse, succeeds at a stale
+	// path). Idempotent: a no-op when everything is already mounted.
+	// nofail entries (or broken ones) are tolerated via `|| true`.
+	_ = m.sudo(op, "mount -a 2>/dev/null || true")
+
 	// Default disk prefix set, kept in sync with the planner's
 	// pkg/cluster/probe.defaultDevicePrefixes:
 	//   /dev/sd    SCSI / SATA, Azure managed disks, GCP SCSI PDs
@@ -107,13 +123,13 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, hostIP stri
 	//   /dev/xvd   Xen — older AWS, XenServer/XCP-ng
 	//   /dev/vd    KVM virtio — Vultr, Linode, Hetzner, OpenStack
 	// Harmless on systems where the prefix isn't present.
-	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"})
+	devices, mountpoints, err := disksLib.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"})
 	if err != nil {
 		return fmt.Errorf("list device: %v", err)
 	}
 	fmt.Printf("mountpoints: %+v\n", mountpoints)
 
-	disks := make(map[string]*disks.BlockDevice)
+	disks := make(map[string]*disksLib.BlockDevice)
 
 	// find all disks
 	for _, dev := range devices {
@@ -124,28 +140,33 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, hostIP stri
 
 	fmt.Printf("disks0: %+v\n", disks)
 
-	// remove disks already has partitions
+	// remove disks that have any partitions. Use the shared
+	// disksLib.IsPartitionOf so we encode the kernel's actual naming
+	// rule (digit-ending parents use 'p' separator) instead of a
+	// naive HasPrefix that would wrongly drop /dev/nvme0n1 just
+	// because /dev/nvme0n10p1 exists on a multi-namespace host.
 	for _, dev := range devices {
-		if dev.Type == "part" {
-			for parentPath := range disks {
-				if strings.HasPrefix(dev.Path, parentPath) {
-					// the disk is already partitioned
-					delete(disks, parentPath)
-				}
+		if dev.Type != "part" {
+			continue
+		}
+		for parentPath := range disks {
+			if disksLib.IsPartitionOf(dev.Path, parentPath) {
+				delete(disks, parentPath)
 			}
 		}
 	}
 	fmt.Printf("disks1: %+v\n", disks)
 
-	// Honor the plan-side allowlist when available. PlannedDisksByHost
-	// is populated from the facts.json sidecar that `cluster plan`
-	// writes alongside cluster.yaml; it carries the per-host set of
-	// /dev paths plan classified as eligible (fresh + non-ephemeral
-	// + not foreign-mounted). Without this filter, a disk plan
-	// deliberately skipped (instance-store, foreign mount, exclude
-	// list) would still get formatted by deploy's blanket
-	// "every unmounted prefix-matching disk" sweep.
-	if allow, ok := m.PlannedDisksByHost[hostIP]; ok {
+	// Honor the plan-side allowlist when available.
+	// PlannedDisksBySSHTarget is populated from the deploy-disks.json
+	// sidecar `cluster plan` writes alongside cluster.yaml; it carries
+	// the per-target set of /dev paths plan classified as eligible
+	// (fresh + non-ephemeral + not foreign-mounted + not excluded).
+	// Without this filter, a disk plan deliberately skipped
+	// (instance-store, foreign mount, exclude list) would still get
+	// formatted by deploy's blanket "every unmounted prefix-matching
+	// disk" sweep.
+	if allow, ok := m.PlannedDisksBySSHTarget[target]; ok {
 		for k := range disks {
 			if _, kept := allow[k]; !kept {
 				delete(disks, k)

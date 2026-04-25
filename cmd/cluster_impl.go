@@ -143,14 +143,19 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.Concurrency = opts.Concurrency
 	mgr.Enterprise = opts.Enterprise
 
-	// If `cluster plan -o` left a facts.json sidecar next to the spec,
-	// feed its disk allowlist into the manager so prepareUnmountedDisks
-	// only formats devices the planner approved (fresh / non-ephemeral
-	// / not foreign-mounted). Missing or unreadable sidecar falls back
-	// to the historical scan-everything behavior — backward compatible
-	// for hand-written cluster.yaml files.
-	if approved := loadPlannedDisksFromFacts(opts.ConfigFile); approved != nil {
-		mgr.PlannedDisksByHost = approved
+	// If `cluster plan -o` left a deploy-disks.json sidecar alongside
+	// cluster.yaml, feed its allowlist into the manager so
+	// prepareUnmountedDisks only formats devices the planner approved
+	// (fresh / non-ephemeral / not foreign-mounted / not excluded by
+	// inventory). Missing or unreadable sidecar falls back to the
+	// historical scan-everything behavior, which keeps hand-written
+	// cluster.yaml files working unchanged.
+	//
+	// The allowlist is keyed by `<ip>:<ssh-port>`, matching the SSH
+	// target identity Inventory.ProbeHosts dedups by. Inventories
+	// where two SSH endpoints share an IP each get their own slot.
+	if approved := loadPlannedDeployDisks(opts.ConfigFile); approved != nil {
+		mgr.PlannedDisksBySSHTarget = approved
 	}
 
 	// Default SSH user to current user if not specified

@@ -63,23 +63,27 @@ type Manager struct {
 	EnvoyVersion       string // envoy release to pin; when empty the latest is looked up from github.com/envoyproxy/envoy
 	SshPort            int
 	PrepareVolumeDisks bool
-	// PlannedDisksByHost is the optional plan-side allowlist of block
-	// devices deploy is allowed to mkfs+mount on each host. Keyed by
-	// host IP; the value is the set of /dev paths plan classified as
-	// eligible (fresh or claimed-at-/dataN, not ephemeral, not
-	// foreign). When non-nil, prepareUnmountedDisks restricts itself
-	// to disks in the corresponding host's set; when nil it falls
-	// back to its historical "every unmounted prefix-matching disk"
-	// behavior (preserves backwards compatibility for hand-written
-	// cluster.yaml files that don't ship a plan-emitted facts.json).
-	PlannedDisksByHost map[string]map[string]struct{}
-	// prepareDisksOnce gates prepareUnmountedDisks per host IP. With
-	// the per-disk volume_server shape, deploy fans out multiple
-	// volume_server entries on the same host concurrently — each
-	// would otherwise call prepareUnmountedDisks and race on
-	// mkfs/mount assignment. The sync.Once per IP makes the disk
-	// prep effectively a per-host pre-step.
-	prepareDisksOnce sync.Map // ip -> *prepareDisksGate
+	// PlannedDisksBySSHTarget is the optional plan-side allowlist of
+	// block devices deploy is allowed to mkfs+mount, keyed by
+	// `<ip>:<ssh-port>` (the same key inventory.ProbeHosts dedups by).
+	// Keying on the SSH target rather than just IP correctly handles
+	// inventories where two SSH endpoints share an IP but differ in
+	// port (uncommon but legal — see the inventory schema). The value
+	// is the set of /dev paths plan classified as eligible (fresh or
+	// claimed-at-/dataN, not ephemeral, not excluded, not foreign).
+	// When non-nil, prepareUnmountedDisks restricts itself to disks in
+	// the corresponding target's set; when nil it falls back to its
+	// historical "every unmounted prefix-matching disk" behavior
+	// (preserves backwards compatibility for hand-written cluster.yaml
+	// files that don't ship a plan-emitted allowlist).
+	PlannedDisksBySSHTarget map[string]map[string]struct{}
+	// prepareDisksOnce gates prepareUnmountedDisks per SSH target.
+	// With the per-disk volume_server shape, deploy fans out multiple
+	// volume_server entries on the same host concurrently — each would
+	// otherwise call prepareUnmountedDisks and race on mkfs/mount
+	// assignment. The sync.Once per ip:ssh-port makes the disk prep
+	// effectively a per-target pre-step.
+	prepareDisksOnce sync.Map // <ip>:<ssh-port> -> *prepareDisksGate
 	HostPrep         bool
 	ForceRestart     bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the
