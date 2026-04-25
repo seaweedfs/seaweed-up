@@ -205,6 +205,13 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// The generated cluster.yaml may carry the filer metadata-store DSN
 	// (username + password) in config:, so restrict to the deploying
 	// user. Matches gosec G306 / CWE-276.
+	//
+	// G703 fires on this line because in merge mode we ALSO read from
+	// opts.OutputFile a few lines above; gosec's taint analysis then
+	// flags writing back to the same path as a potential traversal.
+	// The path is the operator's own --output flag — there's no
+	// untrusted data flow here. Suppress the false positive.
+	// #nosec G703 -- opts.OutputFile is a user-supplied CLI flag
 	if err := os.WriteFile(opts.OutputFile, body, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", opts.OutputFile, err)
 	}
