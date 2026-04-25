@@ -110,13 +110,16 @@ func TestMerge_appendOneVolumeHost(t *testing.T) {
 	// All bytes of the base (header, comments, existing entries) must
 	// still be present in the merged output as a contiguous prefix or
 	// substring. Cheap structural check: every line of base appears in
-	// merged in the same relative order.
-	prev := -1
+	// merged in the same relative order. The search window starts at
+	// `prev` (initially 0, then advanced past each match) so two
+	// adjacent lines can't accidentally overlap into a false positive
+	// match against the previous line's tail byte.
+	prev := 0
 	for _, line := range strings.Split(want, "\n") {
 		if line == "" {
 			continue
 		}
-		idx := strings.Index(got[max(prev, 0):], line)
+		idx := strings.Index(got[prev:], line)
 		if idx < 0 {
 			t.Errorf("base line %q lost in merged output", line)
 			continue
