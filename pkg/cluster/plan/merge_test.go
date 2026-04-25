@@ -516,4 +516,3 @@ master_servers:
 		t.Errorf("hand-written header comment lost on merge:\n%s", merged)
 	}
 }
-
