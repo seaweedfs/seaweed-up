@@ -64,8 +64,10 @@ type SSHConfig struct {
 type DiskDefaults struct {
 	// DeviceGlobs is the candidate set for auto-provisioned disks.
 	// Matches lsblk device paths (e.g. "/dev/sd*", "/dev/nvme*",
-	// "/dev/xvd*"). When empty the plan falls back to the same defaults
-	// used by prepareUnmountedDisks: /dev/sd*, /dev/nvme*, /dev/xvd*.
+	// "/dev/xvd*", "/dev/vd*"). When empty the plan falls back to the
+	// defaults used by prepareUnmountedDisks: /dev/sd*, /dev/nvme*,
+	// /dev/xvd* (Xen, older AWS), /dev/vd* (KVM virtio — Vultr,
+	// Linode, Hetzner, OpenStack).
 	DeviceGlobs []string `yaml:"device_globs,omitempty"`
 
 	// Exclude is a per-host blacklist (e.g. the boot disk). Matched against

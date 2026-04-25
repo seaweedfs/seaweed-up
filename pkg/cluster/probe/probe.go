@@ -141,13 +141,20 @@ func probeMemory(r Runner) uint64 {
 // probe (and manager) consider when the inventory doesn't supply
 // `defaults.disk.device_globs`. Covers:
 //
-//   - /dev/sd*    — SCSI / SATA / paravirtualized AWS EBS (older gens)
-//   - /dev/nvme*  — NVMe SSDs and Nitro-generation AWS EBS
+//   - /dev/sd*    — SCSI / SATA, Azure managed disks, GCP SCSI
+//                   persistent disks, AWS EBS on paravirtualized gens
+//   - /dev/nvme*  — NVMe SSDs and bare metal, AWS Nitro EBS, Azure
+//                   NVMe SKUs (Lsv3, v6+), GCP NVMe-attached PDs
 //   - /dev/xvd*   — Xen virtual disks: AWS EBS on older t2/m3/c3
 //                   instance generations and some XenServer / XCP-ng
-//                   environments. Adding the prefix is harmless on
-//                   non-Xen systems (no devices match).
-var defaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd"}
+//                   environments
+//   - /dev/vd*    — KVM virtio block: Vultr, Linode, Hetzner Cloud,
+//                   most OpenStack flavors, plain Proxmox / KVM VMs
+//
+// Adding any of the cloud-specific prefixes is harmless on systems
+// where they don't exist — no devices match, the planner simply
+// emits an empty folders list.
+var defaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"}
 
 // probeDisks wraps disks.ListBlockDevices with the inventory-provided
 // device globs (defaulting to defaultDevicePrefixes, matching the

@@ -102,7 +102,7 @@ defaults:
     port: 22
     identity: ~/.ssh/id_rsa
   disk:
-    device_globs: ["/dev/sd*", "/dev/nvme*", "/dev/xvd*"]  # candidate disks
+    device_globs: ["/dev/sd*", "/dev/nvme*", "/dev/xvd*", "/dev/vd*"]  # candidate disks
     exclude:      ["/dev/sda"]                  # boot disk, etc.
     reserve_pct:  5                             # headroom; capped at 10 GiB
     disk_type_auto: true                        # rota → hdd, !rota → ssd
