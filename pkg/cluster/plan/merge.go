@@ -201,9 +201,8 @@ func detectIndent(raw []byte, fallback int) int {
 		}
 		// Sequence dash or `key:` — both are valid indent witnesses.
 		if trimmedLeft[0] == '-' || isYAMLKeyStart(trimmedLeft) {
-			if spaces < 1 {
-				spaces = 1
-			}
+			// `spaces == 0` is filtered above, so only the upper
+			// bound matters here.
 			if spaces > 8 {
 				spaces = 8
 			}
