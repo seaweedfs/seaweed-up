@@ -277,6 +277,9 @@ func printMergeReport(r *plan.MergeReport) {
 	for _, o := range r.Orphaned {
 		fmt.Fprintf(os.Stderr, "  WARN: orphan in cluster.yaml (no longer in inventory): %s\n", o)
 	}
+	for _, u := range r.Unparseable {
+		fmt.Fprintf(os.Stderr, "  WARN: unparseable existing entry — fresh inventory hosts won't dedupe against it: %s\n", u)
+	}
 }
 
 func countAllowlistDisks(a plan.DeployDiskAllowlist) int {

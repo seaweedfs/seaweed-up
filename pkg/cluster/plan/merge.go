@@ -26,6 +26,14 @@ type MergeReport struct {
 	// Append-merge never deletes — orphans surface as a warning so the
 	// operator can decide.
 	Orphaned []string
+	// Unparseable lists `section: line N` markers for existing entries
+	// the dedup index couldn't extract a key from (typically a hand-
+	// edited entry missing `port:`, or with non-scalar values for `ip`/
+	// `port`). These entries are kept verbatim, but Merge cannot
+	// dedupe a fresh inventory entry against them — so a fresh entry
+	// with the same IP would still get appended, producing a duplicate.
+	// Surface them so the operator can clean up before next merge.
+	Unparseable []string
 }
 
 // MergeOptions tweak append-merge behavior. Zero value is fine for
@@ -248,11 +256,19 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 	// Index existing entries by section-specific key. Skip entries we
 	// can't extract a key from rather than failing the whole merge —
 	// operators may have hand-edited weird shapes we don't recognize.
+	// Record those skipped items in MergeReport.Unparseable so the
+	// operator sees that they survive but won't dedupe against fresh
+	// inventory entries: a hand-edited master_servers row missing
+	// `port:` plus an inventory entry for the same IP will produce
+	// two YAML rows for the same host.
 	existingKeys := map[string]struct{}{}
 	for _, item := range seqNode.Content {
 		if k := keyOfNode(item); k != "" {
 			existingKeys[k] = struct{}{}
+			continue
 		}
+		report.Unparseable = append(report.Unparseable,
+			fmt.Sprintf("%s: line %d", sectionKey, item.Line))
 	}
 
 	freshKeys := map[string]struct{}{}

@@ -332,6 +332,50 @@ master_servers:
 	}
 }
 
+// TestMerge_recordsUnparseableExistingEntry: an existing entry that
+// keyOfNode can't extract a key from (here: `master_servers` row
+// missing `port:`) is kept verbatim but recorded in
+// MergeReport.Unparseable so the operator sees that fresh inventory
+// entries won't dedupe against it. Without this signal, an inventory
+// host with the same IP would silently produce two YAML rows for the
+// same host on the next merge.
+func TestMerge_recordsUnparseableExistingEntry(t *testing.T) {
+	existing := `cluster_name: hand
+master_servers:
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(report.Unparseable) != 1 {
+		t.Fatalf("Report.Unparseable: got %+v, want one entry", report.Unparseable)
+	}
+	if !strings.Contains(report.Unparseable[0], "master_servers") {
+		t.Errorf("Unparseable entry should name the section, got %q", report.Unparseable[0])
+	}
+	// The fresh master entry was appended (since the existing one is
+	// not in the dedup index), so the merged file now has two rows
+	// for 10.0.0.11. That's the documented hazard the warning is for.
+	if got := strings.Count(string(merged), "10.0.0.11"); got != 2 {
+		t.Errorf("expected two 10.0.0.11 rows after merge (the hazard the warning describes), got %d:\n%s", got, merged)
+	}
+}
+
 // TestMerge_rejectsNonSequenceSection: an existing `master_servers:`
 // hand-edited to a scalar or mapping must NOT be silently overwritten.
 // A loud error pushes the operator to clean it up before merge instead
