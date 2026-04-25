@@ -27,10 +27,12 @@ const envFilerBackend = "SEAWEEDUP_FILER_BACKEND"
 // ClusterPlanOptions holds flags for `cluster plan`.
 //
 // Two modes:
-//  1. --json (default, Phase 1) — probe and emit HostFacts to stdout.
-//  2. -o cluster.yaml (Phase 2, greenfield) — probe and synthesize a
-//     reviewable cluster.yaml. Refuses to overwrite an existing file
-//     unless --overwrite is passed; append-merge lands in Phase 3.
+//  1. --json (default when -o is absent) — probe and emit HostFacts
+//     to stdout.
+//  2. -o cluster.yaml — probe and synthesize a reviewable
+//     cluster.yaml. When the file exists the run append-merges in
+//     place, preserving comments and operator hand-edits;
+//     --overwrite regenerates from scratch.
 //
 // See docs/design/inventory-and-plan.md for the full design.
 type ClusterPlanOptions struct {
@@ -62,21 +64,21 @@ memory, and network facts, and either:
   - synthesizes a reviewable cluster.yaml (-o cluster.yaml) that the
     existing ` + "`cluster deploy`" + ` command consumes unchanged.
 
-Phase 2 lands the synthesis path in greenfield mode only: the command
-refuses to overwrite an existing -o file unless --overwrite is passed.
-Phase 3 will add append-merge so growing the inventory only appends to
-the generated cluster.yaml without reordering or rewriting existing
-entries. See docs/design/inventory-and-plan.md.
+When -o points at an existing cluster.yaml the run append-merges in
+place: new inventory hosts are appended at each section's tail and
+existing entries (along with operator hand-edits and comments) are
+preserved byte-for-byte. Pass --overwrite to regenerate from scratch
+instead. See docs/design/inventory-and-plan.md.
 
 Purely read-only on the target hosts.`,
 		Example: `  # Probe-only (JSON to stdout)
   seaweed-up cluster plan -i inventory.yaml > facts.json
 
-  # Synthesize a cluster.yaml for review
+  # Synthesize a cluster.yaml for review (greenfield or append-merge)
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
       --filer-backend-file /etc/seaweed-up/filer.dsn
 
-  # Overwrite an existing cluster.yaml (Phase 3 will replace this)
+  # Force regeneration, discarding any existing cluster.yaml
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --overwrite`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterPlan(cmd, opts)
@@ -85,7 +87,7 @@ Purely read-only on the target hosts.`,
 
 	cmd.Flags().StringVarP(&opts.InventoryFile, "inventory", "i", "", "inventory file (required)")
 	cmd.Flags().StringVarP(&opts.OutputFile, "output", "o", "", "write a synthesized cluster.yaml to this path")
-	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite -o if it already exists (Phase 3 will land append-merge)")
+	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "regenerate -o from scratch instead of append-merging into the existing file")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "write probe facts as JSON to stdout (default when -o is absent)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 10, "max concurrent probes")
 
