@@ -36,7 +36,7 @@ func TestDeployVolumeServer_refusesUnknownTargetWhenAllowlistSet(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected refusal for unallowlisted target, got nil")
 	}
-	if !strings.Contains(err.Error(), "no plan-approved disks") {
+	if !strings.Contains(err.Error(), "plan-approved disk") {
 		t.Errorf("error should explain the missing allowlist entry, got: %v", err)
 	}
 	// Also: it must NOT reach ExecuteRemote — we never opened SSH so
@@ -63,10 +63,67 @@ func TestDeployVolumeServer_noGuardWhenAllowlistNil(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected SSH connect error since :1 is unroutable, got nil")
 	}
-	// The guard must NOT have fired: no "no plan-approved disks"
-	// in the message. The error should look like a network failure.
-	if strings.Contains(err.Error(), "no plan-approved disks") {
+	// The guard must NOT have fired: no "plan-approved" string in
+	// the message. The error should look like a network failure.
+	if strings.Contains(err.Error(), "plan-approved") {
 		t.Errorf("guard fired with nil allowlist (would break hand-written specs): %v", err)
+	}
+}
+
+func TestDeployVolumeServer_refusesWhenAllowlistShortOfFolderCount(t *testing.T) {
+	// Stale sidecar case: cluster.yaml has 2 folders but the
+	// deploy-disks allowlist only has 1 disk. Without this guard,
+	// deploy would mount one disk at /data1 and silently leave
+	// /data2 as a rootfs directory; weed volume would then write
+	// data into the OS root filesystem.
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	m.PlannedDisksBySSHTarget = map[string]map[string]struct{}{
+		"10.0.0.21:22": {"/dev/sdb": {}}, // only one disk
+	}
+	vs := &spec.VolumeServerSpec{
+		Ip:      "10.0.0.21",
+		PortSsh: 22,
+		Port:    8080,
+		Folders: []*spec.FolderSpec{
+			{Folder: "/data1"},
+			{Folder: "/data2"},
+		},
+	}
+	err := m.DeployVolumeServer(nil, vs, 0)
+	if err == nil {
+		t.Fatal("expected refusal for under-provisioned allowlist, got nil")
+	}
+	if !strings.Contains(err.Error(), "expects 2 mountpoint") {
+		t.Errorf("error should call out the count mismatch, got: %v", err)
+	}
+}
+
+func TestDeployVolumeServer_idxFolderCountedTowardsRequired(t *testing.T) {
+	// IdxFolder is an additional mountpoint, so allowlist must cover
+	// folders + 1. Here the allowlist has exactly the folder count
+	// (2) but the spec also asks for an idx folder (3 mountpoints).
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	m.PlannedDisksBySSHTarget = map[string]map[string]struct{}{
+		"10.0.0.21:22": {"/dev/sdb": {}, "/dev/sdc": {}}, // 2 disks
+	}
+	vs := &spec.VolumeServerSpec{
+		Ip:      "10.0.0.21",
+		PortSsh: 22,
+		Port:    8080,
+		Folders: []*spec.FolderSpec{
+			{Folder: "/data2"},
+			{Folder: "/data3"},
+		},
+		IdxFolder: "/data1", // needs a 3rd disk
+	}
+	err := m.DeployVolumeServer(nil, vs, 0)
+	if err == nil {
+		t.Fatal("expected refusal: 2 folders + 1 idx > 2 approved disks")
+	}
+	if !strings.Contains(err.Error(), "expects 3 mountpoint") {
+		t.Errorf("error should account for IdxFolder in the count, got: %v", err)
 	}
 }
 

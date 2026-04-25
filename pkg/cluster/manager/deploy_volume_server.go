@@ -17,22 +17,34 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 	target := fmt.Sprintf("%s:%d", volumeServerSpec.Ip, volumeServerSpec.PortSsh)
 
 	// When the spec is plan-generated (PlannedDisksBySSHTarget non-nil),
-	// every emitted volume_server must have at least one allowlisted
-	// disk for its SSH target. Without this guard, a target absent from
-	// the allowlist would empty the candidate disks at
-	// prepareUnmountedDisks time, ensureVolumeFolders would mkdir the
-	// folders on the OS rootfs, and `weed volume` would happily start
-	// writing data there. Refusing here preserves the planner's
-	// "disks-only-on-disks" guarantee and points the operator at the
-	// inconsistency (likely an inventory edit without re-running plan,
-	// or a stale .deploy-disks.json).
-	if m.PlannedDisksBySSHTarget != nil && len(volumeServerSpec.Folders) > 0 {
-		if len(m.PlannedDisksBySSHTarget[target]) == 0 {
-			return fmt.Errorf(
-				"volume_server %s has %d folder(s) in cluster.yaml but %s has no plan-approved disks; "+
-					"refusing to start volume on root filesystem — re-run `cluster plan -o <spec>.yaml --overwrite` "+
-					"or hand-edit cluster.yaml + delete the .deploy-disks.json sidecar",
-				target, len(volumeServerSpec.Folders), target)
+	// every mountpoint the volume server points at MUST have a
+	// plan-approved disk to back it. The total mount count is
+	// len(Folders) + 1 if IdxFolder is set. Without this guard:
+	//   - A target absent from the allowlist would empty the
+	//     candidate disks; ensureVolumeFolders would mkdir on rootfs.
+	//   - A target with FEWER approved disks than folders would mount
+	//     some folders on real disks and silently leave the rest on
+	//     rootfs (the "stale sidecar with one disk but two folders"
+	//     case). `weed volume` would then start with -dir pointing at
+	//     a mix of real disks and root-filesystem directories.
+	// Refusing here preserves plan's "disks-only-on-disks" guarantee
+	// and points the operator at the inconsistency.
+	if m.PlannedDisksBySSHTarget != nil {
+		needed := len(volumeServerSpec.Folders)
+		if volumeServerSpec.IdxFolder != "" {
+			needed++
+		}
+		if needed > 0 {
+			approved := m.PlannedDisksBySSHTarget[target]
+			if len(approved) < needed {
+				return fmt.Errorf(
+					"volume_server %s expects %d mountpoint(s) in cluster.yaml (%d folder(s)+%s) "+
+						"but %s has only %d plan-approved disk(s); refusing to start volume on root filesystem — "+
+						"re-run `cluster plan -o <spec>.yaml --overwrite` (likely a stale .deploy-disks.json sidecar)",
+					target, needed, len(volumeServerSpec.Folders),
+					ifThenElse(volumeServerSpec.IdxFolder != "", "1 idx", "0 idx"),
+					target, len(approved))
+			}
 		}
 	}
 
@@ -56,6 +68,15 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		return m.deployComponentInstance(op, component, componentInstance, &buf)
 
 	})
+}
+
+// ifThenElse returns yes when cond is true, no otherwise. Tiny
+// branch-free helper for inlining in error messages.
+func ifThenElse(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+	return no
 }
 
 // prepareUnmountedDisksOnce gates prepareUnmountedDisks behind a

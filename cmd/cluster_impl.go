@@ -146,15 +146,24 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	// If `cluster plan -o` left a deploy-disks.json sidecar alongside
 	// cluster.yaml, feed its allowlist into the manager so
 	// prepareUnmountedDisks only formats devices the planner approved.
-	// Fail-closed contract: if the spec looks plan-generated (its
-	// facts.json sibling is present) but the deploy-disks sidecar is
-	// missing/broken, refuse to deploy rather than fall back to
-	// scanning every disk — the scan would format disks plan
-	// deliberately excluded. Hand-written cluster.yamls with no
-	// sidecars take the legacy scan-everything path.
-	approved, err := loadPlannedDeployDisks(opts.ConfigFile)
-	if err != nil {
-		return fmt.Errorf("planned deploy disks: %w", err)
+	// Fail-closed contract: when the spec carries the plan-generated
+	// marker AND this deploy will actually touch disks (mount-disks
+	// is on AND we're rolling out the volume role), a missing or
+	// broken sidecar is a hard error — the scan-everything fallback
+	// would format disks plan deliberately excluded. For
+	// disk-irrelevant operations (e.g. --component=master, or
+	// --mount-disks=false) we tolerate a missing sidecar so plan
+	// users can still ship master-only updates without lugging the
+	// sidecar around.
+	willTouchDisks := opts.MountDisks && (opts.Component == "" || opts.Component == "volume")
+	approved, sidecarErr := loadPlannedDeployDisks(opts.ConfigFile)
+	if sidecarErr != nil {
+		if willTouchDisks {
+			return fmt.Errorf("planned deploy disks: %w", sidecarErr)
+		}
+		// Disk-irrelevant deploy — log to stderr so the operator
+		// notices the missing sidecar but don't block the operation.
+		color.Yellow("planned deploy disks: %v (ignoring — this deploy doesn't touch disks)", sidecarErr)
 	}
 	if approved != nil {
 		mgr.PlannedDisksBySSHTarget = approved
