@@ -124,9 +124,16 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 	// existing nodes; appended nodes use whatever style they were
 	// marshalled with (block by default for mappings, which matches the
 	// rest of the document).
+	//
+	// Detect the input document's indent so re-encoding doesn't
+	// re-flow a hand-written 2-space file into 4-space. yaml.v3
+	// applies one global indent setting; using a different one would
+	// touch every existing node. Greenfield Marshal output is 4-space
+	// (yaml.v3 default), so a freshly-generated file round-trips
+	// stably regardless.
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(4) // match Marshal()'s default output style
+	enc.SetIndent(detectIndent(existing, 4))
 	if err := enc.Encode(&doc); err != nil {
 		return nil, nil, fmt.Errorf("encode merged cluster.yaml: %w", err)
 	}
@@ -139,6 +146,58 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 	// so the original header (PlanGeneratedMarker, NOTE blocks, blank
 	// lines) survives. No re-stamping needed in merge mode.
 	return buf.Bytes(), report, nil
+}
+
+// detectIndent returns the leading-space width of the first nested
+// list/map item in raw — typically 2 or 4 in a hand-written
+// cluster.yaml. Falls back to fallback when no nested item is found
+// (file empty, all flat, all comments). Clamped to [1,8] so a
+// pathological input can't blow up the encoder.
+//
+// Heuristic: scan for the first line of the form `<spaces><dash> ` or
+// `<spaces><alnum>:` where <spaces> is at least one space. yaml.v3
+// uses the same indent for both sequence items and nested mappings,
+// so either pattern reveals the file's chosen width.
+func detectIndent(raw []byte, fallback int) int {
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		// Skip blank and comment-only lines so a `#` block in column 1
+		// doesn't pin us to indent=0.
+		trimmedLeft := bytes.TrimLeft(line, " ")
+		if len(trimmedLeft) == 0 || trimmedLeft[0] == '#' {
+			continue
+		}
+		spaces := len(line) - len(trimmedLeft)
+		if spaces == 0 {
+			continue
+		}
+		// Sequence dash or `key:` — both are valid indent witnesses.
+		if trimmedLeft[0] == '-' || isYAMLKeyStart(trimmedLeft) {
+			if spaces < 1 {
+				spaces = 1
+			}
+			if spaces > 8 {
+				spaces = 8
+			}
+			return spaces
+		}
+	}
+	return fallback
+}
+
+// isYAMLKeyStart reports whether b looks like a `key:` token: starts
+// with an alpha/digit/underscore byte followed by anything ending in
+// `:`. We don't try to validate the full YAML key grammar — just
+// enough to distinguish keys from raw scalar values that happen to
+// start with whitespace.
+func isYAMLKeyStart(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	c := b[0]
+	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+		return false
+	}
+	return bytes.IndexByte(b, ':') > 0
 }
 
 // serverEntry is the unit of append: a key (`ip:port`) and the

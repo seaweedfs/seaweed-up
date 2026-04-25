@@ -289,6 +289,77 @@ master_servers:
 	}
 }
 
+// TestMerge_preservesTwoSpaceIndent confirms that hand-written
+// cluster.yaml files using a non-default 2-space indent don't get
+// re-flowed to 4-space on merge — yaml.v3's encoder applies one
+// global indent setting, so picking the wrong one would touch every
+// existing node.
+func TestMerge_preservesTwoSpaceIndent(t *testing.T) {
+	existing := `cluster_name: hand
+master_servers:
+  - ip: 10.0.0.11
+    port.ssh: 22
+    port: 9333
+    port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.12", Roles: []string{"master"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	// Every existing master entry's `port.ssh` line should still sit at
+	// 4-column indent (2 for the dash + 2 for the key under it). If the
+	// encoder re-flowed to 4-space, those lines would be at column 6 or 8.
+	if !strings.Contains(string(merged), "\n    port.ssh: 22") {
+		t.Errorf("2-space indent reflowed to 4-space:\n%s", merged)
+	}
+	if !strings.Contains(string(merged), "10.0.0.12") {
+		t.Errorf("new master not appended:\n%s", merged)
+	}
+}
+
+// TestDetectIndent covers the small heuristic that picks the
+// re-encode indent from the existing input. Direct unit test because
+// the detector also runs on edge cases (empty file, comment-only,
+// pathological inputs) the higher-level merge tests don't reach.
+func TestDetectIndent(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"empty", "", 4},
+		{"comments only", "# only comments\n# more\n", 4},
+		{"two-space mapping", "root:\n  child: 1\n", 2},
+		{"four-space mapping", "root:\n    child: 1\n", 4},
+		{"two-space sequence", "items:\n  - a\n  - b\n", 2},
+		{"four-space sequence", "items:\n    - a\n    - b\n", 4},
+		{"clamp big", "root:\n             child: 1\n", 8},
+		{"flat only", "root: 1\nother: 2\n", 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := detectIndent([]byte(tc.in), 4); got != tc.want {
+				t.Errorf("detectIndent(%q) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMerge_handWrittenSpec_noMarkerSurvives: merging into a hand-
 // written cluster.yaml (no plan marker) doesn't sneak the marker in.
 // Whether the file gets the marker is the writer's call, not Merge's;
