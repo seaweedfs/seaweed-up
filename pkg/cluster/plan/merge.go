@@ -172,6 +172,16 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 // `<spaces><alnum>:` where <spaces> is at least one space. yaml.v3
 // uses the same indent for both sequence items and nested mappings,
 // so either pattern reveals the file's chosen width.
+//
+// Caveats: this is a heuristic, not a YAML parser. A literal block
+// scalar (`key: |`) followed by indented prose containing `Note:` or
+// any other alnum:colon prefix can be picked up as if it were a
+// mapping key, biasing the result toward the block scalar's own
+// indent. yaml.v3 normally writes block scalars at the parent's
+// indent + the document indent, so the detected width is usually
+// still correct — but a mismatch isn't caught here. If exactness
+// becomes important, swap this for a yaml.v3 pre-parse and inspect
+// node Column positions on the first MappingNode child.
 func detectIndent(raw []byte, fallback int) int {
 	for _, line := range bytes.Split(raw, []byte("\n")) {
 		// Skip blank and comment-only lines so a `#` block in column 1
