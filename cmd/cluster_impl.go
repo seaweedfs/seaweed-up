@@ -145,16 +145,18 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 
 	// If `cluster plan -o` left a deploy-disks.json sidecar alongside
 	// cluster.yaml, feed its allowlist into the manager so
-	// prepareUnmountedDisks only formats devices the planner approved
-	// (fresh / non-ephemeral / not foreign-mounted / not excluded by
-	// inventory). Missing or unreadable sidecar falls back to the
-	// historical scan-everything behavior, which keeps hand-written
-	// cluster.yaml files working unchanged.
-	//
-	// The allowlist is keyed by `<ip>:<ssh-port>`, matching the SSH
-	// target identity Inventory.ProbeHosts dedups by. Inventories
-	// where two SSH endpoints share an IP each get their own slot.
-	if approved := loadPlannedDeployDisks(opts.ConfigFile); approved != nil {
+	// prepareUnmountedDisks only formats devices the planner approved.
+	// Fail-closed contract: if the spec looks plan-generated (its
+	// facts.json sibling is present) but the deploy-disks sidecar is
+	// missing/broken, refuse to deploy rather than fall back to
+	// scanning every disk — the scan would format disks plan
+	// deliberately excluded. Hand-written cluster.yamls with no
+	// sidecars take the legacy scan-everything path.
+	approved, err := loadPlannedDeployDisks(opts.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("planned deploy disks: %w", err)
+	}
+	if approved != nil {
 		mgr.PlannedDisksBySSHTarget = approved
 	}
 

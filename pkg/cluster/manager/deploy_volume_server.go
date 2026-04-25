@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -157,16 +158,18 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 	}
 	fmt.Printf("disks1: %+v\n", disks)
 
-	// Honor the plan-side allowlist when available.
-	// PlannedDisksBySSHTarget is populated from the deploy-disks.json
-	// sidecar `cluster plan` writes alongside cluster.yaml; it carries
-	// the per-target set of /dev paths plan classified as eligible
-	// (fresh + non-ephemeral + not foreign-mounted + not excluded).
-	// Without this filter, a disk plan deliberately skipped
-	// (instance-store, foreign mount, exclude list) would still get
-	// formatted by deploy's blanket "every unmounted prefix-matching
-	// disk" sweep.
-	if allow, ok := m.PlannedDisksBySSHTarget[target]; ok {
+	// Honor the plan-side allowlist when set. PlannedDisksBySSHTarget
+	// is populated from the deploy-disks.json sidecar `cluster plan`
+	// writes alongside cluster.yaml; it carries the per-target set of
+	// /dev paths plan classified as eligible (fresh + non-ephemeral
+	// + not foreign-mounted + not excluded by inventory). When the
+	// map is non-nil it is authoritative — a target that doesn't
+	// appear in it gets an empty allow set, NOT a free-for-all
+	// fallback. Otherwise a plan that classified zero disks for a
+	// host would silently get all of that host's unmounted disks
+	// formatted, defeating the planner's exclude/ephemeral rules.
+	if m.PlannedDisksBySSHTarget != nil {
+		allow := m.PlannedDisksBySSHTarget[target]
 		for k := range disks {
 			if _, kept := allow[k]; !kept {
 				delete(disks, k)
@@ -182,9 +185,23 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 	}
 	fmt.Printf("disks2: %+v\n", disks)
 
+	// Iterate in sorted-path order so /data<N> assignment is
+	// deterministic and matches the planner's ordering in
+	// pkg/cluster/plan.deriveFolders. Without this, deploy's Go-map
+	// iteration could mount disk B at /data1 while cluster.yaml's
+	// FolderSpec /data1 has Max/DiskType derived from disk A's
+	// metrics — the volume server would then run with flags that
+	// don't fit the actual disk it's writing to.
+	orderedPaths := make([]string, 0, len(disks))
+	for k := range disks {
+		orderedPaths = append(orderedPaths, k)
+	}
+	sort.Strings(orderedPaths)
+
 	// format disk if no fstype, then resolve the resulting UUID so the fstab
 	// entry written below can mount by UUID instead of by device path.
-	for _, dev := range disks {
+	for _, k := range orderedPaths {
+		dev := disks[k]
 		if dev.FilesystemType == "" {
 			info("mkfs " + dev.Path)
 			if err := m.sudo(op, fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
@@ -201,7 +218,8 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 	}
 
 	// mount them
-	for _, dev := range disks {
+	for _, k := range orderedPaths {
+		dev := disks[k]
 		if dev.MountPoint == "" {
 			var targetMountPoint = ""
 			for i := 1; i < 100; i++ {

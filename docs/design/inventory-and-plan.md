@@ -212,14 +212,29 @@ drift between previously-recorded facts and freshly-probed ones.
 Sidecar permissions are `0600` since facts include hostnames, NIC
 addresses, and disk model strings.
 
-`cluster deploy` reads the sidecar when present (auto-discovered
-from the `-f` path) and uses it to constrain
-`prepareUnmountedDisks` to only the disk paths plan classified as
-eligible. Without this filter, deploy's "format every unmounted
-prefix-matching disk" sweep would silently touch disks plan
-deliberately skipped (instance store, foreign mounts, fs-without-claim).
-A missing sidecar falls back to the historical scan-everything
-behavior, so hand-written `cluster.yaml` files remain unaffected.
+`cluster plan -o` also writes an explicit allowlist sidecar at
+`cluster.deploy-disks.json` carrying the *result* of plan's
+classification (after applying inventory excludes, ephemeral skip,
+and foreign-mount drop). `cluster deploy` reads it and uses it as the
+authoritative set of devices `prepareUnmountedDisks` is permitted to
+mkfs+mount.
+
+**Fail-closed contract.** Deploy detects plan-generated configs by
+the presence of `cluster.facts.json`. If the spec was plan-generated
+but the deploy-disks sidecar is missing or unparseable, deploy errors
+out instead of falling back to the legacy scan-everything path —
+otherwise a lost or truncated sidecar would silently format disks
+plan deliberately classified out (excludes, ephemeral, foreign).
+Hand-written `cluster.yaml` files (no sidecars) take the legacy
+path unchanged.
+
+**Deterministic /data<N> assignment.** `prepareUnmountedDisks` walks
+its candidate disks in path-sorted order so deploy's `/data<N>`
+assignment matches plan's. Without this, Go's randomized map
+iteration could mount disk B at `/data1` while the cluster.yaml's
+`folders[/data1]` `max` was computed from disk A's size — the
+volume server would then run with flags that don't fit the actual
+underlying disk.
 
 ## Plan: generation
 

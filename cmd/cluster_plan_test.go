@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,10 +43,10 @@ func TestDeployDisksFilePath(t *testing.T) {
 func TestLoadPlannedDeployDisks_readsSidecar(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
-	// Allowlist sidecar carries the planner's authoritative
-	// classification result, keyed by SSH target. Two distinct SSH
-	// endpoints can share an IP — verify both slots survive the
-	// load.
+	// Both sidecars must be present for plan-generated detection.
+	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	body := `{
   "10.0.0.21:22":   ["/dev/nvme0n1", "/dev/nvme2n1"],
   "10.0.0.21:2222": ["/dev/sdb"],
@@ -55,9 +56,12 @@ func TestLoadPlannedDeployDisks_readsSidecar(t *testing.T) {
 	if err := os.WriteFile(deployDisksFilePath(specPath), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got := loadPlannedDeployDisks(specPath)
+	got, err := loadPlannedDeployDisks(specPath)
+	if err != nil {
+		t.Fatalf("loadPlannedDeployDisks: %v", err)
+	}
 	if got == nil {
-		t.Fatal("loadPlannedDeployDisks returned nil")
+		t.Fatal("loadPlannedDeployDisks returned nil with no error")
 	}
 	if _, ok := got["10.0.0.21:22"]["/dev/nvme0n1"]; !ok {
 		t.Errorf("missing /dev/nvme0n1 on 10.0.0.21:22; got %+v", got["10.0.0.21:22"])
@@ -70,19 +74,74 @@ func TestLoadPlannedDeployDisks_readsSidecar(t *testing.T) {
 	}
 }
 
-func TestLoadPlannedDeployDisks_missingSidecar(t *testing.T) {
-	if got := loadPlannedDeployDisks(filepath.Join(t.TempDir(), "no-such.yaml")); got != nil {
-		t.Errorf("expected nil for missing sidecar, got %+v", got)
+func TestLoadPlannedDeployDisks_handWritten_noSidecars_returnsNilNil(t *testing.T) {
+	// Hand-written cluster.yaml: neither facts.json nor deploy-disks
+	// sidecar exists. (nil, nil) means deploy keeps its legacy
+	// scan-everything path so existing operators aren't broken.
+	got, err := loadPlannedDeployDisks(filepath.Join(t.TempDir(), "cluster.yaml"))
+	if err != nil {
+		t.Fatalf("expected no error for hand-written spec, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil allowlist for hand-written spec, got %+v", got)
 	}
 }
 
-func TestLoadPlannedDeployDisks_emptyMap(t *testing.T) {
+func TestLoadPlannedDeployDisks_planGenerated_missingDeployDisks_failsClosed(t *testing.T) {
+	// facts.json present, deploy-disks.json missing (operator deleted
+	// it / sidecar was lost in transit). MUST fail rather than fall
+	// back to scan-everything, because that would format disks plan
+	// classified out (excludes, ephemeral, foreign mounts).
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "cluster.yaml")
+	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadPlannedDeployDisks(specPath)
+	if err == nil {
+		t.Fatalf("expected fail-closed error, got allowlist %+v", got)
+	}
+	if !strings.Contains(err.Error(), "deploy-disks") {
+		t.Errorf("error should reference the missing sidecar, got %q", err.Error())
+	}
+}
+
+func TestLoadPlannedDeployDisks_planGenerated_corruptDeployDisks_failsClosed(t *testing.T) {
+	// Same fail-closed contract for an unparseable sidecar.
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "cluster.yaml")
+	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(deployDisksFilePath(specPath), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadPlannedDeployDisks(specPath); err == nil {
+		t.Fatal("expected parse error from malformed deploy-disks.json")
+	}
+}
+
+func TestLoadPlannedDeployDisks_emptyMap_isAuthoritative(t *testing.T) {
+	// Empty allowlist `{}` is legitimate for a cluster with no volume
+	// hosts. Deploy must apply the (empty) filter rather than fall
+	// back, so a trailing volume_server entry that wasn't classified
+	// by plan still gets refused at deploy.
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "cluster.yaml")
+	if err := os.WriteFile(factsFilePath(specPath), []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(deployDisksFilePath(specPath), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadPlannedDeployDisks(specPath); got != nil {
-		t.Errorf("empty allowlist should return nil so deploy falls back to legacy behavior, got %+v", got)
+	got, err := loadPlannedDeployDisks(specPath)
+	if err != nil {
+		t.Fatalf("loadPlannedDeployDisks: %v", err)
+	}
+	if got == nil {
+		t.Fatal("empty {} should return non-nil empty map (authoritative), got nil")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty map, got %+v", got)
 	}
 }
