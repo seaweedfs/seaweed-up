@@ -277,9 +277,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
 		factsFile, len(facts),
 		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
-	if mergeReport != nil {
-		printMergeReport(mergeReport)
-	}
+	printMergeReport(mergeReport) // no-op when nil (greenfield path)
 	return nil
 }
 
