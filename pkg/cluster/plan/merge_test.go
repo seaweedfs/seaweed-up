@@ -332,6 +332,52 @@ master_servers:
 	}
 }
 
+// TestMerge_nullSectionStaysNull is the regression test for the
+// no-op byte-stability hole: a hand-written `master_servers:` (null
+// scalar value, no list) used to be coerced to an empty sequence
+// even when the inventory carried no fresh entries for the section.
+// yaml.v3 then re-encoded that as `[]`, changing bytes and breaking
+// the no-op contract. With the no-fresh-entries fast path, the null
+// value should now survive untouched.
+func TestMerge_nullSectionStaysNull(t *testing.T) {
+	existing := `cluster_name: hand
+master_servers:
+volume_servers:
+    - ip: 10.0.0.21
+      port.ssh: 22
+      port: 8080
+      port.grpc: 18080
+      folders:
+        - folder: /data1
+          disk: hdd
+          max: 19
+`
+	// Inventory has only the existing volume host; no masters at all.
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.21", Roles: []string{"volume"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(1, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if string(merged) != existing {
+		t.Errorf("null master_servers section mutated by no-op merge\n--- want ---\n%s\n--- got ---\n%s",
+			existing, merged)
+	}
+}
+
 // TestMerge_recordsUnparseableExistingEntry: an existing entry that
 // keyOfNode can't extract a key from (here: `master_servers` row
 // missing `port:`) is kept verbatim but recorded in

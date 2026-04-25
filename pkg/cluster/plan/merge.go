@@ -243,13 +243,27 @@ type serverEntry struct {
 // `master_servers: {…}`). Silently overwriting that would lose data;
 // instead we ask the operator to clean it up.
 func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOfNode func(*yaml.Node) string, report *MergeReport) error {
-	seqNode := findOrCreateSection(root, sectionKey)
-	if seqNode == nil {
-		// Section absent and no fresh entries: nothing to do.
-		if len(fresh) == 0 {
-			return nil
+	// When the inventory carries no entries for this section, there's
+	// nothing to merge — and crucially, nothing to mutate. Look up the
+	// existing node only to compute orphans (so a stale section gets
+	// flagged) and otherwise leave the YAML alone. This preserves
+	// byte-stability for `master_servers:` (null) entries: coercing
+	// them to an empty sequence here would re-encode as `[]` and
+	// break the no-op contract even though no append ever happens.
+	if len(fresh) == 0 {
+		if existing := findExistingSection(root, sectionKey); existing != nil && existing.Kind == yaml.SequenceNode {
+			// Empty inventory for this section: every existing entry
+			// is an orphan. Pass an empty map (not nil) so the helper
+			// reports them — nil would silence the orphan check.
+			recordOrphansAndUnparseable(existing, sectionKey, keyOfNode, map[string]struct{}{}, report)
 		}
-		// Create the section as a fresh sequence and append into it.
+		return nil
+	}
+
+	seqNode := findOrCoerceSection(root, sectionKey)
+	if seqNode == nil {
+		// Section absent and we DO have fresh entries — create it as
+		// a fresh sequence and append into it.
 		seqNode = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 		root.Content = append(root.Content,
 			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: sectionKey},
@@ -263,60 +277,85 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			sectionKey, seqNode.Kind, seqNode.Line)
 	}
 
-	// Index existing entries by section-specific key. Skip entries we
-	// can't extract a key from rather than failing the whole merge —
-	// operators may have hand-edited weird shapes we don't recognize.
-	// Record those skipped items in MergeReport.Unparseable so the
-	// operator sees that they survive but won't dedupe against fresh
-	// inventory entries: a hand-edited master_servers row missing
-	// `port:` plus an inventory entry for the same IP will produce
-	// two YAML rows for the same host.
+	freshKeys := map[string]struct{}{}
+	for _, e := range fresh {
+		freshKeys[e.key] = struct{}{}
+	}
+	recordOrphansAndUnparseable(seqNode, sectionKey, keyOfNode, freshKeys, report)
+
+	// Append fresh entries that aren't already present. The dedup
+	// re-walks seqNode rather than reusing the index built above so
+	// the helper can be called from both branches of mergeSection.
 	existingKeys := map[string]struct{}{}
 	for _, item := range seqNode.Content {
 		if k := keyOfNode(item); k != "" {
 			existingKeys[k] = struct{}{}
-			continue
 		}
-		report.Unparseable = append(report.Unparseable,
-			fmt.Sprintf("%s: line %d", sectionKey, item.Line))
 	}
-
-	freshKeys := map[string]struct{}{}
 	for _, e := range fresh {
-		freshKeys[e.key] = struct{}{}
 		if _, ok := existingKeys[e.key]; ok {
-			// Already present; never touch. (Drift detection lives
-			// outside Merge; the cmd layer can compare reports.)
+			// Already present; never touch.
 			continue
 		}
 		seqNode.Content = append(seqNode.Content, e.node)
 		report.Appended[sectionKey] = append(report.Appended[sectionKey], e.key)
 	}
 
-	// Orphan check: existing keys not in inventory anymore.
+	return nil
+}
+
+// recordOrphansAndUnparseable walks seqNode's children, classifying
+// each as a known key (recorded in the orphan check), an unparseable
+// shape (recorded in MergeReport.Unparseable), or a match against
+// freshKeys (silent). Pass freshKeys=nil to skip orphan reporting
+// entirely (no inventory data to compare against). Pass an empty map
+// to report every parseable existing entry as an orphan (used when
+// the section was wholly removed from inventory).
+func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNode func(*yaml.Node) string, freshKeys map[string]struct{}, report *MergeReport) {
 	var orphans []string
-	for k := range existingKeys {
+	for _, item := range seqNode.Content {
+		k := keyOfNode(item)
+		if k == "" {
+			report.Unparseable = append(report.Unparseable,
+				fmt.Sprintf("%s: line %d", sectionKey, item.Line))
+			continue
+		}
+		if freshKeys == nil {
+			continue
+		}
 		if _, ok := freshKeys[k]; !ok {
 			orphans = append(orphans, fmt.Sprintf("%s: %s", sectionKey, k))
 		}
 	}
 	sort.Strings(orphans) // deterministic for goldens / human reading
 	report.Orphaned = append(report.Orphaned, orphans...)
+}
 
+// findExistingSection looks up sectionKey under root and returns the
+// associated value node verbatim — no coercion. Used by the
+// no-fresh-entries path that needs to inspect existing children
+// without mutating bytes.
+func findExistingSection(root *yaml.Node, sectionKey string) *yaml.Node {
+	for i := 0; i < len(root.Content); i += 2 {
+		k := root.Content[i]
+		if k.Kind == yaml.ScalarNode && k.Value == sectionKey {
+			return root.Content[i+1]
+		}
+	}
 	return nil
 }
 
-// findOrCreateSection scans root's mapping for sectionKey. Returns the
-// associated sequence node when found, nil when absent (caller decides
-// whether to create one).
-func findOrCreateSection(root *yaml.Node, sectionKey string) *yaml.Node {
+// findOrCoerceSection scans root's mapping for sectionKey. When the
+// value is a null/empty scalar it's rewritten in place to an empty
+// sequence so an append has somewhere to land. Returns nil when the
+// key is absent (caller decides whether to create one). The coercion
+// only fires on the append path — the no-fresh-entries branch uses
+// findExistingSection to keep null sections byte-stable.
+func findOrCoerceSection(root *yaml.Node, sectionKey string) *yaml.Node {
 	for i := 0; i < len(root.Content); i += 2 {
 		k := root.Content[i]
 		if k.Kind == yaml.ScalarNode && k.Value == sectionKey {
 			v := root.Content[i+1]
-			// Tolerate `master_servers:` (null) as an empty section by
-			// rewriting it in place to an empty sequence — append-mode
-			// then has somewhere to put the new entries.
 			if v.Kind == yaml.ScalarNode && (v.Tag == "!!null" || v.Value == "") {
 				v.Kind = yaml.SequenceNode
 				v.Tag = "!!seq"
