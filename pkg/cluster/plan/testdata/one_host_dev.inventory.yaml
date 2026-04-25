@@ -1,0 +1,10 @@
+defaults:
+  ssh:
+    user: ubuntu
+    port: 22
+  disk:
+    disk_type_auto: true
+
+hosts:
+  - ip: 10.0.0.1
+    roles: [master, volume, filer]

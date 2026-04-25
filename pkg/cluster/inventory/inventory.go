@@ -62,9 +62,12 @@ type SSHConfig struct {
 
 // DiskDefaults are templating knobs for volume-host disk selection.
 type DiskDefaults struct {
-	// DeviceGlobs is the candidate set for auto-provisioned disks. Matches
-	// lsblk device paths (e.g. "/dev/sd*", "/dev/nvme*"). When empty the
-	// plan falls back to the same defaults used by prepareUnmountedDisks.
+	// DeviceGlobs is the candidate set for auto-provisioned disks.
+	// Matches lsblk device paths (e.g. "/dev/sd*", "/dev/nvme*",
+	// "/dev/xvd*", "/dev/vd*"). When empty the plan falls back to the
+	// defaults used by prepareUnmountedDisks: /dev/sd*, /dev/nvme*,
+	// /dev/xvd* (Xen, older AWS), /dev/vd* (KVM virtio — Vultr,
+	// Linode, Hetzner, OpenStack).
 	DeviceGlobs []string `yaml:"device_globs,omitempty"`
 
 	// Exclude is a per-host blacklist (e.g. the boot disk). Matched against
@@ -78,6 +81,35 @@ type DiskDefaults struct {
 	// DiskTypeAuto, when true, derives FolderSpec.DiskType from lsblk's
 	// rotational bit: rotational → "hdd", otherwise "ssd".
 	DiskTypeAuto bool `yaml:"disk_type_auto,omitempty"`
+
+	// AllowEphemeral, when true, lets the planner emit folders for
+	// disks the probe identified as cloud instance-store / ephemeral
+	// (AWS Nitro instance store, GCP local SSD). Default is false:
+	// ephemeral disks would lose all SeaweedFS data on stop/start, so
+	// the planner skips them and surfaces them in
+	// Report.EphemeralDisksSkipped instead. Operators who actually
+	// want SeaweedFS on instance store (cache tier, scratch volume)
+	// can flip this on.
+	AllowEphemeral bool `yaml:"allow_ephemeral,omitempty"`
+
+	// AutoIdxTier, when true, lets the planner carve a single small
+	// fast disk out of each volume host's eligible disks and use it
+	// as the `-dir.idx` mount (the `weed volume -dir.idx=…` flag,
+	// equivalent to the helm chart's volume.idx field). The heuristic
+	// fires only when the host has BOTH rotational and non-rotational
+	// disks AND the smallest non-rotational disk is at most
+	// IdxTierSizeRatio of the smallest rotational one — the
+	// "small fast SSD + bulk HDDs" pattern. When fast disks are
+	// comparable in size to slow disks, or when the host is all
+	// uniform tier, no idx carve-out happens.
+	AutoIdxTier bool `yaml:"auto_idx_tier,omitempty"`
+
+	// IdxTierSizeRatio is the maximum ratio of (smallest fast disk) /
+	// (smallest slow disk) at which auto_idx_tier fires. 0 falls back
+	// to a built-in default (1/3). Set lower (e.g. 0.1) to require a
+	// more pronounced size gap, higher (e.g. 0.5) to be more
+	// permissive. Ignored when AutoIdxTier is false.
+	IdxTierSizeRatio float64 `yaml:"idx_tier_size_ratio,omitempty"`
 }
 
 // Host is a single entry in the inventory's hosts list.

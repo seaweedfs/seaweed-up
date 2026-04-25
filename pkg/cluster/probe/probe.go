@@ -138,8 +138,8 @@ func probeMemory(r Runner) uint64 {
 }
 
 // probeDisks wraps disks.ListBlockDevices with the inventory-provided
-// device globs (defaulting to /dev/sd + /dev/nvme, matching the existing
-// prepareUnmountedDisks behavior).
+// device globs (defaulting to disksLib.DefaultDevicePrefixes, matching
+// the prepareUnmountedDisks behavior).
 func probeDisks(r Runner, globs []string) []DiskFact {
 	// disks.ListBlockDevices takes an operator.CommandOperator, not our
 	// narrow Runner. The real Probe flow hands it the SSH operator
@@ -151,7 +151,7 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	}
 	prefixes := globs
 	if len(prefixes) == 0 {
-		prefixes = []string{"/dev/sd", "/dev/nvme"}
+		prefixes = disks.DefaultDevicePrefixes
 	} else {
 		// The inventory format uses globs (/dev/sd*); lsblk parsing
 		// filters by prefix. Strip any trailing '*' for the comparison.
@@ -164,12 +164,57 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	if err != nil {
 		return nil
 	}
+
+	// Drop disks that host any partitions. lsblk emits the parent as
+	// Type=="disk" with no direct mountpoint / fstype and each partition
+	// as Type=="part" with Path that starts with the parent's Path. Left
+	// unfiltered, a boot disk (e.g. /dev/sda with /dev/sda1 mounted at
+	// /) would pass as "unmounted" at the parent level and the planner
+	// would offer it up for mkfs.
+	//
+	// We require the partition's path to be the parent path followed
+	// by a partition-suffix shape. A bare HasPrefix check is unsafe:
+	// /dev/nvme0n10p1 starts with /dev/nvme0n1, so naive prefix
+	// matching wrongly flags /dev/nvme0n1 as partitioned on hosts
+	// with ≥10 NVMe namespaces.
+	partitioned := make(map[string]struct{})
+	for _, d := range devs {
+		if d.Type != "part" {
+			continue
+		}
+		for _, parent := range devs {
+			if parent.Type != "disk" {
+				continue
+			}
+			if !isPartitionOf(d.Path, parent.Path) {
+				continue
+			}
+			partitioned[parent.Path] = struct{}{}
+		}
+	}
+
+	// Read /etc/fstab so we can flag disks that are claimed by the
+	// system but happen not to be mounted at probe time (boot race,
+	// manual umount, fstab edited but no `mount -a`). Best effort —
+	// fstab is normally world-readable, but we tolerate read errors.
+	fstabByUUID, fstabByPath := probeFstab(r)
+
+	// Per-cloud ephemeral-disk identification. Both checks are
+	// best-effort and tolerate missing tools / empty results. The
+	// planner skips ephemeral disks by default; operators who want
+	// SeaweedFS on instance store (cache tier, scratch volume, …)
+	// can opt in via inventory's defaults.disk.allow_ephemeral.
+	gcpEphemeral := probeGCPLocalSSDPaths(r)
+
 	out := make([]DiskFact, 0, len(devs))
 	for _, d := range devs {
 		if d.Type != "disk" {
 			continue
 		}
-		out = append(out, DiskFact{
+		if _, isParent := partitioned[d.Path]; isParent {
+			continue
+		}
+		fact := DiskFact{
 			Path:       d.Path,
 			Size:       d.Size,
 			FSType:     d.FilesystemType,
@@ -177,7 +222,107 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 			MountPoint: d.MountPoint,
 			Rotational: d.Rotational,
 			Model:      d.Model,
-		})
+		}
+		if isAWSEphemeralModel(d.Model) {
+			fact.Ephemeral = true
+		}
+		if _, ok := gcpEphemeral[d.Path]; ok {
+			fact.Ephemeral = true
+		}
+		// Only fill FstabMountPoint when MountPoint is empty — the
+		// kernel's view wins when both are present (and they should
+		// agree if everything is consistent). Look up by UUID first
+		// since fstab entries usually use UUID= these days, fall
+		// back to /dev path.
+		if fact.MountPoint == "" {
+			if d.UUID != "" {
+				if mp, ok := fstabByUUID[d.UUID]; ok {
+					fact.FstabMountPoint = mp
+				}
+			}
+			if fact.FstabMountPoint == "" {
+				if mp, ok := fstabByPath[d.Path]; ok {
+					fact.FstabMountPoint = mp
+				}
+			}
+		}
+		out = append(out, fact)
 	}
 	return out
+}
+
+// isPartitionOf is a thin shim over disks.IsPartitionOf so the probe
+// loop reads naturally. The shared helper is the canonical implementation
+// — see disks.IsPartitionOf for the kernel-naming rules it encodes.
+func isPartitionOf(partPath, parentPath string) bool {
+	return disks.IsPartitionOf(partPath, parentPath)
+}
+
+// isAWSEphemeralModel returns true when the lsblk MODEL column points
+// at AWS Nitro instance-store hardware. EBS volumes report
+// "Amazon Elastic Block Store"; instance store reports
+// "Amazon EC2 NVMe Instance Storage". The substring match tolerates
+// trailing whitespace lsblk sometimes emits.
+func isAWSEphemeralModel(model string) bool {
+	return strings.Contains(strings.TrimSpace(model), "Amazon EC2 NVMe Instance Storage")
+}
+
+// probeGCPLocalSSDPaths returns the canonical /dev paths of any GCP
+// local-SSD devices on the host. GCP exposes them under
+// /dev/disk/by-id/google-local-* symlinks; the persistent-disk
+// counterpart uses google-pd-* and is durable. Best-effort — if the
+// command fails or no symlinks exist the result is an empty set.
+func probeGCPLocalSSDPaths(r Runner) map[string]struct{} {
+	paths := make(map[string]struct{})
+	// `for ...; do [ -e ]` guards against the literal-glob pattern
+	// when nothing matches; readlink -f resolves the symlink to a
+	// /dev/sdX or /dev/nvme*n1 path.
+	out, err := r.Output(`for d in /dev/disk/by-id/google-local-*; do [ -e "$d" ] && readlink -f "$d"; done 2>/dev/null`)
+	if err != nil {
+		return paths
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "/dev/") {
+			paths[line] = struct{}{}
+		}
+	}
+	return paths
+}
+
+// probeFstab returns two maps keying on `UUID=…` and on `/dev/…` device
+// paths to the corresponding mountpoints declared in /etc/fstab.
+// Tolerant of read errors — an unreadable fstab just produces empty
+// maps, and the planner falls back to current-mount data only.
+func probeFstab(r Runner) (byUUID, byPath map[string]string) {
+	byUUID = make(map[string]string)
+	byPath = make(map[string]string)
+	out, err := r.Output("cat /etc/fstab 2>/dev/null")
+	if err != nil {
+		return
+	}
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		spec, mountpoint := fields[0], fields[1]
+		switch {
+		case strings.HasPrefix(spec, "UUID="):
+			uuid := strings.Trim(strings.TrimPrefix(spec, "UUID="), `"`)
+			if uuid != "" {
+				byUUID[uuid] = mountpoint
+			}
+		case strings.HasPrefix(spec, "/"):
+			byPath[spec] = mountpoint
+		}
+		// LABEL=, PARTUUID=, etc. are uncommon for our use case — the
+		// planner won't recognize them but the existing FSType skip
+		// keeps us from reformatting. Fine.
+	}
+	return
 }

@@ -46,14 +46,28 @@ type HostFacts struct {
 // Downstream consumers MUST treat a missing/null value as "unknown"
 // and fall back to an explicit `disk_type` in inventory rather than
 // silently picking one.
+//
+// MountPoint reflects the kernel's view at probe time. FstabMountPoint
+// captures the `/etc/fstab`-declared mount, which can differ when the
+// disk is supposed to be mounted but isn't yet (boot race, manual
+// unmount, fstab edited but no mount -a). Callers should treat the
+// effective mountpoint as `MountPoint || FstabMountPoint`.
 type DiskFact struct {
-	Path       string `json:"path"`
-	Size       uint64 `json:"size_bytes"`
-	FSType     string `json:"fstype,omitempty"`
-	UUID       string `json:"uuid,omitempty"`
-	MountPoint string `json:"mountpoint,omitempty"`
-	Rotational *bool  `json:"rotational,omitempty"`
-	Model      string `json:"model,omitempty"`
+	Path            string `json:"path"`
+	Size            uint64 `json:"size_bytes"`
+	FSType          string `json:"fstype,omitempty"`
+	UUID            string `json:"uuid,omitempty"`
+	MountPoint      string `json:"mountpoint,omitempty"`
+	FstabMountPoint string `json:"fstab_mountpoint,omitempty"`
+	Rotational      *bool  `json:"rotational,omitempty"`
+	Model           string `json:"model,omitempty"`
+	// Ephemeral is true when the probe identified this disk as
+	// non-durable (cloud instance store: AWS Nitro EC2 instance store,
+	// GCP local SSD). The planner skips ephemeral disks by default
+	// unless the inventory sets defaults.disk.allow_ephemeral. Detection
+	// is heuristic and best-effort — see probe.go for the per-cloud
+	// signals used.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // NetIface is one non-loopback network interface. SpeedMbps is 0 when

@@ -9,6 +9,64 @@ import (
 	"strings"
 )
 
+// DefaultDevicePrefixes lists the /dev path prefixes the planner and
+// the deploy-time disk preparer treat as candidate block devices when
+// the operator hasn't supplied an explicit globs list:
+//
+//	/dev/sd    SCSI / SATA, Azure managed disks, GCP SCSI PDs
+//	/dev/nvme  NVMe SSDs, AWS Nitro EBS, GCP NVMe PDs
+//	/dev/xvd   Xen — older AWS, XenServer/XCP-ng
+//	/dev/vd    KVM virtio — Vultr, Linode, Hetzner, OpenStack
+//
+// Single source of truth so probe and prepareUnmountedDisks always
+// scan the same device families. Adding a prefix here exposes it to
+// both sides at once.
+var DefaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"}
+
+// IsPartitionOf returns true when partPath is a kernel-level partition
+// of parentPath. Linux uses two conventions, distinguished by whether
+// the parent name ends in a digit:
+//
+//   - parent ends in a letter (sda, vdb, xvdc) → partition is parent +
+//     digits: sda1, sda12.
+//   - parent ends in a digit  (nvme0n1, loop0, mmcblk0) → partition is
+//     parent + 'p' + digits: nvme0n1p1, loop0p3.
+//
+// Naive HasPrefix is unsafe both ways: it would treat /dev/nvme0n10 as
+// a partition of /dev/nvme0n1 on multi-namespace hosts, and treat
+// /dev/sda12 as a partition of /dev/sda1 (which is itself a partition,
+// not a parent). Encoding the kernel's separator rule here keeps the
+// match exact without parsing lsblk's PKNAME column.
+//
+// Shared by pkg/cluster/probe (pre-deploy classification) and
+// pkg/cluster/manager (deploy-time prepareUnmountedDisks) so both
+// sides agree on which disks are top-level vs. partition children.
+func IsPartitionOf(partPath, parentPath string) bool {
+	if parentPath == "" || len(partPath) <= len(parentPath) {
+		return false
+	}
+	if partPath[:len(parentPath)] != parentPath {
+		return false
+	}
+	suffix := partPath[len(parentPath):]
+	parentEndsInDigit := parentPath[len(parentPath)-1] >= '0' && parentPath[len(parentPath)-1] <= '9'
+	if parentEndsInDigit {
+		if suffix[0] != 'p' {
+			return false
+		}
+		suffix = suffix[1:]
+	}
+	if suffix == "" {
+		return false
+	}
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 type BlockDevice struct {
 	DeviceName     string
 	Path           string

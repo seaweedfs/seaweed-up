@@ -24,14 +24,19 @@ type (
 		Name          string              `yaml:"cluster_name,omitempty"`
 		GlobalOptions GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
 		ServerConfigs ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
+		// master_servers is required (Validate refuses a spec without
+		// one); everything else is optional. omitempty on the optional
+		// sections keeps generated cluster.yaml files tidy — no
+		// `s3_servers: []` lines for clusters that don't run an S3
+		// gateway.
 		MasterServers []*MasterServerSpec `yaml:"master_servers"`
-		VolumeServers []*VolumeServerSpec `yaml:"volume_servers"`
-		FilerServers  []*FilerServerSpec  `yaml:"filer_servers"`
-		S3Servers     []*S3ServerSpec     `yaml:"s3_servers"`
-		SftpServers   []*SftpServerSpec   `yaml:"sftp_servers"`
-		AdminServers  []*AdminServerSpec  `yaml:"admin_servers"`
-		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers"`
-		WorkerServers []*WorkerServerSpec `yaml:"worker_servers"`
+		VolumeServers []*VolumeServerSpec `yaml:"volume_servers,omitempty"`
+		FilerServers  []*FilerServerSpec  `yaml:"filer_servers,omitempty"`
+		S3Servers     []*S3ServerSpec     `yaml:"s3_servers,omitempty"`
+		SftpServers   []*SftpServerSpec   `yaml:"sftp_servers,omitempty"`
+		AdminServers  []*AdminServerSpec  `yaml:"admin_servers,omitempty"`
+		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers,omitempty"`
+		WorkerServers []*WorkerServerSpec `yaml:"worker_servers,omitempty"`
 	}
 )
 

@@ -3,9 +3,18 @@ package manager
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
+
+// prepareDisksGate pairs a sync.Once with the result of the single
+// prepareUnmountedDisks call so all volume_servers on the same host see
+// the same outcome instead of each independently retrying.
+type prepareDisksGate struct {
+	once sync.Once
+	err  error
+}
 
 // GitHub repos that host SeaweedFS release tarballs. Both repos are
 // public; the Manager picks between them via the Enterprise flag.
@@ -54,8 +63,56 @@ type Manager struct {
 	EnvoyVersion       string // envoy release to pin; when empty the latest is looked up from github.com/envoyproxy/envoy
 	SshPort            int
 	PrepareVolumeDisks bool
-	HostPrep           bool
-	ForceRestart       bool
+	// PlannedDisksBySSHTarget is the optional plan-side allowlist of
+	// block devices deploy is allowed to mkfs+mount, keyed by
+	// `<ip>:<ssh-port>` (the same key inventory.ProbeHosts dedups by).
+	// Keying on the SSH target rather than just IP correctly handles
+	// inventories where two SSH endpoints share an IP but differ in
+	// port (uncommon but legal — see the inventory schema). The value
+	// is the set of /dev paths plan classified as eligible (fresh or
+	// claimed-at-/dataN, not ephemeral, not excluded, not foreign).
+	// When non-nil, prepareUnmountedDisks restricts itself to disks in
+	// the corresponding target's set; when nil it falls back to its
+	// historical "every unmounted prefix-matching disk" behavior
+	// (preserves backwards compatibility for hand-written cluster.yaml
+	// files that don't ship a plan-emitted allowlist).
+	PlannedDisksBySSHTarget map[string]map[string]struct{}
+	// PlanGenerated is true when the cluster.yaml was emitted by
+	// `cluster plan -o` (detected via the header marker). Tracked
+	// separately from PlannedDisksBySSHTarget because a plan-generated
+	// spec can legitimately reach deploy without its sidecar — e.g.
+	// `--mount-disks=false` deploys keep the sidecar optional so
+	// operators can ship master-only or service-only updates without
+	// it. The runtime mountpoint check still needs to fire in that
+	// case (a missing /dataN would still be silently mkdir'd on
+	// rootfs), so DeployVolumeServer gates the runtime check on this
+	// flag while the static count guard stays gated on
+	// PlannedDisksBySSHTarget (which requires the sidecar contents).
+	PlanGenerated bool
+	// prepareDisksOnce gates prepareUnmountedDisks per SSH target.
+	// With the per-disk volume_server shape, deploy fans out multiple
+	// volume_server entries on the same host concurrently — each would
+	// otherwise call prepareUnmountedDisks and race on mkfs/mount
+	// assignment. The sync.Once per ip:ssh-port makes the disk prep
+	// effectively a per-target pre-step.
+	prepareDisksOnce sync.Map // <ip>:<ssh-port> -> *prepareDisksGate
+	// requiredDisksByTarget aggregates each SSH target's mountpoint
+	// demand (sum of Folders+IdxFolder across every volume_server
+	// pointing at it). Populated once by DeployCluster before the
+	// concurrent volume-server fan-out so DeployVolumeServer's
+	// allowlist check sees the host total rather than per-spec
+	// folder count — necessary for --volume-server-shape=per-disk
+	// where one host has many one-folder specs.
+	requiredDisksByTarget map[string]int
+	// volumeServerCountByTarget records how many volume_server entries
+	// point at each SSH target. Populated alongside requiredDisksByTarget
+	// so DeployVolumeServer's error wording can name the actual server
+	// count (1 in per-host shape with N folders; N in per-disk shape).
+	// Without this we'd have to back-derive from the aggregated mount
+	// count, which overstates the count for per-host shape.
+	volumeServerCountByTarget map[string]int
+	HostPrep         bool
+	ForceRestart     bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the
 	// public enterprise release repo (github.com/seaweedfs/artifactory)
 	// instead of the standard OSS repo (github.com/seaweedfs/seaweedfs).

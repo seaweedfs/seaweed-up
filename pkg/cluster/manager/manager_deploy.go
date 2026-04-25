@@ -106,6 +106,32 @@ func resolveWorkerDefaultAdmins(specification *spec.Specification) ([]string, er
 	return defaultAdmins, nil
 }
 
+// computeVolumeTargetDemand walks every volume_server and returns
+// per-target totals: mountpoints needed (sum of folders + idx) and
+// the number of volume_server entries on that SSH target. The
+// mountpoint count drives DeployVolumeServer's allowlist comparison;
+// the entry count gives the error message an accurate label (one
+// volume_server with many folders in per-host shape; many one-folder
+// volume_servers in per-disk shape — without the explicit count we
+// couldn't tell them apart from the aggregate alone).
+func computeVolumeTargetDemand(volumes []*spec.VolumeServerSpec) (mountpoints, servers map[string]int) {
+	mountpoints = make(map[string]int)
+	servers = make(map[string]int)
+	for _, vs := range volumes {
+		if vs == nil {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d", vs.Ip, vs.PortSsh)
+		n := len(vs.Folders)
+		if vs.IdxFolder != "" {
+			n++
+		}
+		mountpoints[key] += n
+		servers[key]++
+	}
+	return mountpoints, servers
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateS3Prerequisites(specification); err != nil {
 		return err
@@ -158,6 +184,18 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("volume") {
+		// Pre-compute per-SSH-target mountpoint demand and the
+		// volume_server entry count across every spec. With
+		// --volume-server-shape=per-disk plan emits N entries on the
+		// same target each carrying one folder; the per-spec allowlist
+		// check would clear each individually even when their sum
+		// exceeds the planner's approved-disk count for that target.
+		// The aggregate map lets DeployVolumeServer compare against
+		// the host total instead. The entry count is a separate map
+		// so the error wording can name the actual server count
+		// regardless of folder shape.
+		m.requiredDisksByTarget, m.volumeServerCountByTarget = computeVolumeTargetDemand(specification.VolumeServers)
+
 		for index, volumeSpec := range specification.VolumeServers {
 			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {

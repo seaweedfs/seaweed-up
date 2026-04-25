@@ -143,6 +143,42 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.Concurrency = opts.Concurrency
 	mgr.Enterprise = opts.Enterprise
 
+	// If `cluster plan -o` left a deploy-disks.json sidecar alongside
+	// cluster.yaml, feed its allowlist into the manager so
+	// prepareUnmountedDisks only formats devices the planner approved.
+	// Fail-closed contract: when the spec carries the plan-generated
+	// marker AND this deploy will actually touch disks (mount-disks
+	// is on AND we're rolling out the volume role), a missing or
+	// broken sidecar is a hard error — the scan-everything fallback
+	// would format disks plan deliberately excluded. For
+	// disk-irrelevant operations (e.g. --component=master, or
+	// --mount-disks=false) we tolerate a missing sidecar so plan
+	// users can still ship master-only updates without lugging the
+	// sidecar around.
+	willTouchDisks := opts.MountDisks && (opts.Component == "" || opts.Component == "volume")
+	approved, sidecarErr := loadPlannedDeployDisks(opts.ConfigFile)
+	if sidecarErr != nil {
+		if willTouchDisks {
+			return fmt.Errorf("planned deploy disks: %w", sidecarErr)
+		}
+		// Disk-irrelevant deploy — log to stderr so the operator
+		// notices the missing sidecar but don't block the operation.
+		color.Yellow("planned deploy disks: %v (ignoring — this deploy doesn't touch disks)", sidecarErr)
+	}
+	if approved != nil {
+		mgr.PlannedDisksBySSHTarget = approved
+	}
+	// Mark the manager as plan-generated independently of the sidecar
+	// load. The runtime mountpoint check in DeployVolumeServer fires
+	// on this flag so a `--mount-disks=false` deploy without a sidecar
+	// still gets fail-closed treatment for plan-generated specs (the
+	// volume daemon would otherwise start with -dir paths that are
+	// regular rootfs directories). Hand-written cluster.yaml files
+	// (no marker) leave the flag false and take the legacy path.
+	if planGenerated, _ := isPlanGeneratedSpec(opts.ConfigFile); planGenerated {
+		mgr.PlanGenerated = true
+	}
+
 	// Default SSH user to current user if not specified
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()

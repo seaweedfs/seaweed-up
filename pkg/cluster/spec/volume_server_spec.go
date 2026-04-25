@@ -7,12 +7,21 @@ import (
 )
 
 type VolumeServerSpec struct {
-	Ip                 string                 `yaml:"ip"`
-	PortSsh            int                    `yaml:"port.ssh" default:"22"`
-	IpBind             string                 `yaml:"ip.bind,omitempty"`
-	IpPublic           string                 `yaml:"ip.public,omitempty"`
-	Port               int                    `yaml:"port" default:"8080"`
-	PortGrpc           int                    `yaml:"port.grpc" default:"19333"`
+	Ip       string `yaml:"ip"`
+	PortSsh  int    `yaml:"port.ssh" default:"22"`
+	IpBind   string `yaml:"ip.bind,omitempty"`
+	IpPublic string `yaml:"ip.public,omitempty"`
+	Port     int    `yaml:"port" default:"8080"`
+	PortGrpc int    `yaml:"port.grpc" default:"19333"`
+	// IdxFolder, when non-empty, is the directory `weed volume`
+	// stores .idx files in (the `-dir.idx` flag). Pointing this at
+	// a small fast disk while leaving Folders on bulk-storage HDDs
+	// is the standard SeaweedFS tiering for hosts with mixed disks
+	// — see the volume.idx field in the upstream helm chart.
+	// `cluster plan` auto-populates this when defaults.disk.auto_idx_tier
+	// is set on the inventory; otherwise an operator can hand-edit
+	// the field after plan.
+	IdxFolder          string                 `yaml:"dir.idx,omitempty"`
 	PortPublic         int                    `yaml:"port.public,omitempty"`
 	Folders            []*FolderSpec          `yaml:"folders"`
 	DataCenter         string                 `yaml:"dataCenter,omitempty"`
@@ -48,4 +57,9 @@ func (vs *VolumeServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "dir", strings.Join(dirs, ","))
 	addToBuffer(buf, "max", strings.Join(maxes, ","))
 	addToBuffer(buf, "disks", strings.Join(disks, ","))
+	// `weed volume -dir.idx=<path>` puts the per-volume .idx files in
+	// a single shared directory rather than next to the data files in
+	// each -dir entry. Used to keep indexes on a small fast disk while
+	// data lives on bulk HDDs.
+	addToBuffer(buf, "dir.idx", vs.IdxFolder)
 }

@@ -2,11 +2,23 @@ package probe
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 )
+
+// scriptedOp wraps scriptedRunner with the rest of operator.CommandOperator
+// so probeDisks (which downcasts to the full interface for
+// disks.ListBlockDevices) can be exercised with canned lsblk output.
+type scriptedOp struct {
+	scriptedRunner
+}
+
+func (s *scriptedOp) Execute(string) error                    { return fmt.Errorf("scriptedOp: Execute not supported") }
+func (s *scriptedOp) Upload(io.Reader, string, string) error  { return fmt.Errorf("scriptedOp: Upload not supported") }
+func (s *scriptedOp) UploadFile(string, string, string) error { return fmt.Errorf("scriptedOp: UploadFile not supported") }
 
 // scriptedRunner is a Runner that returns canned outputs keyed by a
 // substring match against the command. Tests register a table; the
@@ -140,6 +152,200 @@ func TestReadSpeed_negativeReturnsZero(t *testing.T) {
 	}}
 	if got := readSpeed(r, "virt0"); got != 0 {
 		t.Errorf("readSpeed: got %d, want 0 for -1 kernel report", got)
+	}
+}
+
+func TestProbeFstab_parsesEntries(t *testing.T) {
+	// Confirm that probeFstab picks up UUID= and /dev/ entries and
+	// ignores comments / LABEL= / blank lines.
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "/etc/fstab", out: `# /etc/fstab — generated
+UUID=abc-123 /data1 ext4 noatime 0 2
+UUID="def-456" /data2 ext4 defaults 0 2
+/dev/sdd /home ext4 defaults 0 2
+LABEL=swap none swap sw 0 0
+proc /proc proc defaults 0 0
+
+# trailing comment
+`},
+	}}
+	byUUID, byPath := probeFstab(r)
+	if got := byUUID["abc-123"]; got != "/data1" {
+		t.Errorf("byUUID[abc-123] = %q, want /data1", got)
+	}
+	if got := byUUID["def-456"]; got != "/data2" {
+		t.Errorf("byUUID[def-456] (quoted form) = %q, want /data2", got)
+	}
+	if got := byPath["/dev/sdd"]; got != "/home" {
+		t.Errorf("byPath[/dev/sdd] = %q, want /home", got)
+	}
+	if _, ok := byUUID["swap"]; ok {
+		t.Error("LABEL= entries should not appear in byUUID")
+	}
+}
+
+func TestProbeFstab_unreadableReturnsEmpty(t *testing.T) {
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "/etc/fstab", err: fmt.Errorf("cat: /etc/fstab: Permission denied")},
+	}}
+	byUUID, byPath := probeFstab(r)
+	if len(byUUID) != 0 || len(byPath) != 0 {
+		t.Errorf("expected empty maps on read error, got %d/%d entries", len(byUUID), len(byPath))
+	}
+}
+
+func TestProbeDisks_marksAWSNitroEphemeral(t *testing.T) {
+	// AWS Nitro instance store reports MODEL "Amazon EC2 NVMe Instance
+	// Storage"; EBS reports "Amazon Elastic Block Store". Verify the
+	// model-string heuristic flags only the instance-store disk.
+	lsblkOut := strings.Join([]string{
+		`KNAME="nvme0n1" PATH="/dev/nvme0n1" SIZE="500107862016" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="259:0" FSUSED="" ROTA="0" MODEL="Amazon Elastic Block Store"`,
+		`KNAME="nvme1n1" PATH="/dev/nvme1n1" SIZE="500107862016" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="259:1" FSUSED="" ROTA="0" MODEL="Amazon EC2 NVMe Instance Storage"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/nvme*"})
+	if len(disks) != 2 {
+		t.Fatalf("got %d disks, want 2", len(disks))
+	}
+	for _, d := range disks {
+		switch d.Path {
+		case "/dev/nvme0n1":
+			if d.Ephemeral {
+				t.Errorf("EBS disk %s wrongly flagged ephemeral", d.Path)
+			}
+		case "/dev/nvme1n1":
+			if !d.Ephemeral {
+				t.Errorf("instance-store disk %s should be ephemeral", d.Path)
+			}
+		}
+	}
+}
+
+func TestProbeDisks_marksGCPLocalSSDEphemeral(t *testing.T) {
+	// GCP local SSDs are reachable as /dev/disk/by-id/google-local-*
+	// symlinks. The probe runs a small shell snippet to resolve those
+	// symlinks to /dev/sdX paths and uses that to flag ephemeral.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sda" PATH="/dev/sda" SIZE="1000000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:0" FSUSED="" ROTA="0" MODEL="PersistentDisk"`,
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="375000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="0" MODEL="EphemeralDisk"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+		{contains: "google-local", out: "/dev/sdb\n"},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 2 {
+		t.Fatalf("got %d disks, want 2", len(disks))
+	}
+	for _, d := range disks {
+		switch d.Path {
+		case "/dev/sda":
+			if d.Ephemeral {
+				t.Errorf("PD disk %s wrongly flagged ephemeral", d.Path)
+			}
+		case "/dev/sdb":
+			if !d.Ephemeral {
+				t.Errorf("local SSD %s should be ephemeral", d.Path)
+			}
+		}
+	}
+}
+
+func TestProbeGCPLocalSSDPaths_emptyOnNoMatch(t *testing.T) {
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "google-local", err: fmt.Errorf("no such file")},
+	}}
+	if got := probeGCPLocalSSDPaths(r); len(got) != 0 {
+		t.Errorf("expected empty map, got %+v", got)
+	}
+}
+
+func TestProbeDisks_picksUpFstabClaim(t *testing.T) {
+	// A disk with FSType set but no current MountPoint should pick up
+	// its mountpoint from /etc/fstab so the planner can recognize it
+	// as cluster-owned even before the mount is realized.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="500000000000" LABEL="" UUID="11111111-aaaa-bbbb-cccc-222222222222" FSTYPE="ext4" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="0" MODEL="Data SSD"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+		{contains: "/etc/fstab", out: "UUID=11111111-aaaa-bbbb-cccc-222222222222 /data1 ext4 noatime 0 2\n"},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1", len(disks))
+	}
+	if disks[0].FstabMountPoint != "/data1" {
+		t.Errorf("FstabMountPoint = %q, want /data1", disks[0].FstabMountPoint)
+	}
+	if disks[0].MountPoint != "" {
+		t.Errorf("MountPoint = %q, want empty (kernel sees it unmounted)", disks[0].MountPoint)
+	}
+}
+
+func TestIsPartitionOf(t *testing.T) {
+	cases := []struct {
+		part, parent string
+		want         bool
+	}{
+		// SCSI / SATA / virtio: parent + digits.
+		{"/dev/sda1", "/dev/sda", true},
+		{"/dev/sda12", "/dev/sda", true},
+		{"/dev/vdb3", "/dev/vdb", true},
+
+		// NVMe / loop / mmcblk: parent + 'p' + digits.
+		{"/dev/nvme0n1p1", "/dev/nvme0n1", true},
+		{"/dev/nvme0n1p15", "/dev/nvme0n1", true},
+		{"/dev/loop0p1", "/dev/loop0", true},
+
+		// Regression: nvme0n10 is NOT a partition of nvme0n1 on
+		// multi-namespace hosts.
+		{"/dev/nvme0n10", "/dev/nvme0n1", false},
+		{"/dev/nvme0n10p1", "/dev/nvme0n1", false},
+		{"/dev/sda12", "/dev/sda1", false}, // sda12 is on sda, not on sda1
+
+		// Edge cases.
+		{"/dev/sda", "/dev/sda", false},   // identical → not a partition
+		{"/dev/sdap", "/dev/sda", false},  // 'p' alone with no digits
+		{"/dev/sdaa", "/dev/sda", false},  // letter suffix
+		{"/dev/sda1x", "/dev/sda", false}, // mixed letter / digit
+	}
+	for _, tc := range cases {
+		if got := isPartitionOf(tc.part, tc.parent); got != tc.want {
+			t.Errorf("isPartitionOf(%q, %q) = %v, want %v", tc.part, tc.parent, got, tc.want)
+		}
+	}
+}
+
+func TestProbeDisks_dropsPartitionedParent(t *testing.T) {
+	// Regression: boot disks (e.g. /dev/sda with /dev/sda1 mounted at /)
+	// used to pass through as eligible disks in the probe because
+	// probeDisks only filtered by Type=="disk". The parent carries no
+	// direct FSType / MountPoint — those live on the partitions — so a
+	// naive filter would happily offer the boot disk up for mkfs.
+	//
+	// lsblk output format is KEY="value" space-separated pairs, one
+	// record per line.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sda" PATH="/dev/sda" SIZE="500000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:0" FSUSED="" ROTA="1" MODEL="Host Boot Disk"`,
+		`KNAME="sda1" PATH="/dev/sda1" SIZE="499000000000" LABEL="" UUID="11111111-1111-1111-1111-111111111111" FSTYPE="ext4" TYPE="part" MOUNTPOINT="/" MAJ:MIN="8:1" FSUSED="" ROTA="1" MODEL=""`,
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="1000000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="1" MODEL="Data HDD"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 1 {
+		t.Fatalf("expected 1 eligible disk (partitioned parent dropped), got %d: %+v", len(disks), disks)
+	}
+	if disks[0].Path != "/dev/sdb" {
+		t.Errorf("got %q, want /dev/sdb", disks[0].Path)
 	}
 }
 

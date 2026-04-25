@@ -1,0 +1,23 @@
+defaults:
+  ssh:
+    user: ubuntu
+    port: 22
+  disk:
+    disk_type_auto: true
+
+hosts:
+  - ip: 10.0.0.11
+    roles: [master, filer]
+
+  - ip: 10.0.0.21
+    roles: [volume]
+
+  - ip: 10.0.0.22
+    roles: [volume]
+
+  - ip: 10.0.0.31
+    roles: [s3]
+
+  - ip: 10.0.0.41
+    roles: [external]
+    tag: postgres-metadata
