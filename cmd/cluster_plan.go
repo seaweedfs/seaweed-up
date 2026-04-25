@@ -244,12 +244,19 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("write %s: %w", deployDisksFile, err)
 	}
 
-	mode := "wrote"
+	// Headline counts come from the freshly-Generated spec, which
+	// reflects current inventory only. In merge mode the on-disk file
+	// can also carry orphan entries that won't show up in `spec`, so
+	// the counts would under-report what cluster.yaml actually
+	// contains. Disambiguate the wording by mode: greenfield = file
+	// contents (counts match); merge = inventory contents (orphans
+	// show up separately in printMergeReport's WARN lines).
+	headline := "wrote %s (%d masters, %d volumes, %d filers)"
 	if mergeMode {
-		mode = "merged"
+		headline = "merged %s (inventory: %d masters, %d volumes, %d filers)"
 	}
-	fmt.Fprintf(os.Stderr, "%s %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
-		mode, opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
+	fmt.Fprintf(os.Stderr, headline+"\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
+		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
 		factsFile, len(facts),
 		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
 	if mergeReport != nil {
