@@ -137,8 +137,20 @@ func probeMemory(r Runner) uint64 {
 	return kb * 1024
 }
 
+// defaultDevicePrefixes is the fallback set of /dev path prefixes the
+// probe (and manager) consider when the inventory doesn't supply
+// `defaults.disk.device_globs`. Covers:
+//
+//   - /dev/sd*    — SCSI / SATA / paravirtualized AWS EBS (older gens)
+//   - /dev/nvme*  — NVMe SSDs and Nitro-generation AWS EBS
+//   - /dev/xvd*   — Xen virtual disks: AWS EBS on older t2/m3/c3
+//                   instance generations and some XenServer / XCP-ng
+//                   environments. Adding the prefix is harmless on
+//                   non-Xen systems (no devices match).
+var defaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd"}
+
 // probeDisks wraps disks.ListBlockDevices with the inventory-provided
-// device globs (defaulting to /dev/sd + /dev/nvme, matching the existing
+// device globs (defaulting to defaultDevicePrefixes, matching the
 // prepareUnmountedDisks behavior).
 func probeDisks(r Runner, globs []string) []DiskFact {
 	// disks.ListBlockDevices takes an operator.CommandOperator, not our
@@ -151,7 +163,7 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	}
 	prefixes := globs
 	if len(prefixes) == 0 {
-		prefixes = []string{"/dev/sd", "/dev/nvme"}
+		prefixes = defaultDevicePrefixes
 	} else {
 		// The inventory format uses globs (/dev/sd*); lsblk parsing
 		// filters by prefix. Strip any trailing '*' for the comparison.

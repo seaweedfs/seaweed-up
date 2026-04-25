@@ -83,7 +83,10 @@ func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, inde
 
 func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 	println("prepareUnmountedDisks...")
-	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme"})
+	// /dev/xvd covers Xen-paravirtualized hosts (older AWS t2/m3/c3
+	// generations, some XenServer/XCP-ng environments). Harmless on
+	// non-Xen systems — no devices match.
+	devices, mountpoints, err := disks.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme", "/dev/xvd"})
 	if err != nil {
 		return fmt.Errorf("list device: %v", err)
 	}
