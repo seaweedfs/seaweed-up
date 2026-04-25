@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -27,10 +30,12 @@ const envFilerBackend = "SEAWEEDUP_FILER_BACKEND"
 // ClusterPlanOptions holds flags for `cluster plan`.
 //
 // Two modes:
-//  1. --json (default, Phase 1) — probe and emit HostFacts to stdout.
-//  2. -o cluster.yaml (Phase 2, greenfield) — probe and synthesize a
-//     reviewable cluster.yaml. Refuses to overwrite an existing file
-//     unless --overwrite is passed; append-merge lands in Phase 3.
+//  1. --json (default when -o is absent) — probe and emit HostFacts
+//     to stdout.
+//  2. -o cluster.yaml — probe and synthesize a reviewable
+//     cluster.yaml. When the file exists the run append-merges in
+//     place, preserving comments and operator hand-edits;
+//     --overwrite regenerates from scratch.
 //
 // See docs/design/inventory-and-plan.md for the full design.
 type ClusterPlanOptions struct {
@@ -62,21 +67,21 @@ memory, and network facts, and either:
   - synthesizes a reviewable cluster.yaml (-o cluster.yaml) that the
     existing ` + "`cluster deploy`" + ` command consumes unchanged.
 
-Phase 2 lands the synthesis path in greenfield mode only: the command
-refuses to overwrite an existing -o file unless --overwrite is passed.
-Phase 3 will add append-merge so growing the inventory only appends to
-the generated cluster.yaml without reordering or rewriting existing
-entries. See docs/design/inventory-and-plan.md.
+When -o points at an existing cluster.yaml the run append-merges in
+place: new inventory hosts are appended at each section's tail and
+existing entries (along with operator hand-edits and comments) are
+preserved byte-for-byte. Pass --overwrite to regenerate from scratch
+instead. See docs/design/inventory-and-plan.md.
 
 Purely read-only on the target hosts.`,
 		Example: `  # Probe-only (JSON to stdout)
   seaweed-up cluster plan -i inventory.yaml > facts.json
 
-  # Synthesize a cluster.yaml for review
+  # Synthesize a cluster.yaml for review (greenfield or append-merge)
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
       --filer-backend-file /etc/seaweed-up/filer.dsn
 
-  # Overwrite an existing cluster.yaml (Phase 3 will replace this)
+  # Force regeneration, discarding any existing cluster.yaml
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --overwrite`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterPlan(cmd, opts)
@@ -85,7 +90,7 @@ Purely read-only on the target hosts.`,
 
 	cmd.Flags().StringVarP(&opts.InventoryFile, "inventory", "i", "", "inventory file (required)")
 	cmd.Flags().StringVarP(&opts.OutputFile, "output", "o", "", "write a synthesized cluster.yaml to this path")
-	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite -o if it already exists (Phase 3 will land append-merge)")
+	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "regenerate -o from scratch instead of append-merging into the existing file")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "write probe facts as JSON to stdout (default when -o is absent)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 10, "max concurrent probes")
 
@@ -116,17 +121,31 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("--json and -o are mutually exclusive; use one")
 	}
 
-	// Greenfield guard: refuse to overwrite an existing cluster.yaml,
-	// its facts.json sidecar, or its deploy-disks.json sidecar until
-	// Phase 3 lands append-merge. --overwrite opts out for hand-edits
-	// the operator has already copied elsewhere.
+	// Three modes for `-o cluster.yaml`:
+	//   1. file does not exist        → greenfield (yaml.Marshal)
+	//   2. file exists, no --overwrite → append-merge (preserve bytes)
+	//   3. file exists, --overwrite    → regenerate from scratch
+	// Sidecars (facts.json, deploy-disks.json) are always rewritten
+	// from the latest probe — they're audit + deploy contracts, not
+	// hand-edit surfaces, so byte-stability isn't a goal there.
 	factsFile := factsFilePath(opts.OutputFile)
 	deployDisksFile := deployDisksFilePath(opts.OutputFile)
+	mergeMode := false
 	if opts.OutputFile != "" && !opts.Overwrite {
-		for _, p := range []string{opts.OutputFile, factsFile, deployDisksFile} {
-			if _, statErr := os.Stat(p); statErr == nil {
-				return fmt.Errorf("%s already exists; pass --overwrite to replace (append-merge lands in Phase 3)", p)
-			}
+		// Discriminate ErrNotExist (legitimate greenfield) from other
+		// stat failures (EACCES, EIO, NFS hiccup, …). Treating every
+		// non-nil error as "no file" would silently fall back to the
+		// greenfield path and the later WriteFile would clobber the
+		// hand-edited cluster.yaml as soon as access was restored —
+		// the exact data-loss path append-merge exists to prevent.
+		_, statErr := os.Stat(opts.OutputFile)
+		switch {
+		case statErr == nil:
+			mergeMode = true
+		case errors.Is(statErr, fs.ErrNotExist):
+			// Greenfield path; nothing to merge into.
+		default:
+			return fmt.Errorf("stat %s: %w", opts.OutputFile, statErr)
 		}
 	}
 
@@ -174,22 +193,52 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// inventory excludes and ephemeral filtering).
 	allowlist := plan.EligibleDisks(inv, factsByTarget)
 	printSkipReport(report)
-	body, err := plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
-	if err != nil {
-		return fmt.Errorf("marshal cluster spec: %w", err)
+
+	var (
+		body        []byte
+		mergeReport *plan.MergeReport
+	)
+	if mergeMode {
+		// Append-merge into the existing file. Merge() guarantees
+		// byte-stable output for unchanged inventory; new hosts are
+		// appended at each section's tail and orphans surface in
+		// mergeReport without mutating existing entries. (Drift
+		// detection lands in Phase 4 alongside --refresh-host.)
+		existing, readErr := os.ReadFile(opts.OutputFile)
+		if readErr != nil {
+			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
+		}
+		body, mergeReport, err = plan.Merge(existing, spec, plan.MergeOptions{
+			Marshal: plan.MarshalOptions{InventoryPath: opts.InventoryFile},
+		})
+		if err != nil {
+			return fmt.Errorf("merge into existing cluster spec: %w", err)
+		}
+	} else {
+		body, err = plan.Marshal(spec, plan.MarshalOptions{InventoryPath: opts.InventoryFile})
+		if err != nil {
+			return fmt.Errorf("marshal cluster spec: %w", err)
+		}
 	}
 	// The generated cluster.yaml may carry the filer metadata-store DSN
 	// (username + password) in config:, so restrict to the deploying
 	// user. Matches gosec G306 / CWE-276.
+	//
+	// G703 fires on this line because in merge mode we ALSO read from
+	// opts.OutputFile a few lines above; gosec's taint analysis then
+	// flags writing back to the same path as a potential traversal.
+	// The path is the operator's own --output flag — there's no
+	// untrusted data flow here. Suppress the false positive.
+	// #nosec G703 -- opts.OutputFile is a user-supplied CLI flag
 	if err := os.WriteFile(opts.OutputFile, body, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", opts.OutputFile, err)
 	}
 
 	// Write the probe facts as a sidecar JSON file alongside cluster.yaml.
 	// Useful for debugging (operators can see what plan saw without
-	// re-probing) and as audit / reproducibility input for Phase 3
-	// append-merge. Same 0o600 — facts include hostnames, NIC addresses,
-	// and disk model strings (host-enumeration data).
+	// re-probing) and as an audit record for the next append-merge run.
+	// Same 0o600 — facts include hostnames, NIC addresses, and disk
+	// model strings (host-enumeration data).
 	factsBody, err := json.MarshalIndent(facts, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal facts: %w", err)
@@ -213,11 +262,59 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		return fmt.Errorf("write %s: %w", deployDisksFile, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "wrote %s (%d masters, %d volumes, %d filers)\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
+	// Headline counts come from the freshly-Generated spec, which
+	// reflects current inventory only. In merge mode the on-disk file
+	// can also carry orphan entries that won't show up in `spec`, so
+	// the counts would under-report what cluster.yaml actually
+	// contains. Disambiguate the wording by mode: greenfield = file
+	// contents (counts match); merge = inventory contents (orphans
+	// show up separately in printMergeReport's WARN lines).
+	headline := "wrote %s (%d masters, %d volumes, %d filers)"
+	if mergeMode {
+		headline = "merged %s (inventory: %d masters, %d volumes, %d filers)"
+	}
+	fmt.Fprintf(os.Stderr, headline+"\nwrote %s (%d host facts)\nwrote %s (%d targets, %d eligible disks)\n",
 		opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
 		factsFile, len(facts),
 		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
+	printMergeReport(mergeReport) // no-op when nil (greenfield path)
 	return nil
+}
+
+// printMergeReport surfaces append-merge outcomes the operator should
+// see: appended new hosts and orphan entries (in the YAML but not
+// produced by this plan run — removed from inventory, probe failed,
+// or role was dropped because no eligible disks were found). All go
+// to stderr to keep stdout reserved for --json mode and because
+// they're advisory. Drift detection (warn when a previously-emitted
+// entry's facts changed) is deferred to Phase 4 alongside
+// `--refresh-host`.
+func printMergeReport(r *plan.MergeReport) {
+	if r == nil {
+		return
+	}
+	// Sort section names so the per-section "appended to …" lines
+	// come out in a stable order. Iterating r.Appended directly would
+	// pick up Go's randomized map order, making the operator-facing
+	// output non-deterministic across runs.
+	sections := make([]string, 0, len(r.Appended))
+	for s := range r.Appended {
+		sections = append(sections, s)
+	}
+	sort.Strings(sections)
+	for _, section := range sections {
+		keys := r.Appended[section]
+		if len(keys) == 0 {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  appended to %s: %s\n", section, strings.Join(keys, ", "))
+	}
+	for _, o := range r.Orphaned {
+		fmt.Fprintf(os.Stderr, "  WARN: orphan in cluster.yaml (not produced by this plan run — removed from inventory, probe failed, or role was dropped): %s\n", o)
+	}
+	for _, u := range r.Unparseable {
+		fmt.Fprintf(os.Stderr, "  WARN: unparseable existing entry — fresh inventory hosts won't dedupe against it: %s\n", u)
+	}
 }
 
 func countAllowlistDisks(a plan.DeployDiskAllowlist) int {

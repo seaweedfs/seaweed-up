@@ -100,11 +100,27 @@ func TestClusterPlanGreenfield(t *testing.T) {
 		t.Errorf("expected stderr to report the volume-role drop; got:\n%s", out)
 	}
 
-	// --overwrite must replace an existing file. Without --overwrite,
-	// the second run should refuse.
-	noFlagOut, noFlagErr := runPlan(h, invPath, outPath)
-	if noFlagErr == nil {
-		t.Errorf("expected refusal on existing -o without --overwrite; output:\n%s", noFlagOut)
+	// Phase 3: a second run without --overwrite append-merges into the
+	// existing file. With the same inventory and facts, the merged
+	// cluster.yaml must equal the first run's output byte-for-byte
+	// (no-op stability guarantee).
+	originalBytes := append([]byte(nil), data...)
+	mergeOut, mergeErr := runPlan(h, invPath, outPath)
+	if mergeErr != nil {
+		t.Fatalf("cluster plan (re-run / append-merge) failed: %v\noutput:\n%s", mergeErr, mergeOut)
+	}
+	mergedBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read %s after merge: %v", outPath, err)
+	}
+	if string(mergedBytes) != string(originalBytes) {
+		t.Errorf("no-op merge changed cluster.yaml bytes\n--- before ---\n%s\n--- after ---\n%s",
+			originalBytes, mergedBytes)
+	}
+	// With identical inventory there should be no orphans either.
+	// printMergeReport emits "WARN: orphan" on stderr; flag any leak.
+	if strings.Contains(mergeOut, "WARN: orphan") {
+		t.Errorf("no-op merge surfaced an orphan warning; stderr was:\n%s", mergeOut)
 	}
 
 	overwriteOut, overwriteErr := runPlan(h, invPath, outPath, "--overwrite")

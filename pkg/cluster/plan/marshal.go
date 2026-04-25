@@ -62,9 +62,9 @@ func Marshal(spec *spec.Specification, opts MarshalOptions) ([]byte, error) {
 		fmt.Fprintf(&header, " from %s", opts.InventoryPath)
 	}
 	fmt.Fprintf(&header, " on %s.\n", now.Format(time.RFC3339))
-	header.WriteString("# Safe to hand-edit. Re-running plan against this file currently\n")
-	header.WriteString("# refuses to overwrite unless --overwrite is passed; Phase 3 will add\n")
-	header.WriteString("# append-merge that preserves comments and hand edits.\n")
+	header.WriteString("# Safe to hand-edit. Re-running plan against this file appends new\n")
+	header.WriteString("# inventory hosts in place and preserves existing entries (and your\n")
+	header.WriteString("# edits) byte-for-byte; pass --overwrite to regenerate from scratch.\n")
 
 	// If any filer emitted an empty Config (no --filer-backend supplied),
 	// call it out at the top so operators know where to fill in.
