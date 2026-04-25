@@ -151,10 +151,10 @@ func (m *Manager) verifyVolumeFoldersAreMountpoints(op operator.CommandOperator,
 	if len(missing) > 0 {
 		return fmt.Errorf(
 			"plan-approved volume folder(s) are not mountpoints after prepare on this host: %v — "+
-				"starting weed volume now would write data into the root filesystem. "+
-				"Likely cause: a device drifted between plan and deploy (acquired a partition, "+
-				"was mounted elsewhere, or disappeared). Re-run "+
-				"`cluster plan -o <spec>.yaml --overwrite` to refresh the sidecar, then re-deploy.",
+				"starting weed volume now would write data into the root filesystem; "+
+				"likely cause: a device drifted between plan and deploy (acquired a partition, "+
+				"was mounted elsewhere, or disappeared); re-run "+
+				"`cluster plan -o <spec>.yaml --overwrite` to refresh the sidecar, then re-deploy",
 			missing)
 	}
 	return nil
