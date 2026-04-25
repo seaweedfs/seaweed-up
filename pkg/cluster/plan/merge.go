@@ -285,17 +285,11 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 	for _, e := range fresh {
 		freshKeys[e.key] = struct{}{}
 	}
-	recordOrphansAndUnparseable(seqNode, sectionKey, keyOfNode, freshKeys, report)
+	existingKeys := recordOrphansAndUnparseable(seqNode, sectionKey, keyOfNode, freshKeys, report)
 
-	// Append fresh entries that aren't already present. The dedup
-	// re-walks seqNode rather than reusing the index built above so
-	// the helper can be called from both branches of mergeSection.
-	existingKeys := map[string]struct{}{}
-	for _, item := range seqNode.Content {
-		if k := keyOfNode(item); k != "" {
-			existingKeys[k] = struct{}{}
-		}
-	}
+	// Append fresh entries that aren't already present, reusing the
+	// dedup index recordOrphansAndUnparseable built while it walked
+	// seqNode.Content for the orphan/unparseable check.
 	for _, e := range fresh {
 		if _, ok := existingKeys[e.key]; ok {
 			// Already present; never touch.
@@ -309,13 +303,17 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 }
 
 // recordOrphansAndUnparseable walks seqNode's children, classifying
-// each as a known key (recorded in the orphan check), an unparseable
+// each as a known key (added to the returned existingKeys set and
+// checked against freshKeys for orphan reporting), an unparseable
 // shape (recorded in MergeReport.Unparseable), or a match against
-// freshKeys (silent). Pass freshKeys=nil to skip orphan reporting
+// freshKeys (silent). Returns the set of parseable existing keys so
+// the append loop in mergeSection can dedupe without re-walking
+// seqNode.Content. Pass freshKeys=nil to skip orphan reporting
 // entirely (no inventory data to compare against). Pass an empty map
 // to report every parseable existing entry as an orphan (used when
 // the section was wholly removed from inventory).
-func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNode func(*yaml.Node) string, freshKeys map[string]struct{}, report *MergeReport) {
+func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNode func(*yaml.Node) string, freshKeys map[string]struct{}, report *MergeReport) map[string]struct{} {
+	existingKeys := map[string]struct{}{}
 	var orphans []string
 	for _, item := range seqNode.Content {
 		k := keyOfNode(item)
@@ -324,6 +322,7 @@ func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNod
 				fmt.Sprintf("%s: line %d", sectionKey, item.Line))
 			continue
 		}
+		existingKeys[k] = struct{}{}
 		if freshKeys == nil {
 			continue
 		}
@@ -333,6 +332,7 @@ func recordOrphansAndUnparseable(seqNode *yaml.Node, sectionKey string, keyOfNod
 	}
 	sort.Strings(orphans) // deterministic for goldens / human reading
 	report.Orphaned = append(report.Orphaned, orphans...)
+	return existingKeys
 }
 
 // findExistingSection looks up sectionKey under root and returns the
