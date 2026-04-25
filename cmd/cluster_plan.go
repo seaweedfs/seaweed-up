@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -278,7 +279,17 @@ func printMergeReport(r *plan.MergeReport) {
 	if r == nil {
 		return
 	}
-	for section, keys := range r.Appended {
+	// Sort section names so the per-section "appended to …" lines
+	// come out in a stable order. Iterating r.Appended directly would
+	// pick up Go's randomized map order, making the operator-facing
+	// output non-deterministic across runs.
+	sections := make([]string, 0, len(r.Appended))
+	for s := range r.Appended {
+		sections = append(sections, s)
+	}
+	sort.Strings(sections)
+	for _, section := range sections {
+		keys := r.Appended[section]
 		if len(keys) == 0 {
 			continue
 		}
