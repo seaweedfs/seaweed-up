@@ -3,9 +3,18 @@ package manager
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
+
+// prepareDisksGate pairs a sync.Once with the result of the single
+// prepareUnmountedDisks call so all volume_servers on the same host see
+// the same outcome instead of each independently retrying.
+type prepareDisksGate struct {
+	once sync.Once
+	err  error
+}
 
 // GitHub repos that host SeaweedFS release tarballs. Both repos are
 // public; the Manager picks between them via the Enterprise flag.
@@ -54,8 +63,25 @@ type Manager struct {
 	EnvoyVersion       string // envoy release to pin; when empty the latest is looked up from github.com/envoyproxy/envoy
 	SshPort            int
 	PrepareVolumeDisks bool
-	HostPrep           bool
-	ForceRestart       bool
+	// PlannedDisksByHost is the optional plan-side allowlist of block
+	// devices deploy is allowed to mkfs+mount on each host. Keyed by
+	// host IP; the value is the set of /dev paths plan classified as
+	// eligible (fresh or claimed-at-/dataN, not ephemeral, not
+	// foreign). When non-nil, prepareUnmountedDisks restricts itself
+	// to disks in the corresponding host's set; when nil it falls
+	// back to its historical "every unmounted prefix-matching disk"
+	// behavior (preserves backwards compatibility for hand-written
+	// cluster.yaml files that don't ship a plan-emitted facts.json).
+	PlannedDisksByHost map[string]map[string]struct{}
+	// prepareDisksOnce gates prepareUnmountedDisks per host IP. With
+	// the per-disk volume_server shape, deploy fans out multiple
+	// volume_server entries on the same host concurrently — each
+	// would otherwise call prepareUnmountedDisks and race on
+	// mkfs/mount assignment. The sync.Once per IP makes the disk
+	// prep effectively a per-host pre-step.
+	prepareDisksOnce sync.Map // ip -> *prepareDisksGate
+	HostPrep         bool
+	ForceRestart     bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the
 	// public enterprise release repo (github.com/seaweedfs/artifactory)
 	// instead of the standard OSS repo (github.com/seaweedfs/seaweedfs).

@@ -126,13 +126,6 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		}
 	}
 
-	// Resolve the filer DSN (if any) before we do any SSH work — a
-	// malformed DSN should fail fast.
-	backend, err := resolveFilerBackend(opts)
-	if err != nil {
-		return err
-	}
-
 	hosts := inv.ProbeHosts()
 	if len(hosts) == 0 {
 		return fmt.Errorf("no probeable hosts in %s (all entries are 'external'?)", opts.InventoryFile)
@@ -147,6 +140,15 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(facts)
+	}
+
+	// Synthesis path needs the filer DSN. Resolve here (after the
+	// json-only branch) so a stray $SEAWEEDUP_FILER_BACKEND in the
+	// environment can't fail a probe-only run with a backend it
+	// doesn't even need.
+	backend, err := resolveFilerBackend(opts)
+	if err != nil {
+		return err
 	}
 
 	// Synthesize a cluster.yaml from the facts + inventory.
@@ -207,6 +209,66 @@ func factsFilePath(outputFile string) string {
 		}
 	}
 	return outputFile + ".facts.json"
+}
+
+// loadPlannedDisksFromFacts reads the facts.json sidecar that
+// `cluster plan -o` writes alongside cluster.yaml and returns the
+// per-host set of disk paths deploy is allowed to mkfs+mount.
+// Returns nil when the sidecar is missing, unreadable, or empty —
+// callers fall back to the historical "scan every prefix-matching
+// disk" behavior. The disk-classification rules here mirror
+// pkg/cluster/plan.deriveFolders so plan and deploy agree on which
+// devices are eligible.
+func loadPlannedDisksFromFacts(specPath string) map[string]map[string]struct{} {
+	data, err := os.ReadFile(factsFilePath(specPath))
+	if err != nil {
+		return nil
+	}
+	var facts []probe.HostFacts
+	if err := json.Unmarshal(data, &facts); err != nil {
+		return nil
+	}
+	out := make(map[string]map[string]struct{})
+	for _, h := range facts {
+		if h.ProbeError != "" {
+			continue
+		}
+		approved := make(map[string]struct{})
+		for _, d := range h.Disks {
+			if d.Ephemeral {
+				continue
+			}
+			// Effective mountpoint: kernel's view first, fstab as
+			// fallback. Same logic as plan's classifier.
+			effective := d.MountPoint
+			if effective == "" {
+				effective = d.FstabMountPoint
+			}
+			if effective != "" {
+				// Foreign mounts (anything not /data\d+) are excluded
+				// from the allowlist. Cluster-claimed /dataN mounts are
+				// approved — deploy will idempotently leave them be.
+				if !strings.HasPrefix(effective, "/data") {
+					continue
+				}
+				approved[d.Path] = struct{}{}
+				continue
+			}
+			if d.FSType != "" {
+				// Has a filesystem but no claim — plan skipped it,
+				// deploy should too.
+				continue
+			}
+			approved[d.Path] = struct{}{}
+		}
+		if len(approved) > 0 {
+			out[h.IP] = approved
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // printSkipReport surfaces Generate's skip decisions to stderr so the

@@ -50,17 +50,26 @@ func postgresFromURL(u *url.URL) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	database := strings.TrimPrefix(u.Path, "/")
+	if database == "" {
+		// filer.Postgres.Validate requires database; reject early so
+		// plan doesn't write a cluster.yaml deploy will turn around
+		// and refuse.
+		return nil, fmt.Errorf("postgres DSN missing database (e.g. postgres://user@host/dbname)")
+	}
+	user := u.User
+	if user == nil || user.Username() == "" {
+		return nil, fmt.Errorf("postgres DSN missing username (filer.Postgres.Validate requires it)")
+	}
 	out := map[string]interface{}{
 		"type":     "postgres",
 		"hostname": host,
 		"port":     port,
-		"database": strings.TrimPrefix(u.Path, "/"),
+		"database": database,
+		"username": user.Username(),
 	}
-	if user := u.User; user != nil {
-		out["username"] = user.Username()
-		if pw, set := user.Password(); set {
-			out["password"] = pw
-		}
+	if pw, set := user.Password(); set {
+		out["password"] = pw
 	}
 	// sslmode is a postgres-specific conventional query param; forward it
 	// through when present. Anything else is ignored — operators can
@@ -76,17 +85,23 @@ func mysqlFromURL(u *url.URL) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	database := strings.TrimPrefix(u.Path, "/")
+	if database == "" {
+		return nil, fmt.Errorf("mysql DSN missing database (e.g. mysql://user@host/dbname)")
+	}
+	user := u.User
+	if user == nil || user.Username() == "" {
+		return nil, fmt.Errorf("mysql DSN missing username (filer.MySQL.Validate requires it)")
+	}
 	out := map[string]interface{}{
 		"type":     "mysql",
 		"hostname": host,
 		"port":     port,
-		"database": strings.TrimPrefix(u.Path, "/"),
+		"database": database,
+		"username": user.Username(),
 	}
-	if user := u.User; user != nil {
-		out["username"] = user.Username()
-		if pw, set := user.Password(); set {
-			out["password"] = pw
-		}
+	if pw, set := user.Password(); set {
+		out["password"] = pw
 	}
 	return out, nil
 }

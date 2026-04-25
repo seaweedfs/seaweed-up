@@ -570,6 +570,13 @@ func TestParseFilerBackendDSN_errors(t *testing.T) {
 		{"redis non-integer db", "redis://10.0.0.41:6379/notanumber", "database path must be an integer"},
 		{"port too high", "postgres://host:99999/db", "out of range"},
 		{"port negative", "postgres://host:-1/db", "invalid port"},
+		// filer.Postgres.Validate / filer.MySQL.Validate require both
+		// username and database. Plan should reject DSNs missing
+		// either, instead of writing a cluster.yaml deploy will fail.
+		{"postgres no database", "postgres://user@host", "missing database"},
+		{"postgres no username", "postgres://host/db", "missing username"},
+		{"mysql no database", "mysql://user@host", "missing database"},
+		{"mysql no username", "mysql://host/db", "missing username"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

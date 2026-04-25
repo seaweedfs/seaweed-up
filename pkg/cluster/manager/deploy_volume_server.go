@@ -21,7 +21,7 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		volumeServerSpec.WriteToBuffer(masters, &buf)
 
 		if m.PrepareVolumeDisks {
-			if err := m.prepareUnmountedDisks(op); err != nil {
+			if err := m.prepareUnmountedDisksOnce(op, volumeServerSpec.Ip); err != nil {
 				return fmt.Errorf("prepare disks: %v", err)
 			}
 		}
@@ -34,6 +34,23 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 
 	})
 }
+
+// prepareUnmountedDisksOnce gates prepareUnmountedDisks behind a
+// per-host sync.Once. With the per-disk volume_server shape (multiple
+// volume_servers on the same IP), DeployCluster fans the deploys out
+// concurrently and each would independently call prepareUnmountedDisks,
+// racing on mkfs/mount assignment. Routing through a once-per-IP gate
+// makes disk prep effectively a per-host pre-step while keeping the
+// existing DeployVolumeServer signature.
+func (m *Manager) prepareUnmountedDisksOnce(op operator.CommandOperator, hostIP string) error {
+	v, _ := m.prepareDisksOnce.LoadOrStore(hostIP, &prepareDisksGate{})
+	gate := v.(*prepareDisksGate)
+	gate.once.Do(func() {
+		gate.err = m.prepareUnmountedDisks(op, hostIP)
+	})
+	return gate.err
+}
+
 
 // ensureVolumeFolders creates each configured -dir path on the remote host
 // before the volume server starts. SeaweedFS volume refuses to boot if any of
@@ -81,7 +98,7 @@ func (m *Manager) StopVolumeServer(volumeServerSpec *spec.VolumeServerSpec, inde
 	})
 }
 
-func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
+func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, hostIP string) error {
 	println("prepareUnmountedDisks...")
 	// Default disk prefix set, kept in sync with the planner's
 	// pkg/cluster/probe.defaultDevicePrefixes:
@@ -119,6 +136,22 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator) error {
 		}
 	}
 	fmt.Printf("disks1: %+v\n", disks)
+
+	// Honor the plan-side allowlist when available. PlannedDisksByHost
+	// is populated from the facts.json sidecar that `cluster plan`
+	// writes alongside cluster.yaml; it carries the per-host set of
+	// /dev paths plan classified as eligible (fresh + non-ephemeral
+	// + not foreign-mounted). Without this filter, a disk plan
+	// deliberately skipped (instance-store, foreign mount, exclude
+	// list) would still get formatted by deploy's blanket
+	// "every unmounted prefix-matching disk" sweep.
+	if allow, ok := m.PlannedDisksByHost[hostIP]; ok {
+		for k := range disks {
+			if _, kept := allow[k]; !kept {
+				delete(disks, k)
+			}
+		}
+	}
 
 	// remove already has mount point
 	for k, dev := range disks {

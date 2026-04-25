@@ -212,6 +212,15 @@ drift between previously-recorded facts and freshly-probed ones.
 Sidecar permissions are `0600` since facts include hostnames, NIC
 addresses, and disk model strings.
 
+`cluster deploy` reads the sidecar when present (auto-discovered
+from the `-f` path) and uses it to constrain
+`prepareUnmountedDisks` to only the disk paths plan classified as
+eligible. Without this filter, deploy's "format every unmounted
+prefix-matching disk" sweep would silently touch disks plan
+deliberately skipped (instance store, foreign mounts, fs-without-claim).
+A missing sidecar falls back to the historical scan-everything
+behavior, so hand-written `cluster.yaml` files remain unaffected.
+
 ## Plan: generation
 
 For each inventory host (skipping `external` hosts during probe):
