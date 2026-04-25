@@ -71,7 +71,14 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 		// unrelated mount between plan and deploy. Without this check,
 		// ensureVolumeFolders would mkdir the missing /data<N> on
 		// rootfs and weed volume would write data into the OS root.
-		if m.PlannedDisksBySSHTarget != nil {
+		//
+		// Gated on PlanGenerated, NOT PlannedDisksBySSHTarget: a
+		// plan-generated cluster.yaml deployed with --mount-disks=false
+		// keeps the sidecar optional and reaches DeployVolumeServer
+		// with PlannedDisksBySSHTarget==nil, but the spec still
+		// promises every -dir is a mountpoint. Without this gate the
+		// no-sidecar path would silently start weed volume on rootfs.
+		if m.PlanGenerated {
 			if err := m.verifyVolumeFoldersAreMountpoints(op, volumeServerSpec); err != nil {
 				return err
 			}

@@ -77,6 +77,18 @@ type Manager struct {
 	// (preserves backwards compatibility for hand-written cluster.yaml
 	// files that don't ship a plan-emitted allowlist).
 	PlannedDisksBySSHTarget map[string]map[string]struct{}
+	// PlanGenerated is true when the cluster.yaml was emitted by
+	// `cluster plan -o` (detected via the header marker). Tracked
+	// separately from PlannedDisksBySSHTarget because a plan-generated
+	// spec can legitimately reach deploy without its sidecar — e.g.
+	// `--mount-disks=false` deploys keep the sidecar optional so
+	// operators can ship master-only or service-only updates without
+	// it. The runtime mountpoint check still needs to fire in that
+	// case (a missing /dataN would still be silently mkdir'd on
+	// rootfs), so DeployVolumeServer gates the runtime check on this
+	// flag while the static count guard stays gated on
+	// PlannedDisksBySSHTarget (which requires the sidecar contents).
+	PlanGenerated bool
 	// prepareDisksOnce gates prepareUnmountedDisks per SSH target.
 	// With the per-disk volume_server shape, deploy fans out multiple
 	// volume_server entries on the same host concurrently — each would

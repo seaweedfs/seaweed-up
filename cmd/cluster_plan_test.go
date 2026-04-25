@@ -100,6 +100,29 @@ func TestLoadPlannedDeployDisks_handWritten_noMarkerNoSidecar_returnsNilNil(t *t
 	}
 }
 
+// TestIsPlanGeneratedSpec_detectsMarker is the wiring test for the
+// PlanGenerated flag the cmd layer pushes into the Manager. The flag
+// drives the runtime mountpoint check independently of the sidecar,
+// so a plan-generated cluster.yaml deployed with --mount-disks=false
+// still gets fail-closed treatment even when the sidecar is absent.
+func TestIsPlanGeneratedSpec_detectsMarker(t *testing.T) {
+	dir := t.TempDir()
+
+	marked := filepath.Join(dir, "marked.yaml")
+	writeMarkerSpec(t, marked)
+	if got, err := isPlanGeneratedSpec(marked); err != nil || !got {
+		t.Errorf("isPlanGeneratedSpec(marked) = (%v, %v), want (true, nil)", got, err)
+	}
+
+	plain := filepath.Join(dir, "plain.yaml")
+	if err := os.WriteFile(plain, []byte("# hand written\nmaster_servers: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := isPlanGeneratedSpec(plain); err != nil || got {
+		t.Errorf("isPlanGeneratedSpec(plain) = (%v, %v), want (false, nil)", got, err)
+	}
+}
+
 func TestLoadPlannedDeployDisks_planMarker_missingSidecar_failsClosed(t *testing.T) {
 	// Spec carries the plan marker (it's plan-generated) but the
 	// sidecar is missing — operator scp'd just the YAML, or the

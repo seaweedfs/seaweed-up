@@ -127,6 +127,34 @@ func TestDeployVolumeServer_idxFolderCountedTowardsRequired(t *testing.T) {
 	}
 }
 
+// TestDeployVolumeServer_planGeneratedNoSidecarSkipsStaticButKeepsRuntime
+// covers the --mount-disks=false + missing-sidecar scenario for a
+// plan-generated cluster.yaml. The cmd layer leaves
+// PlannedDisksBySSHTarget nil (sidecar absent) but sets PlanGenerated
+// based on the marker. The static count guard is gated on the
+// allowlist and must NOT fire (no sidecar to compare against), but
+// the runtime mountpoint check is gated on PlanGenerated and would
+// fire after SSH succeeds. Here SSH fails fast (port :1) so we just
+// verify the static-guard string isn't present — i.e. the path goes
+// through to SSH instead of bailing on the pre-flight count.
+func TestDeployVolumeServer_planGeneratedNoSidecarSkipsStaticGuard(t *testing.T) {
+	m := NewManager()
+	m.PlanGenerated = true
+	// PlannedDisksBySSHTarget left nil to mimic --mount-disks=false
+	// reaching DeployVolumeServer without the loaded sidecar.
+	vs := &spec.VolumeServerSpec{
+		Ip: "127.0.0.1", PortSsh: 1, Port: 8080,
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}},
+	}
+	err := m.DeployVolumeServer(nil, vs, 0)
+	if err == nil {
+		t.Fatal("expected SSH connect failure, got nil")
+	}
+	if strings.Contains(err.Error(), "plan-approved disk") {
+		t.Errorf("static count guard fired with no sidecar: %v", err)
+	}
+}
+
 // TestComputeRequiredDisks_aggregatesPerTarget locks in the per-target
 // aggregation rule that backs the per-disk volume_server shape. Each
 // spec carries a single folder, but two specs share the same SSH

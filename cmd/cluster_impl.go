@@ -168,6 +168,16 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	if approved != nil {
 		mgr.PlannedDisksBySSHTarget = approved
 	}
+	// Mark the manager as plan-generated independently of the sidecar
+	// load. The runtime mountpoint check in DeployVolumeServer fires
+	// on this flag so a `--mount-disks=false` deploy without a sidecar
+	// still gets fail-closed treatment for plan-generated specs (the
+	// volume daemon would otherwise start with -dir paths that are
+	// regular rootfs directories). Hand-written cluster.yaml files
+	// (no marker) leave the flag false and take the legacy path.
+	if planGenerated, _ := isPlanGeneratedSpec(opts.ConfigFile); planGenerated {
+		mgr.PlanGenerated = true
+	}
 
 	// Default SSH user to current user if not specified
 	if opts.User == "" {

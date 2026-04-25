@@ -264,8 +264,22 @@ runtime mountpoint check runs **after** `prepareUnmountedDisks` and
 the host. The verification is a single SSH round-trip
 (`mountpoint -q` per path); any path that fails is reported back so
 the operator sees every drift in one error message. Hand-written
-specs (no plan marker, no sidecar) skip both the static and the
-runtime checks for backwards compatibility.
+specs (no plan marker) skip both the static and the runtime checks
+for backwards compatibility.
+
+The two checks are gated independently. The static count guard
+needs the sidecar's allowlist contents and is gated on
+`PlannedDisksBySSHTarget != nil`. The runtime mountpoint check
+only needs the spec's folder paths and is gated on a separate
+`PlanGenerated` flag the cmd layer sets from the marker. This
+matters for `--mount-disks=false`: the cmd layer keeps the sidecar
+optional in that mode (so plan users can still ship master-only or
+service-only updates without lugging the sidecar around), but a
+plan-generated cluster.yaml deployed without its sidecar would
+otherwise reach `DeployVolumeServer` with both gates disabled and
+silently start `weed volume` on rootfs directories. With the
+runtime check gated on `PlanGenerated` instead, the sidecar stays
+optional but the mount-or-refuse contract holds.
 
 **Deterministic /data<N> assignment.** `prepareUnmountedDisks` walks
 its candidate disks in path-sorted order so deploy's `/data<N>`
