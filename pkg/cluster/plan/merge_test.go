@@ -136,6 +136,71 @@ func TestMerge_appendOneVolumeHost(t *testing.T) {
 	}
 }
 
+// TestMerge_createsAbsentSection covers the "section absent →
+// newly created" branch in mergeSection. Existing cluster.yaml has
+// only `cluster_name` + `master_servers`; inventory adds a volume
+// host. Merge must (1) introduce the new `volume_servers:` key and
+// its sequence, (2) put the new entry inside, (3) record the append
+// in MergeReport, and (4) preserve every existing line.
+func TestMerge_createsAbsentSection(t *testing.T) {
+	existing := `cluster_name: hand
+master_servers:
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.22", Roles: []string{"volume"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.22:22": {IP: "10.0.0.22", SSHPort: 22, Disks: synthesizeDisks(1, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{ClusterName: "hand"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	got := string(merged)
+
+	if !strings.Contains(got, "\nvolume_servers:") {
+		t.Errorf("new volume_servers: key not found in merged output:\n%s", got)
+	}
+	if !strings.Contains(got, "10.0.0.22") {
+		t.Errorf("appended volume host 10.0.0.22 not found in merged output:\n%s", got)
+	}
+	if appended := report.Appended["volume_servers"]; len(appended) != 1 || appended[0] != "10.0.0.22:8080" {
+		t.Errorf("Report.Appended[volume_servers] = %+v, want [10.0.0.22:8080]", appended)
+	}
+	if len(report.Orphaned) != 0 {
+		t.Errorf("unexpected orphans on absent-section append: %+v", report.Orphaned)
+	}
+	// Every original line must still appear in order.
+	prev := 0
+	for _, line := range strings.Split(existing, "\n") {
+		if line == "" {
+			continue
+		}
+		idx := strings.Index(got[prev:], line)
+		if idx < 0 {
+			t.Errorf("base line %q lost in merged output", line)
+			continue
+		}
+		prev += idx + len(line)
+	}
+}
+
 // TestMerge_userEditPreserved: an operator hand-edits a folder's
 // `max:` value. Re-running plan must leave that edit alone — we never
 // re-emit existing entries. This is the "user-edit survival" guarantee.
