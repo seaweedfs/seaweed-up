@@ -137,28 +137,9 @@ func probeMemory(r Runner) uint64 {
 	return kb * 1024
 }
 
-// defaultDevicePrefixes is the fallback set of /dev path prefixes the
-// probe (and manager) consider when the inventory doesn't supply
-// `defaults.disk.device_globs`. Covers:
-//
-//   - /dev/sd*    — SCSI / SATA, Azure managed disks, GCP SCSI
-//                   persistent disks, AWS EBS on paravirtualized gens
-//   - /dev/nvme*  — NVMe SSDs and bare metal, AWS Nitro EBS, Azure
-//                   NVMe SKUs (Lsv3, v6+), GCP NVMe-attached PDs
-//   - /dev/xvd*   — Xen virtual disks: AWS EBS on older t2/m3/c3
-//                   instance generations and some XenServer / XCP-ng
-//                   environments
-//   - /dev/vd*    — KVM virtio block: Vultr, Linode, Hetzner Cloud,
-//                   most OpenStack flavors, plain Proxmox / KVM VMs
-//
-// Adding any of the cloud-specific prefixes is harmless on systems
-// where they don't exist — no devices match, the planner simply
-// emits an empty folders list.
-var defaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"}
-
 // probeDisks wraps disks.ListBlockDevices with the inventory-provided
-// device globs (defaulting to defaultDevicePrefixes, matching the
-// prepareUnmountedDisks behavior).
+// device globs (defaulting to disksLib.DefaultDevicePrefixes, matching
+// the prepareUnmountedDisks behavior).
 func probeDisks(r Runner, globs []string) []DiskFact {
 	// disks.ListBlockDevices takes an operator.CommandOperator, not our
 	// narrow Runner. The real Probe flow hands it the SSH operator
@@ -170,7 +151,7 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	}
 	prefixes := globs
 	if len(prefixes) == 0 {
-		prefixes = defaultDevicePrefixes
+		prefixes = disks.DefaultDevicePrefixes
 	} else {
 		// The inventory format uses globs (/dev/sd*); lsblk parsing
 		// filters by prefix. Strip any trailing '*' for the comparison.

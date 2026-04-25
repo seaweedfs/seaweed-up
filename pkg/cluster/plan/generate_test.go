@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -997,28 +998,5 @@ func mapsEqual(a, b map[string]interface{}) bool {
 }
 
 func containsFold(s, sub string) bool {
-	return len(sub) == 0 || len(s) >= len(sub) && indexFold(s, sub) >= 0
-}
-
-func indexFold(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		ok := true
-		for j := 0; j < len(sub); j++ {
-			if toLower(s[i+j]) != toLower(sub[j]) {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return i
-		}
-	}
-	return -1
-}
-
-func toLower(b byte) byte {
-	if b >= 'A' && b <= 'Z' {
-		return b + 32
-	}
-	return b
+	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }

@@ -237,12 +237,12 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 					// one .idx directory across multiple volume
 					// processes on the same host would collide on the
 					// .idx files.
-					for i, folder := range derived.Data {
-						port := DefaultVolumePort + i
+					for diskIdx, folder := range derived.Data {
+						port := DefaultVolumePort + diskIdx
 						vs := newVolumeSpec(h, ssh, []*spec.FolderSpec{folder})
 						vs.Port = port
 						vs.PortGrpc = port + 10000
-						if i == 0 {
+						if diskIdx == 0 {
 							vs.IdxFolder = derived.Idx
 						}
 						out.VolumeServers = append(out.VolumeServers, vs)
@@ -275,7 +275,12 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 	// avoids failing validation in the filer-prerequisite check.
 	// net.JoinHostPort handles IPv6 literals (wraps in brackets).
 	if len(out.FilerServers) > 0 {
-		defaultFiler := net.JoinHostPort(out.FilerServers[0].Ip, strconv.Itoa(DefaultFilerPort))
+		// Read the port from the spec we just emitted rather than the
+		// constant: if a future change introduces per-host port overrides
+		// (or anyone hand-edits FilerServers[0].Port), the default URL
+		// must follow the actual server, not the constant.
+		filer0 := out.FilerServers[0]
+		defaultFiler := net.JoinHostPort(filer0.Ip, strconv.Itoa(filer0.Port))
 		for _, s := range out.S3Servers {
 			if s.Filer == "" {
 				s.Filer = defaultFiler
@@ -291,7 +296,10 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 	// Workers point at the first admin server when no explicit admin is
 	// set. Matches the precedence in resolveWorkerDefaultAdmins.
 	if len(out.AdminServers) > 0 {
-		defaultAdmin := net.JoinHostPort(out.AdminServers[0].Ip, strconv.Itoa(DefaultAdminPort))
+		// Same rationale as defaultFiler: track the actual port the
+		// admin spec carries, not the constant.
+		admin0 := out.AdminServers[0]
+		defaultAdmin := net.JoinHostPort(admin0.Ip, strconv.Itoa(admin0.Port))
 		for _, w := range out.WorkerServers {
 			if w.Admin == "" {
 				w.Admin = defaultAdmin

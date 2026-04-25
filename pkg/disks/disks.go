@@ -9,6 +9,20 @@ import (
 	"strings"
 )
 
+// DefaultDevicePrefixes lists the /dev path prefixes the planner and
+// the deploy-time disk preparer treat as candidate block devices when
+// the operator hasn't supplied an explicit globs list:
+//
+//	/dev/sd    SCSI / SATA, Azure managed disks, GCP SCSI PDs
+//	/dev/nvme  NVMe SSDs, AWS Nitro EBS, GCP NVMe PDs
+//	/dev/xvd   Xen — older AWS, XenServer/XCP-ng
+//	/dev/vd    KVM virtio — Vultr, Linode, Hetzner, OpenStack
+//
+// Single source of truth so probe and prepareUnmountedDisks always
+// scan the same device families. Adding a prefix here exposes it to
+// both sides at once.
+var DefaultDevicePrefixes = []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"}
+
 // IsPartitionOf returns true when partPath is a kernel-level partition
 // of parentPath. Linux uses two conventions, distinguished by whether
 // the parent name ends in a digit:

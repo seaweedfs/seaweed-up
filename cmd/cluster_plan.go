@@ -16,9 +16,12 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/probe"
 )
 
-// Environment variable that, when set, supplies the filer metadata-store
-// DSN. Takes precedence over `--filer-backend-file` only when both are
-// absent (see resolveFilerBackendDSN).
+// envFilerBackend is the environment variable name that supplies the
+// filer metadata-store DSN. It is the lowest-priority source: used
+// only when neither `--filer-backend-file` nor `--filer-backend` is
+// passed. See resolveFilerBackend; precedence is file > flag > env,
+// matching the design doc and cobra/viper's flag-overrides-env
+// convention.
 const envFilerBackend = "SEAWEEDUP_FILER_BACKEND"
 
 // ClusterPlanOptions holds flags for `cluster plan`.

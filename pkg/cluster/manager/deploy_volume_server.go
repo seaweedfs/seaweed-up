@@ -266,14 +266,11 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 	// nofail entries (or broken ones) are tolerated via `|| true`.
 	_ = m.sudo(op, "mount -a 2>/dev/null || true")
 
-	// Default disk prefix set, kept in sync with the planner's
-	// pkg/cluster/probe.defaultDevicePrefixes:
-	//   /dev/sd    SCSI / SATA, Azure managed disks, GCP SCSI PDs
-	//   /dev/nvme  NVMe SSDs, AWS Nitro EBS, GCP NVMe PDs
-	//   /dev/xvd   Xen — older AWS, XenServer/XCP-ng
-	//   /dev/vd    KVM virtio — Vultr, Linode, Hetzner, OpenStack
-	// Harmless on systems where the prefix isn't present.
-	devices, mountpoints, err := disksLib.ListBlockDevices(op, []string{"/dev/sd", "/dev/nvme", "/dev/xvd", "/dev/vd"})
+	// Use the shared default prefix set so probe and prepare always
+	// scan the same device families (see disksLib.DefaultDevicePrefixes
+	// for the per-prefix rationale). Harmless on systems where a prefix
+	// isn't present — no devices match.
+	devices, mountpoints, err := disksLib.ListBlockDevices(op, disksLib.DefaultDevicePrefixes)
 	if err != nil {
 		return fmt.Errorf("list device: %v", err)
 	}

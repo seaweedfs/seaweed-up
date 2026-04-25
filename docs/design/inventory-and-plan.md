@@ -400,7 +400,7 @@ Three equivalent ways to supply the DSN, in priority order
 (`file > flag > env`, matching the `flag-overrides-env` convention
 used by cobra/viper-based CLIs):
 
-```
+```shell
 # 1. file (recommended: avoids leaking the password via `ps`)
 seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
     --filer-backend-file /etc/seaweed-up/filer.dsn
