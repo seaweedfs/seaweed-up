@@ -282,11 +282,13 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 }
 
 // printMergeReport surfaces append-merge outcomes the operator should
-// see: appended new hosts and orphan entries (in YAML but no longer in
-// inventory). All go to stderr to keep stdout reserved for --json mode
-// and because they're advisory. Drift detection (warn when a
-// previously-emitted entry's facts changed) is deferred to Phase 4
-// alongside `--refresh-host`.
+// see: appended new hosts and orphan entries (in the YAML but not
+// produced by this plan run — removed from inventory, probe failed,
+// or role was dropped because no eligible disks were found). All go
+// to stderr to keep stdout reserved for --json mode and because
+// they're advisory. Drift detection (warn when a previously-emitted
+// entry's facts changed) is deferred to Phase 4 alongside
+// `--refresh-host`.
 func printMergeReport(r *plan.MergeReport) {
 	if r == nil {
 		return
