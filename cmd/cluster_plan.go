@@ -283,7 +283,7 @@ func printMergeReport(r *plan.MergeReport) {
 		fmt.Fprintf(os.Stderr, "  appended to %s: %s\n", section, strings.Join(keys, ", "))
 	}
 	for _, o := range r.Orphaned {
-		fmt.Fprintf(os.Stderr, "  WARN: orphan in cluster.yaml (no longer in inventory): %s\n", o)
+		fmt.Fprintf(os.Stderr, "  WARN: orphan in cluster.yaml (not produced by this plan run — removed from inventory, probe failed, or role was dropped): %s\n", o)
 	}
 	for _, u := range r.Unparseable {
 		fmt.Fprintf(os.Stderr, "  WARN: unparseable existing entry — fresh inventory hosts won't dedupe against it: %s\n", u)

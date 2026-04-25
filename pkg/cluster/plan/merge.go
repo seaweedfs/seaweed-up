@@ -21,10 +21,15 @@ type MergeReport struct {
 	// (`master_servers`, `volume_servers`, …); values are the new
 	// entry keys in append order.
 	Appended map[string][]string
-	// Orphaned lists `section: ip:port` entries that exist in the YAML
-	// but no longer appear in the inventory at the role's default port.
-	// Append-merge never deletes — orphans surface as a warning so the
-	// operator can decide.
+	// Orphaned lists `section: ip:port` entries that exist in the
+	// YAML but didn't show up in this plan run's freshly-Generated
+	// spec. The most common cause is a host removed from inventory,
+	// but a host can also be missing because its probe failed or
+	// because the volume role got dropped (no eligible disks). The
+	// underlying signal is "deploy will not target this entry on
+	// the next run" — operators decide whether to delete the row,
+	// fix the probe, or repair the inventory. Append-merge never
+	// removes a YAML entry; the warning is advisory.
 	Orphaned []string
 	// Unparseable lists `section: line N` markers for existing entries
 	// the dedup index couldn't extract a key from (typically a hand-
