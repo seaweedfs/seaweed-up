@@ -117,6 +117,11 @@ func TestClusterPlanGreenfield(t *testing.T) {
 		t.Errorf("no-op merge changed cluster.yaml bytes\n--- before ---\n%s\n--- after ---\n%s",
 			originalBytes, mergedBytes)
 	}
+	// With identical inventory there should be no orphans either.
+	// printMergeReport emits "WARN: orphan" on stderr; flag any leak.
+	if strings.Contains(mergeOut, "WARN: orphan") {
+		t.Errorf("no-op merge surfaced an orphan warning; stderr was:\n%s", mergeOut)
+	}
 
 	overwriteOut, overwriteErr := runPlan(h, invPath, outPath, "--overwrite")
 	if overwriteErr != nil {
