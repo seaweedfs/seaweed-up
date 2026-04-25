@@ -218,10 +218,28 @@ For each inventory host (skipping `external` hosts during probe):
 
 - **master**: append `MasterServerSpec{Ip, Port: 9333, PortSsh: …}`.
 - **volume**: append `VolumeServerSpec{Ip, Port: 8080, Folders: derive(facts.Disks)}`.
-  - `derive` applies the same selection rules as today's
-    `prepareUnmountedDisks`: skip partitioned parents, skip mounted,
-    skip `defaults.disk.exclude` globs. For each eligible disk emit
-    `FolderSpec{Folder: "/data<N>", DiskType, Max}`.
+  - `derive` classifies each probed disk into one of three buckets
+    using *effective mountpoint* = `MountPoint || FstabMountPoint`
+    (the kernel's view first, fstab as a fallback for disks that
+    haven't been auto-mounted yet on this boot):
+      - **Cluster-claimed** (effective mountpoint matches `/data\d+`):
+        re-emit the existing folder using its current path. Deploy
+        won't mkfs or remount these — they're already ours. Lets a
+        re-plan against a deployed cluster reproduce the existing
+        `cluster.yaml` rather than silently dropping its folders.
+      - **Foreign mount** (any other effective mountpoint, e.g.
+        `/`, `/home`, `/var/lib/docker`): skip silently. We never
+        reformat a disk we didn't claim.
+      - **Fresh** (no effective mountpoint, no `FSType`, not
+        excluded by `defaults.disk.exclude`): allocate the next
+        free `/data<N>` slot, skipping any N already claimed.
+        Deploy will mkfs and mount.
+    Disks with a filesystem but no mount and no fstab claim are
+    skipped: they were probably formatted by something else, and
+    silently reformatting would lose data. The probe parses
+    `/etc/fstab` so this classification holds even if `fstab`
+    declarations haven't been realized into kernel mounts yet
+    (boot race, manual umount, fstab edited but no `mount -a`).
   - `DiskType` comes from `defaults.disk.disk_type_auto` — `hdd` when
     `Rotational`, otherwise `ssd`.
   - `Max` is the maximum volume count for the folder. `Size` from

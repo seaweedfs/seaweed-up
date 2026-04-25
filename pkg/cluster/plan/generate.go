@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -391,38 +392,111 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 		}
 	}
 
-	// Stable order: process facts in insertion order from the probe,
-	// but pick /data<N> slots starting from 1 regardless of lsblk's
-	// ordering. The probe already filtered by the defaults.disk.device_globs
-	// prefix.
-	var eligible []probe.DiskFact
+	// Walk the probed disks twice. First pass: classify each disk into
+	// "claimed by the cluster at /data<N>" (current mount or fstab),
+	// "fresh" (no fs, no claim — eligible for provisioning), or
+	// "skip" (foreign mount, filesystem with no /data claim, excluded).
+	// Second pass: allocate /data<N> slots to fresh disks, skipping
+	// numbers already claimed.
+	type classified struct {
+		disk    probe.DiskFact
+		mount   string // /dataN
+		slot    int    // N
+		isFresh bool   // needs provisioning + slot allocation
+	}
+	reserved := make(map[int]struct{})
+	var entries []classified
+
 	for _, d := range facts.Disks {
-		if d.MountPoint != "" {
-			continue // already mounted; probably not ours to reformat
-		}
-		if d.FSType != "" {
-			continue // existing filesystem we didn't create
-		}
 		if isExcluded(d.Path, literalExcluded, prefixExcluded) {
 			continue
 		}
-		eligible = append(eligible, d)
+		// Effective mountpoint: kernel's view first, fall back to
+		// fstab-declared. Lets us recognize a previously deployed
+		// disk that just hasn't been mounted yet on this boot.
+		effective := d.MountPoint
+		if effective == "" {
+			effective = d.FstabMountPoint
+		}
+		if effective != "" {
+			if n, ok := parseClusterDataMount(effective); ok {
+				reserved[n] = struct{}{}
+				entries = append(entries, classified{disk: d, mount: effective, slot: n})
+			}
+			// Foreign mount (/, /home, /var/lib/docker, …) — skip
+			// silently. We never reformat a disk we didn't claim.
+			continue
+		}
+		if d.FSType != "" {
+			// Has a filesystem but no mount and no fstab entry. Most
+			// likely a disk the operator hand-formatted for some
+			// other use. Be conservative: skip and don't reformat.
+			continue
+		}
+		entries = append(entries, classified{disk: d, isFresh: true})
 	}
-	// Sort by device path so the output is deterministic even if the
-	// probe returned in a different order from run to run.
-	sort.Slice(eligible, func(i, j int) bool {
-		return eligible[i].Path < eligible[j].Path
+
+	// Allocate /data<N> for fresh disks, walking N upward and skipping
+	// reserved slots. Iterate the fresh disks in path order so the
+	// allocation is deterministic across probe runs.
+	var freshOrder []int
+	for i := range entries {
+		if entries[i].isFresh {
+			freshOrder = append(freshOrder, i)
+		}
+	}
+	sort.Slice(freshOrder, func(a, b int) bool {
+		return entries[freshOrder[a]].disk.Path < entries[freshOrder[b]].disk.Path
+	})
+	nextSlot := 1
+	for _, i := range freshOrder {
+		for {
+			if _, taken := reserved[nextSlot]; !taken {
+				entries[i].slot = nextSlot
+				entries[i].mount = fmt.Sprintf("/data%d", nextSlot)
+				reserved[nextSlot] = struct{}{}
+				nextSlot++
+				break
+			}
+			nextSlot++
+		}
+	}
+
+	// Sort the final folder list by slot so /data1 always comes before
+	// /data2, regardless of whether each was claimed or fresh.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].slot < entries[j].slot
 	})
 
-	folders := make([]*spec.FolderSpec, 0, len(eligible))
-	for i, d := range eligible {
+	folders := make([]*spec.FolderSpec, 0, len(entries))
+	for _, e := range entries {
 		folders = append(folders, &spec.FolderSpec{
-			Folder:   fmt.Sprintf("/data%d", i+1),
-			DiskType: diskTypeFor(d, disk),
-			Max:      computeMax(d.Size, reservePct, volumeSizeLimitMB),
+			Folder:   e.mount,
+			DiskType: diskTypeFor(e.disk, disk),
+			Max:      computeMax(e.disk.Size, reservePct, volumeSizeLimitMB),
 		})
 	}
 	return folders
+}
+
+// clusterDataMountRE recognizes the /data<N> mountpoint convention used
+// by prepareUnmountedDisks and the planner's allocation. Anything else
+// (e.g. /, /var/lib/docker, /home) is a foreign mount we don't manage.
+var clusterDataMountRE = regexp.MustCompile(`^/data(\d+)$`)
+
+// parseClusterDataMount returns (N, true) when mp is "/data<N>" and
+// (0, false) for anything else. Used by deriveFolders to recognize
+// disks that are already part of (or reserved for) this cluster.
+func parseClusterDataMount(mp string) (int, bool) {
+	m := clusterDataMountRE.FindStringSubmatch(mp)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func isExcluded(path string, literals map[string]struct{}, prefixes []string) bool {

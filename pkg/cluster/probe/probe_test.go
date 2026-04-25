@@ -155,6 +155,69 @@ func TestReadSpeed_negativeReturnsZero(t *testing.T) {
 	}
 }
 
+func TestProbeFstab_parsesEntries(t *testing.T) {
+	// Confirm that probeFstab picks up UUID= and /dev/ entries and
+	// ignores comments / LABEL= / blank lines.
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "/etc/fstab", out: `# /etc/fstab — generated
+UUID=abc-123 /data1 ext4 noatime 0 2
+UUID="def-456" /data2 ext4 defaults 0 2
+/dev/sdd /home ext4 defaults 0 2
+LABEL=swap none swap sw 0 0
+proc /proc proc defaults 0 0
+
+# trailing comment
+`},
+	}}
+	byUUID, byPath := probeFstab(r)
+	if got := byUUID["abc-123"]; got != "/data1" {
+		t.Errorf("byUUID[abc-123] = %q, want /data1", got)
+	}
+	if got := byUUID["def-456"]; got != "/data2" {
+		t.Errorf("byUUID[def-456] (quoted form) = %q, want /data2", got)
+	}
+	if got := byPath["/dev/sdd"]; got != "/home" {
+		t.Errorf("byPath[/dev/sdd] = %q, want /home", got)
+	}
+	if _, ok := byUUID["swap"]; ok {
+		t.Error("LABEL= entries should not appear in byUUID")
+	}
+}
+
+func TestProbeFstab_unreadableReturnsEmpty(t *testing.T) {
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "/etc/fstab", err: fmt.Errorf("cat: /etc/fstab: Permission denied")},
+	}}
+	byUUID, byPath := probeFstab(r)
+	if len(byUUID) != 0 || len(byPath) != 0 {
+		t.Errorf("expected empty maps on read error, got %d/%d entries", len(byUUID), len(byPath))
+	}
+}
+
+func TestProbeDisks_picksUpFstabClaim(t *testing.T) {
+	// A disk with FSType set but no current MountPoint should pick up
+	// its mountpoint from /etc/fstab so the planner can recognize it
+	// as cluster-owned even before the mount is realized.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="500000000000" LABEL="" UUID="11111111-aaaa-bbbb-cccc-222222222222" FSTYPE="ext4" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="0" MODEL="Data SSD"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+		{contains: "/etc/fstab", out: "UUID=11111111-aaaa-bbbb-cccc-222222222222 /data1 ext4 noatime 0 2\n"},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1", len(disks))
+	}
+	if disks[0].FstabMountPoint != "/data1" {
+		t.Errorf("FstabMountPoint = %q, want /data1", disks[0].FstabMountPoint)
+	}
+	if disks[0].MountPoint != "" {
+		t.Errorf("MountPoint = %q, want empty (kernel sees it unmounted)", disks[0].MountPoint)
+	}
+}
+
 func TestProbeDisks_dropsPartitionedParent(t *testing.T) {
 	// Regression: boot disks (e.g. /dev/sda with /dev/sda1 mounted at /)
 	// used to pass through as eligible disks in the probe because

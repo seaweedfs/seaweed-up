@@ -184,6 +184,12 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 		}
 	}
 
+	// Read /etc/fstab so we can flag disks that are claimed by the
+	// system but happen not to be mounted at probe time (boot race,
+	// manual umount, fstab edited but no `mount -a`). Best effort —
+	// fstab is normally world-readable, but we tolerate read errors.
+	fstabByUUID, fstabByPath := probeFstab(r)
+
 	out := make([]DiskFact, 0, len(devs))
 	for _, d := range devs {
 		if d.Type != "disk" {
@@ -192,7 +198,7 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 		if _, isParent := partitioned[d.Path]; isParent {
 			continue
 		}
-		out = append(out, DiskFact{
+		fact := DiskFact{
 			Path:       d.Path,
 			Size:       d.Size,
 			FSType:     d.FilesystemType,
@@ -200,7 +206,62 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 			MountPoint: d.MountPoint,
 			Rotational: d.Rotational,
 			Model:      d.Model,
-		})
+		}
+		// Only fill FstabMountPoint when MountPoint is empty — the
+		// kernel's view wins when both are present (and they should
+		// agree if everything is consistent). Look up by UUID first
+		// since fstab entries usually use UUID= these days, fall
+		// back to /dev path.
+		if fact.MountPoint == "" {
+			if d.UUID != "" {
+				if mp, ok := fstabByUUID[d.UUID]; ok {
+					fact.FstabMountPoint = mp
+				}
+			}
+			if fact.FstabMountPoint == "" {
+				if mp, ok := fstabByPath[d.Path]; ok {
+					fact.FstabMountPoint = mp
+				}
+			}
+		}
+		out = append(out, fact)
 	}
 	return out
+}
+
+// probeFstab returns two maps keying on `UUID=…` and on `/dev/…` device
+// paths to the corresponding mountpoints declared in /etc/fstab.
+// Tolerant of read errors — an unreadable fstab just produces empty
+// maps, and the planner falls back to current-mount data only.
+func probeFstab(r Runner) (byUUID, byPath map[string]string) {
+	byUUID = make(map[string]string)
+	byPath = make(map[string]string)
+	out, err := r.Output("cat /etc/fstab 2>/dev/null")
+	if err != nil {
+		return
+	}
+	for _, raw := range strings.Split(string(out), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		spec, mountpoint := fields[0], fields[1]
+		switch {
+		case strings.HasPrefix(spec, "UUID="):
+			uuid := strings.Trim(strings.TrimPrefix(spec, "UUID="), `"`)
+			if uuid != "" {
+				byUUID[uuid] = mountpoint
+			}
+		case strings.HasPrefix(spec, "/"):
+			byPath[spec] = mountpoint
+		}
+		// LABEL=, PARTUUID=, etc. are uncommon for our use case — the
+		// planner won't recognize them but the existing FSType skip
+		// keeps us from reformatting. Fine.
+	}
+	return
 }

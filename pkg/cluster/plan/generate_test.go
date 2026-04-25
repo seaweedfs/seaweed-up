@@ -539,6 +539,119 @@ func TestDeriveFolders_literalExcludeDoesNotCatchSiblings(t *testing.T) {
 	}
 }
 
+func TestDeriveFolders_recognizesCurrentlyMountedDataN(t *testing.T) {
+	// Re-running plan against a deployed cluster should reproduce the
+	// existing /data<N> folders, not silently drop them. Disks that
+	// lsblk reports mounted at /data<N> are treated as cluster-owned
+	// and re-emitted with their existing mountpoint.
+	disk := inventory.DiskDefaults{DiskTypeAuto: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{
+				Path:       "/dev/sdb",
+				Size:       100 * 1024 * 1024 * 1024,
+				FSType:     "ext4",
+				MountPoint: "/data1",
+				UUID:       "11111111-1111-1111-1111-111111111111",
+				Rotational: boolPtr(false),
+			},
+			{
+				Path:       "/dev/sdc",
+				Size:       100 * 1024 * 1024 * 1024,
+				FSType:     "ext4",
+				MountPoint: "/data2",
+				UUID:       "22222222-2222-2222-2222-222222222222",
+				Rotational: boolPtr(false),
+			},
+		},
+	}
+	folders := deriveFolders(facts, disk, 5000)
+	if len(folders) != 2 {
+		t.Fatalf("got %d folders, want 2: %+v", len(folders), folders)
+	}
+	if folders[0].Folder != "/data1" || folders[1].Folder != "/data2" {
+		t.Errorf("folder paths: %+v", folders)
+	}
+}
+
+func TestDeriveFolders_recognizesFstabClaim(t *testing.T) {
+	// A disk with an fstab entry but no current mount (boot race,
+	// pending mount -a, etc.) should still be recognized as a
+	// cluster-owned folder. Otherwise re-plan against a freshly-rebooted
+	// host would silently drop disks that haven't auto-mounted yet.
+	disk := inventory.DiskDefaults{DiskTypeAuto: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{
+				Path:            "/dev/sdb",
+				Size:            100 * 1024 * 1024 * 1024,
+				FSType:          "ext4",
+				FstabMountPoint: "/data1",
+				UUID:            "11111111-1111-1111-1111-111111111111",
+				Rotational:      boolPtr(false),
+			},
+		},
+	}
+	folders := deriveFolders(facts, disk, 5000)
+	if len(folders) != 1 || folders[0].Folder != "/data1" {
+		t.Errorf("got %+v, want one folder at /data1", folders)
+	}
+}
+
+func TestDeriveFolders_skipsForeignMount(t *testing.T) {
+	// Disks mounted somewhere outside the /data<N> convention belong
+	// to the OS or another tenant — never include them, never reformat.
+	disk := inventory.DiskDefaults{DiskTypeAuto: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/sdb", Size: 100 << 30, FSType: "ext4", MountPoint: "/var/lib/docker", Rotational: boolPtr(false)},
+			{Path: "/dev/sdc", Size: 100 << 30, FSType: "ext4", FstabMountPoint: "/home", Rotational: boolPtr(false)},
+		},
+	}
+	if folders := deriveFolders(facts, disk, 5000); len(folders) != 0 {
+		t.Errorf("got %d folders, want 0 (foreign mounts): %+v", len(folders), folders)
+	}
+}
+
+func TestDeriveFolders_allocatesAroundClaimedSlots(t *testing.T) {
+	// /data1 is already mounted on /dev/sdb. A fresh /dev/sdc must be
+	// assigned to /data2, not /data1 — otherwise the planner would
+	// double-book the slot.
+	disk := inventory.DiskDefaults{DiskTypeAuto: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/sdc", Size: 100 << 30, Rotational: boolPtr(false)}, // fresh
+			{Path: "/dev/sdb", Size: 100 << 30, FSType: "ext4", MountPoint: "/data1", Rotational: boolPtr(false)}, // claimed
+		},
+	}
+	folders := deriveFolders(facts, disk, 5000)
+	if len(folders) != 2 {
+		t.Fatalf("got %d folders, want 2: %+v", len(folders), folders)
+	}
+	// Sorted by slot — /data1 first, /data2 second.
+	if folders[0].Folder != "/data1" {
+		t.Errorf("folder[0] = %q, want /data1 (the claimed sdb)", folders[0].Folder)
+	}
+	if folders[1].Folder != "/data2" {
+		t.Errorf("folder[1] = %q, want /data2 (sdc routed around the claim)", folders[1].Folder)
+	}
+}
+
+func TestDeriveFolders_skipsFSTypeWithoutClaim(t *testing.T) {
+	// A disk that has a filesystem but no current mount and no fstab
+	// entry was probably formatted by something else. Be conservative:
+	// don't reformat, don't include it.
+	disk := inventory.DiskDefaults{DiskTypeAuto: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/sdb", Size: 100 << 30, FSType: "ext4", Rotational: boolPtr(false)},
+		},
+	}
+	if folders := deriveFolders(facts, disk, 5000); len(folders) != 0 {
+		t.Errorf("got %d folders, want 0 (fs without claim): %+v", len(folders), folders)
+	}
+}
+
 func TestDeriveFolders_prefixExcludeStillWorks(t *testing.T) {
 	disk := inventory.DiskDefaults{
 		Exclude:      []string{"/dev/sd*"}, // prefix
