@@ -104,6 +104,13 @@ type Manager struct {
 	// folder count — necessary for --volume-server-shape=per-disk
 	// where one host has many one-folder specs.
 	requiredDisksByTarget map[string]int
+	// volumeServerCountByTarget records how many volume_server entries
+	// point at each SSH target. Populated alongside requiredDisksByTarget
+	// so DeployVolumeServer's error wording can name the actual server
+	// count (1 in per-host shape with N folders; N in per-disk shape).
+	// Without this we'd have to back-derive from the aggregated mount
+	// count, which overstates the count for per-host shape.
+	volumeServerCountByTarget map[string]int
 	HostPrep         bool
 	ForceRestart     bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the

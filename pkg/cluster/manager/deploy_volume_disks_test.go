@@ -155,33 +155,84 @@ func TestDeployVolumeServer_planGeneratedNoSidecarSkipsStaticGuard(t *testing.T)
 	}
 }
 
-// TestComputeRequiredDisks_aggregatesPerTarget locks in the per-target
-// aggregation rule that backs the per-disk volume_server shape. Each
-// spec carries a single folder, but two specs share the same SSH
-// target — the host needs two approved disks, not one. Without the
-// aggregate, the per-spec allowlist check would clear each entry
-// individually and a one-disk stale sidecar would still pass.
-func TestComputeRequiredDisks_aggregatesPerTarget(t *testing.T) {
+// TestComputeVolumeTargetDemand_aggregatesPerTarget locks in both
+// per-target rollups: the mountpoint demand (sum of folders + idx)
+// and the volume_server entry count. The mountpoint count drives
+// the allowlist comparison; the entry count drives the
+// operator-facing error wording (we used to back-derive it from the
+// aggregate, which overstated the count for per-host shape — one
+// volume_server with N folders looked like N volume_servers).
+func TestComputeVolumeTargetDemand_aggregatesPerTarget(t *testing.T) {
+	// per-host shape: one entry, multiple folders + idx.
+	v0 := &spec.VolumeServerSpec{
+		Ip: "10.0.0.20", PortSsh: 22,
+		Folders:   []*spec.FolderSpec{{Folder: "/data2"}, {Folder: "/data3"}},
+		IdxFolder: "/data1",
+	}
+	// per-disk shape: two one-folder entries on the same target.
 	v1 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data1"}}}
 	v2 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data2"}}}
-	// Different SSH port on the same IP — should be a SEPARATE bucket.
+	// Same IP, different SSH port — separate bucket.
 	v3 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 2222, Folders: []*spec.FolderSpec{{Folder: "/data1"}}}
-	// Different host entirely with an idx folder; idx must be counted.
+	// Different host with idx; idx contributes to mountpoint demand.
 	v4 := &spec.VolumeServerSpec{Ip: "10.0.0.22", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data2"}}, IdxFolder: "/data1"}
 
-	got := computeRequiredDisks([]*spec.VolumeServerSpec{v1, v2, v3, v4, nil})
-	want := map[string]int{
-		"10.0.0.21:22":   2, // v1 + v2 aggregated
-		"10.0.0.21:2222": 1, // v3 lives on a different SSH endpoint
+	mounts, servers := computeVolumeTargetDemand([]*spec.VolumeServerSpec{v0, v1, v2, v3, v4, nil})
+	wantMounts := map[string]int{
+		"10.0.0.20:22":   3, // v0: 2 folders + 1 idx
+		"10.0.0.21:22":   2, // v1 + v2
+		"10.0.0.21:2222": 1, // v3
 		"10.0.0.22:22":   2, // v4: 1 folder + 1 idx
 	}
-	if len(got) != len(want) {
-		t.Fatalf("computeRequiredDisks returned %d targets, want %d: got=%v", len(got), len(want), got)
+	wantServers := map[string]int{
+		"10.0.0.20:22":   1, // per-host shape — single entry
+		"10.0.0.21:22":   2, // per-disk shape — two entries
+		"10.0.0.21:2222": 1,
+		"10.0.0.22:22":   1,
 	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("target %s: got %d, want %d", k, got[k], v)
+	for k, v := range wantMounts {
+		if mounts[k] != v {
+			t.Errorf("mountpoints[%s] = %d, want %d", k, mounts[k], v)
 		}
+	}
+	for k, v := range wantServers {
+		if servers[k] != v {
+			t.Errorf("servers[%s] = %d, want %d", k, servers[k], v)
+		}
+	}
+}
+
+// TestDeployVolumeServer_perHostShape_errorNamesActualServerCount
+// pins down the count-accuracy fix: the error message must report
+// the actual number of volume_server entries (1, in this per-host
+// shape with 3 folders), not the aggregate mountpoint count (3).
+// The old back-derived count overstated the server count when one
+// volume_server had multiple folders.
+func TestDeployVolumeServer_perHostShape_errorNamesActualServerCount(t *testing.T) {
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	m.PlannedDisksBySSHTarget = map[string]map[string]struct{}{
+		"10.0.0.20:22": {"/dev/sdb": {}}, // one stale disk
+	}
+	v0 := &spec.VolumeServerSpec{
+		Ip: "10.0.0.20", PortSsh: 22, Port: 8080,
+		Folders: []*spec.FolderSpec{
+			{Folder: "/data1"}, {Folder: "/data2"}, {Folder: "/data3"},
+		},
+	}
+	m.requiredDisksByTarget, m.volumeServerCountByTarget = computeVolumeTargetDemand([]*spec.VolumeServerSpec{v0})
+
+	err := m.DeployVolumeServer(nil, v0, 0)
+	if err == nil {
+		t.Fatal("expected refusal: 3 mountpoints needed but only 1 approved")
+	}
+	if !strings.Contains(err.Error(), "expects 3 mountpoint") {
+		t.Errorf("error should report aggregate mountpoint count (3), got: %v", err)
+	}
+	// The fix: report the actual server count (1), not 3 (which is
+	// what back-deriving from the mountpoint aggregate would yield).
+	if !strings.Contains(err.Error(), "the 1 volume_server(s)") {
+		t.Errorf("error should name the actual server count (1), got: %v", err)
 	}
 }
 
@@ -206,7 +257,7 @@ func TestDeployVolumeServer_refusesPerDiskShapeWithStaleSidecar(t *testing.T) {
 		Ip: "10.0.0.21", PortSsh: 22, Port: 8081,
 		Folders: []*spec.FolderSpec{{Folder: "/data2"}},
 	}
-	m.requiredDisksByTarget = computeRequiredDisks([]*spec.VolumeServerSpec{v1, v2})
+	m.requiredDisksByTarget, m.volumeServerCountByTarget = computeVolumeTargetDemand([]*spec.VolumeServerSpec{v1, v2})
 
 	err := m.DeployVolumeServer(nil, v1, 0)
 	if err == nil {

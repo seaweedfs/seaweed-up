@@ -106,14 +106,17 @@ func resolveWorkerDefaultAdmins(specification *spec.Specification) ([]string, er
 	return defaultAdmins, nil
 }
 
-// computeRequiredDisks sums up `len(Folders) + (1 if IdxFolder else 0)`
-// across every volume_server, grouped by `<ip>:<ssh-port>`. Used by
-// DeployVolumeServer's allowlist check so per-disk-shape topologies
-// (multiple volume_servers on the same host, each with one folder)
-// validate against the host's aggregate disk demand instead of each
-// spec's own folder count.
-func computeRequiredDisks(volumes []*spec.VolumeServerSpec) map[string]int {
-	out := make(map[string]int)
+// computeVolumeTargetDemand walks every volume_server and returns
+// per-target totals: mountpoints needed (sum of folders + idx) and
+// the number of volume_server entries on that SSH target. The
+// mountpoint count drives DeployVolumeServer's allowlist comparison;
+// the entry count gives the error message an accurate label (one
+// volume_server with many folders in per-host shape; many one-folder
+// volume_servers in per-disk shape — without the explicit count we
+// couldn't tell them apart from the aggregate alone).
+func computeVolumeTargetDemand(volumes []*spec.VolumeServerSpec) (mountpoints, servers map[string]int) {
+	mountpoints = make(map[string]int)
+	servers = make(map[string]int)
 	for _, vs := range volumes {
 		if vs == nil {
 			continue
@@ -123,9 +126,10 @@ func computeRequiredDisks(volumes []*spec.VolumeServerSpec) map[string]int {
 		if vs.IdxFolder != "" {
 			n++
 		}
-		out[key] += n
+		mountpoints[key] += n
+		servers[key]++
 	}
-	return out
+	return mountpoints, servers
 }
 
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
@@ -180,14 +184,17 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("volume") {
-		// Pre-compute per-SSH-target mountpoint demand across every
-		// volume_server. With --volume-server-shape=per-disk, plan
-		// emits N entries on the same target each carrying one folder;
-		// the per-spec allowlist check would clear each individually
-		// even when their sum exceeds the planner's approved-disk
-		// count for that target. The aggregate map lets
-		// DeployVolumeServer compare against the host total instead.
-		m.requiredDisksByTarget = computeRequiredDisks(specification.VolumeServers)
+		// Pre-compute per-SSH-target mountpoint demand and the
+		// volume_server entry count across every spec. With
+		// --volume-server-shape=per-disk plan emits N entries on the
+		// same target each carrying one folder; the per-spec allowlist
+		// check would clear each individually even when their sum
+		// exceeds the planner's approved-disk count for that target.
+		// The aggregate map lets DeployVolumeServer compare against
+		// the host total instead. The entry count is a separate map
+		// so the error wording can name the actual server count
+		// regardless of folder shape.
+		m.requiredDisksByTarget, m.volumeServerCountByTarget = computeVolumeTargetDemand(specification.VolumeServers)
 
 		for index, volumeSpec := range specification.VolumeServers {
 			eg.Go(func() error {

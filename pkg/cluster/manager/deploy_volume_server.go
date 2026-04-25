@@ -39,7 +39,11 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 			if len(approved) < needed {
 				scope := "this volume_server"
 				if perTarget {
-					scope = fmt.Sprintf("the %d volume_server(s) on this target", countVolumesForTarget(m, target))
+					n := m.volumeServerCountByTarget[target]
+					if n <= 0 {
+						n = 1
+					}
+					scope = fmt.Sprintf("the %d volume_server(s) on this target", n)
 				}
 				return fmt.Errorf(
 					"%s expects %d mountpoint(s) in cluster.yaml but %s has only %d plan-approved disk(s); "+
@@ -175,28 +179,6 @@ func requiredMountsForTarget(m *Manager, vs *spec.VolumeServerSpec, target strin
 	return n, false
 }
 
-// countVolumesForTarget reports how many volume_server entries point
-// at the given SSH target. Best-effort; relies on requiredDisksByTarget
-// being non-nil.
-func countVolumesForTarget(m *Manager, target string) int {
-	// We don't keep the spec list around, only the aggregated count.
-	// Surface a friendlier label when we have the aggregate.
-	if _, ok := m.requiredDisksByTarget[target]; ok {
-		return countMatchingTarget(m, target)
-	}
-	return 1
-}
-
-// countMatchingTarget walks back through requiredDisksByTarget for a
-// quick count — currently we only know the total mountpoints, not the
-// volume_server count. Approximate with an "at least one" indicator
-// suitable for error messages.
-func countMatchingTarget(m *Manager, target string) int {
-	if v, ok := m.requiredDisksByTarget[target]; ok && v > 0 {
-		return v // upper bound: at most one folder per server in per-disk shape
-	}
-	return 1
-}
 
 // prepareUnmountedDisksOnce gates prepareUnmountedDisks behind a
 // per-SSH-target sync.Once. With the per-disk volume_server shape
