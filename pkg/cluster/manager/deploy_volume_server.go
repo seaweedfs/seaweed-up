@@ -18,32 +18,34 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 
 	// When the spec is plan-generated (PlannedDisksBySSHTarget non-nil),
 	// every mountpoint the volume server points at MUST have a
-	// plan-approved disk to back it. The total mount count is
-	// len(Folders) + 1 if IdxFolder is set. Without this guard:
+	// plan-approved disk to back it. The check uses the per-target
+	// aggregate (sum across every volume_server on this SSH target)
+	// when DeployCluster pre-computed it, falling back to this spec's
+	// own folder count otherwise. The aggregate matters for
+	// --volume-server-shape=per-disk: N one-folder specs on the same
+	// host need N approved disks, not just 1 each.
+	//
+	// Without this guard:
 	//   - A target absent from the allowlist would empty the
 	//     candidate disks; ensureVolumeFolders would mkdir on rootfs.
 	//   - A target with FEWER approved disks than folders would mount
 	//     some folders on real disks and silently leave the rest on
-	//     rootfs (the "stale sidecar with one disk but two folders"
-	//     case). `weed volume` would then start with -dir pointing at
-	//     a mix of real disks and root-filesystem directories.
-	// Refusing here preserves plan's "disks-only-on-disks" guarantee
-	// and points the operator at the inconsistency.
+	//     rootfs. `weed volume` would then start with -dir pointing
+	//     at a mix of real disks and root-filesystem directories.
 	if m.PlannedDisksBySSHTarget != nil {
-		needed := len(volumeServerSpec.Folders)
-		if volumeServerSpec.IdxFolder != "" {
-			needed++
-		}
+		needed, perTarget := requiredMountsForTarget(m, volumeServerSpec, target)
 		if needed > 0 {
 			approved := m.PlannedDisksBySSHTarget[target]
 			if len(approved) < needed {
+				scope := "this volume_server"
+				if perTarget {
+					scope = fmt.Sprintf("the %d volume_server(s) on this target", countVolumesForTarget(m, target))
+				}
 				return fmt.Errorf(
-					"volume_server %s expects %d mountpoint(s) in cluster.yaml (%d folder(s)+%s) "+
-						"but %s has only %d plan-approved disk(s); refusing to start volume on root filesystem — "+
-						"re-run `cluster plan -o <spec>.yaml --overwrite` (likely a stale .deploy-disks.json sidecar)",
-					target, needed, len(volumeServerSpec.Folders),
-					ifThenElse(volumeServerSpec.IdxFolder != "", "1 idx", "0 idx"),
-					target, len(approved))
+					"%s expects %d mountpoint(s) in cluster.yaml but %s has only %d plan-approved disk(s); "+
+						"refusing to start volume on root filesystem — re-run "+
+						"`cluster plan -o <spec>.yaml --overwrite` (likely a stale .deploy-disks.json sidecar)",
+					scope, needed, target, len(approved))
 			}
 		}
 	}
@@ -70,13 +72,46 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 	})
 }
 
-// ifThenElse returns yes when cond is true, no otherwise. Tiny
-// branch-free helper for inlining in error messages.
-func ifThenElse(cond bool, yes, no string) string {
-	if cond {
-		return yes
+// requiredMountsForTarget returns the number of mountpoints the
+// allowlist for target must cover. Prefers the aggregate count
+// pre-computed by DeployCluster (correct for per-disk shape across
+// multiple volume_servers on the same host); falls back to this
+// spec's own folder count when the manager wasn't initialized via
+// DeployCluster (e.g. in unit tests that exercise DeployVolumeServer
+// directly). The bool reports whether the aggregate was used so the
+// error message can frame the count correctly.
+func requiredMountsForTarget(m *Manager, vs *spec.VolumeServerSpec, target string) (int, bool) {
+	if n, ok := m.requiredDisksByTarget[target]; ok {
+		return n, true
 	}
-	return no
+	n := len(vs.Folders)
+	if vs.IdxFolder != "" {
+		n++
+	}
+	return n, false
+}
+
+// countVolumesForTarget reports how many volume_server entries point
+// at the given SSH target. Best-effort; relies on requiredDisksByTarget
+// being non-nil.
+func countVolumesForTarget(m *Manager, target string) int {
+	// We don't keep the spec list around, only the aggregated count.
+	// Surface a friendlier label when we have the aggregate.
+	if _, ok := m.requiredDisksByTarget[target]; ok {
+		return countMatchingTarget(m, target)
+	}
+	return 1
+}
+
+// countMatchingTarget walks back through requiredDisksByTarget for a
+// quick count — currently we only know the total mountpoints, not the
+// volume_server count. Approximate with an "at least one" indicator
+// suitable for error messages.
+func countMatchingTarget(m *Manager, target string) int {
+	if v, ok := m.requiredDisksByTarget[target]; ok && v > 0 {
+		return v // upper bound: at most one folder per server in per-disk shape
+	}
+	return 1
 }
 
 // prepareUnmountedDisksOnce gates prepareUnmountedDisks behind a

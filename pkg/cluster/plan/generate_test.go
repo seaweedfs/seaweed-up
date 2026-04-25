@@ -811,6 +811,120 @@ func TestDeriveFolders_autoIdxTier_customRatio(t *testing.T) {
 	}
 }
 
+func TestDeriveFolders_autoIdxTier_skipsClaimedFastDisk(t *testing.T) {
+	// Re-running plan against a host that's already serving the small
+	// fast disk as /data1 (data tier) MUST NOT silently re-route it
+	// to -dir.idx — that would orphan whatever volumes are stored
+	// there. The carve-out should be inactive (Idx empty) and the
+	// claimed disk should reappear in Data at its existing slot.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{
+				Path:       "/dev/nvme0n1",
+				Size:       100 * GiB,
+				FSType:     "ext4",
+				MountPoint: "/data1",
+				UUID:       "11111111-1111-1111-1111-111111111111",
+				Rotational: boolPtr(false),
+			},
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+			{Path: "/dev/sdc", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "" {
+		t.Errorf("Idx: got %q, want empty (the only fast disk is already cluster-claimed)", got.Idx)
+	}
+	if len(got.Data) != 3 {
+		t.Fatalf("Data: got %d entries, want 3 (claimed nvme + 2 fresh hdds): %+v", len(got.Data), got.Data)
+	}
+	if got.Data[0].Folder != "/data1" {
+		t.Errorf("claimed nvme should reappear at /data1, got %q", got.Data[0].Folder)
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_prefersFreshFastOverClaimed(t *testing.T) {
+	// A host with TWO fast disks where one is already serving and one
+	// is fresh. The fresh one is the legitimate carve-out target — the
+	// claimed one stays as data.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{
+				Path:       "/dev/nvme0n1",
+				Size:       100 * GiB,
+				FSType:     "ext4",
+				MountPoint: "/data1",
+				Rotational: boolPtr(false),
+			},
+			{Path: "/dev/nvme1n1", Size: 100 * GiB, Rotational: boolPtr(false)}, // fresh
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	// The fresh nvme1n1 gets allocated /data2 (since /data1 is reserved
+	// by the claimed nvme0n1) and is then the idx carve-out target.
+	if got.Idx != "/data2" {
+		t.Errorf("Idx: got %q, want /data2 (the fresh fast disk)", got.Idx)
+	}
+	// Data folders: claimed nvme at /data1 + the slow disk at /data3.
+	// (nvme1n1 is consumed by the idx carve-out.)
+	if len(got.Data) != 2 {
+		t.Fatalf("Data: got %d entries, want 2: %+v", len(got.Data), got.Data)
+	}
+	if got.Data[0].Folder != "/data1" {
+		t.Errorf("claimed fast disk should stay as /data1, got %q", got.Data[0].Folder)
+	}
+}
+
+func TestPickIdxTierEntry_referencesAllSlowDisksForSizeGap(t *testing.T) {
+	// Reduction test on the helper. Even though the only fresh fast
+	// disk is the only carve-out candidate, the size-gap comparison
+	// should run against the WHOLE slow tier (claimed + fresh), not
+	// just the fresh slow disks. Otherwise an all-claimed slow tier
+	// would compare against zero and the heuristic would be wrong.
+	const GiB = uint64(1024) * 1024 * 1024
+	entries := []classifiedDisk{
+		{
+			// claimed slow at /data1 — must still feed smallestSlow.
+			disk: probe.DiskFact{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+			slot: 1, mount: "/data1", isFresh: false,
+		},
+		{
+			// fresh fast — the carve-out candidate.
+			disk:    probe.DiskFact{Path: "/dev/nvme0n1", Size: 100 * GiB, Rotational: boolPtr(false)},
+			slot:    2, mount: "/data2", isFresh: true,
+		},
+	}
+	got := pickIdxTierEntry(entries, 0)
+	if got != 1 {
+		t.Errorf("pickIdxTierEntry: got %d, want 1 (the fresh fast disk index)", got)
+	}
+}
+
+func TestPickIdxTierEntry_allFastDisksClaimed(t *testing.T) {
+	// Every fast disk is already in service. No fresh fast → no
+	// carve-out candidate, even though the size-gap conditions are met.
+	const GiB = uint64(1024) * 1024 * 1024
+	entries := []classifiedDisk{
+		{disk: probe.DiskFact{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)}, slot: 1, mount: "/data1"},
+		{
+			disk: probe.DiskFact{
+				Path: "/dev/nvme0n1", Size: 100 * GiB,
+				FSType: "ext4", MountPoint: "/data2",
+				Rotational: boolPtr(false),
+			},
+			slot: 2, mount: "/data2", isFresh: false,
+		},
+	}
+	if got := pickIdxTierEntry(entries, 0); got != -1 {
+		t.Errorf("pickIdxTierEntry: got %d, want -1 (no fresh fast disks)", got)
+	}
+}
+
 func TestDeriveFolders_skipsFSTypeWithoutClaim(t *testing.T) {
 	// A disk that has a filesystem but no current mount and no fstab
 	// entry was probably formatted by something else. Be conservative:

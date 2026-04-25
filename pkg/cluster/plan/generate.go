@@ -568,12 +568,20 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 // pickIdxTierEntry returns the index (within entries) of the
 // non-rotational disk that should be carved out as the idx tier, or
 // -1 when the heuristic doesn't apply. Requires at least one
-// rotational and one non-rotational entry, plus a size ratio gap
-// below sizeRatio (default 1/3 when zero).
+// rotational and one non-rotational FRESH entry, plus a size ratio
+// gap below sizeRatio (default 1/3 when zero).
 //
-// Selection rule: the smallest non-rotational disk wins. In a tie
-// (e.g. two NVMe drives of equal size) we prefer NVMe paths over
-// /dev/sd* via path-prefix lexicography.
+// Cluster-claimed disks (already mounted at /data<N>) are excluded
+// from the carve-out: re-routing a previously-deployed data disk to
+// `weed volume -dir.idx` would orphan whatever data is currently
+// stored there. Operators who want to migrate a previously-deployed
+// host to use idx tiering should do it explicitly (drain, wipe,
+// re-deploy) — plan refuses to silently switch a serving disk's
+// role.
+//
+// Selection rule among eligible candidates: smallest non-rotational
+// fresh disk wins. In a tie (e.g. two NVMe drives of equal size) we
+// prefer the lexicographically-earlier path for determinism.
 func pickIdxTierEntry(entries []classifiedDisk, sizeRatio float64) int {
 	if sizeRatio <= 0 {
 		sizeRatio = 1.0 / 3.0
@@ -581,9 +589,11 @@ func pickIdxTierEntry(entries []classifiedDisk, sizeRatio float64) int {
 	smallestSlow, smallestFast := uint64(0), uint64(0)
 	smallestFastIdx := -1
 	for i, e := range entries {
+		// Reference smallestSlow over ALL disks (claimed + fresh) so
+		// the size comparison is against the actual data tier on the
+		// host, not just the fresh ones. But only consider FRESH
+		// non-rotational disks for the carve-out itself.
 		if e.disk.Rotational == nil {
-			// Tri-state: unknown → treat as slow conservatively
-			// (don't carve it out as the fast tier).
 			if smallestSlow == 0 || e.disk.Size < smallestSlow {
 				smallestSlow = e.disk.Size
 			}
@@ -593,17 +603,24 @@ func pickIdxTierEntry(entries []classifiedDisk, sizeRatio float64) int {
 			if smallestSlow == 0 || e.disk.Size < smallestSlow {
 				smallestSlow = e.disk.Size
 			}
-		} else {
-			if smallestFast == 0 || e.disk.Size < smallestFast ||
-				(e.disk.Size == smallestFast && e.disk.Path < entries[smallestFastIdx].disk.Path) {
-				smallestFast = e.disk.Size
-				smallestFastIdx = i
-			}
+			continue
+		}
+		// Fast disk. Skip if it's already serving cluster data —
+		// switching its role mid-life would lose access to whatever
+		// volumes it currently stores.
+		if !e.isFresh {
+			continue
+		}
+		if smallestFast == 0 || e.disk.Size < smallestFast ||
+			(e.disk.Size == smallestFast && e.disk.Path < entries[smallestFastIdx].disk.Path) {
+			smallestFast = e.disk.Size
+			smallestFastIdx = i
 		}
 	}
 	if smallestSlow == 0 || smallestFast == 0 {
-		// Need both tiers; uniform-fast and uniform-slow hosts get
-		// no idx carve-out.
+		// Need both tiers (any slow + a FRESH fast); uniform-fast,
+		// uniform-slow, and "all-fast-already-claimed" hosts get no
+		// idx carve-out.
 		return -1
 	}
 	if float64(smallestFast)/float64(smallestSlow) > sizeRatio {
@@ -689,4 +706,3 @@ func computeMax(sizeBytes uint64, reservePct, volumeSizeLimitMB int) int {
 	usableMiB := sizeMiB - reserveMiB
 	return int(usableMiB / uint64(volumeSizeLimitMB))
 }
-

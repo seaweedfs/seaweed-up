@@ -127,6 +127,71 @@ func TestDeployVolumeServer_idxFolderCountedTowardsRequired(t *testing.T) {
 	}
 }
 
+// TestComputeRequiredDisks_aggregatesPerTarget locks in the per-target
+// aggregation rule that backs the per-disk volume_server shape. Each
+// spec carries a single folder, but two specs share the same SSH
+// target — the host needs two approved disks, not one. Without the
+// aggregate, the per-spec allowlist check would clear each entry
+// individually and a one-disk stale sidecar would still pass.
+func TestComputeRequiredDisks_aggregatesPerTarget(t *testing.T) {
+	v1 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data1"}}}
+	v2 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data2"}}}
+	// Different SSH port on the same IP — should be a SEPARATE bucket.
+	v3 := &spec.VolumeServerSpec{Ip: "10.0.0.21", PortSsh: 2222, Folders: []*spec.FolderSpec{{Folder: "/data1"}}}
+	// Different host entirely with an idx folder; idx must be counted.
+	v4 := &spec.VolumeServerSpec{Ip: "10.0.0.22", PortSsh: 22, Folders: []*spec.FolderSpec{{Folder: "/data2"}}, IdxFolder: "/data1"}
+
+	got := computeRequiredDisks([]*spec.VolumeServerSpec{v1, v2, v3, v4, nil})
+	want := map[string]int{
+		"10.0.0.21:22":   2, // v1 + v2 aggregated
+		"10.0.0.21:2222": 1, // v3 lives on a different SSH endpoint
+		"10.0.0.22:22":   2, // v4: 1 folder + 1 idx
+	}
+	if len(got) != len(want) {
+		t.Fatalf("computeRequiredDisks returned %d targets, want %d: got=%v", len(got), len(want), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("target %s: got %d, want %d", k, got[k], v)
+		}
+	}
+}
+
+// TestDeployVolumeServer_refusesPerDiskShapeWithStaleSidecar is the
+// regression test for the per-spec-vs-per-target gap. Two one-folder
+// specs on the same SSH target each individually pass the per-spec
+// folder count, but the host's aggregate (2) exceeds the stale
+// sidecar's one approved disk. Without aggregation the second
+// /data<N> would get mkdir'd on rootfs.
+func TestDeployVolumeServer_refusesPerDiskShapeWithStaleSidecar(t *testing.T) {
+	m := NewManager()
+	m.PrepareVolumeDisks = true
+	m.PlannedDisksBySSHTarget = map[string]map[string]struct{}{
+		"10.0.0.21:22": {"/dev/sdb": {}}, // one disk
+	}
+	// Mimic what DeployCluster would do before the fan-out.
+	v1 := &spec.VolumeServerSpec{
+		Ip: "10.0.0.21", PortSsh: 22, Port: 8080,
+		Folders: []*spec.FolderSpec{{Folder: "/data1"}},
+	}
+	v2 := &spec.VolumeServerSpec{
+		Ip: "10.0.0.21", PortSsh: 22, Port: 8081,
+		Folders: []*spec.FolderSpec{{Folder: "/data2"}},
+	}
+	m.requiredDisksByTarget = computeRequiredDisks([]*spec.VolumeServerSpec{v1, v2})
+
+	err := m.DeployVolumeServer(nil, v1, 0)
+	if err == nil {
+		t.Fatal("expected refusal: aggregate of 2 mountpoints on target with 1 approved disk")
+	}
+	if !strings.Contains(err.Error(), "expects 2 mountpoint") {
+		t.Errorf("error should report the aggregate count (2), got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "volume_server(s) on this target") {
+		t.Errorf("error should label the scope as per-target, got: %v", err)
+	}
+}
+
 // TestPrepareUnmountedDisksOnce_perHost confirms the sync.Once gate
 // dedups calls per host IP. With the per-disk volume_server shape,
 // DeployCluster fires multiple DeployVolumeServer calls into the same

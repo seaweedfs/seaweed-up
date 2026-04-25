@@ -84,6 +84,14 @@ type Manager struct {
 	// assignment. The sync.Once per ip:ssh-port makes the disk prep
 	// effectively a per-target pre-step.
 	prepareDisksOnce sync.Map // <ip>:<ssh-port> -> *prepareDisksGate
+	// requiredDisksByTarget aggregates each SSH target's mountpoint
+	// demand (sum of Folders+IdxFolder across every volume_server
+	// pointing at it). Populated once by DeployCluster before the
+	// concurrent volume-server fan-out so DeployVolumeServer's
+	// allowlist check sees the host total rather than per-spec
+	// folder count — necessary for --volume-server-shape=per-disk
+	// where one host has many one-folder specs.
+	requiredDisksByTarget map[string]int
 	HostPrep         bool
 	ForceRestart     bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the

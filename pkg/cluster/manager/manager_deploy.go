@@ -106,6 +106,28 @@ func resolveWorkerDefaultAdmins(specification *spec.Specification) ([]string, er
 	return defaultAdmins, nil
 }
 
+// computeRequiredDisks sums up `len(Folders) + (1 if IdxFolder else 0)`
+// across every volume_server, grouped by `<ip>:<ssh-port>`. Used by
+// DeployVolumeServer's allowlist check so per-disk-shape topologies
+// (multiple volume_servers on the same host, each with one folder)
+// validate against the host's aggregate disk demand instead of each
+// spec's own folder count.
+func computeRequiredDisks(volumes []*spec.VolumeServerSpec) map[string]int {
+	out := make(map[string]int)
+	for _, vs := range volumes {
+		if vs == nil {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d", vs.Ip, vs.PortSsh)
+		n := len(vs.Folders)
+		if vs.IdxFolder != "" {
+			n++
+		}
+		out[key] += n
+	}
+	return out
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateS3Prerequisites(specification); err != nil {
 		return err
@@ -158,6 +180,15 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 
 	if m.shouldInstall("volume") {
+		// Pre-compute per-SSH-target mountpoint demand across every
+		// volume_server. With --volume-server-shape=per-disk, plan
+		// emits N entries on the same target each carrying one folder;
+		// the per-spec allowlist check would clear each individually
+		// even when their sum exceeds the planner's approved-disk
+		// count for that target. The aggregate map lets
+		// DeployVolumeServer compare against the host total instead.
+		m.requiredDisksByTarget = computeRequiredDisks(specification.VolumeServers)
+
 		for index, volumeSpec := range specification.VolumeServers {
 			eg.Go(func() error {
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {

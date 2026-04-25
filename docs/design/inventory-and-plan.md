@@ -235,14 +235,21 @@ or service-only updates without lugging the sidecar around.
 Hand-written `cluster.yaml` files (no marker, no sidecars) take
 the legacy scan-everything path unchanged.
 
-Per-volume-server folder count is also enforced. Each volume_server
-must have at least `len(folders) + (1 if dir.idx else 0)` plan-
-approved disks for its SSH target. A stale sidecar with one disk
-but two `folders:` would otherwise mount one disk on `/data1` and
-silently leave `/data2` as a plain rootfs directory, with `weed
-volume -dir=/data1,/data2` then writing data into the OS root
-filesystem. The check fires before any SSH work; the error names
-the missing disk count and tells the operator to re-run plan.
+Per-target folder count is also enforced. Before fanning the
+volume-server deploys out, `DeployCluster` aggregates each SSH
+target's mountpoint demand (`sum of len(folders) + (1 if
+dir.idx else 0)` across every `volume_server` whose
+`<ip>:<ssh-port>` matches). Each `DeployVolumeServer` then refuses
+the host unless the deploy-disks sidecar carries at least the host
+total of plan-approved disks. The aggregate matters for
+`--volume-server-shape=per-disk`: N one-folder specs on the same
+host need N approved disks even though each spec individually only
+asks for one. Without the aggregate, a stale one-disk sidecar would
+clear each per-disk spec individually and `prepareUnmountedDisks`
+(gated to run once per target) would mount only the first disk —
+the later `/data<N>` folders would be silently mkdir'd on rootfs.
+The check fires before any SSH work; the error names the host
+total, the approved count, and tells the operator to re-run plan.
 
 **Deterministic /data<N> assignment.** `prepareUnmountedDisks` walks
 its candidate disks in path-sorted order so deploy's `/data<N>`
@@ -261,11 +268,19 @@ For each inventory host (skipping `external` hosts during probe):
   When `defaults.disk.auto_idx_tier` is set on the inventory and a host
   has both rotational and non-rotational eligible disks with an
   unambiguous size gap (smallest fast ≤ `idx_tier_size_ratio` × smallest
-  slow; default 1/3), plan carves the smallest non-rotational disk out
-  of the data tier and routes it to `weed volume -dir.idx=…`. Matches
-  the helm chart's `volume.idx` field — small fast SSDs hold the
-  per-volume `.idx` files while bulk HDDs absorb the data writes.
+  slow; default 1/3), plan carves the smallest **fresh** non-rotational
+  disk out of the data tier and routes it to `weed volume -dir.idx=…`.
+  Matches the helm chart's `volume.idx` field — small fast SSDs hold
+  the per-volume `.idx` files while bulk HDDs absorb the data writes.
   Hosts with uniform tiers (all-fast or all-slow) get no carve-out.
+  Cluster-claimed fast disks (already mounted at `/data<N>`) are
+  excluded from carve-out: re-routing a previously-deployed data disk
+  to `-dir.idx` would orphan whatever volumes are stored there. To
+  enable idx tiering on a host that already has a fast disk in service,
+  drain it, wipe it, and re-deploy explicitly. The size-gap reference
+  for the slow tier still includes claimed disks, so the comparison
+  matches the host's actual data tier rather than only its fresh
+  fraction.
   - Before classification, the planner drops any disk the probe
     flagged as **ephemeral** (cloud instance store: AWS Nitro
     instance store via the `Amazon EC2 NVMe Instance Storage` MODEL
