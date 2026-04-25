@@ -427,19 +427,20 @@ func ipSentinelKeyFn(suffix string) func(*yaml.Node) string {
 
 // --- per-section entry builders -------------------------------------------
 //
-// Each helper marshals one spec slice into serverEntry values: an ip:port
-// key + the yaml.Node fragment to append. Marshalling goes through
-// yaml.Marshal so the field order, omitempty, and scalar style match
-// what greenfield Marshal would emit — appended entries are
-// indistinguishable from same-section entries written on first run.
+// Each helper turns one spec slice into serverEntry values: an
+// ip:port key + the yaml.Node fragment to append. Encoding goes
+// through specToYAMLNode (yaml.Node.Encode) so field order,
+// omitempty, and scalar style match what greenfield Marshal would
+// emit — appended entries are indistinguishable from same-section
+// entries written on first run.
 
 // Each helper returns an error rather than silently swallowing
 // specToYAMLNode failures: silently skipping an inventory host would
 // make it disappear from the merged cluster.yaml without any warning,
 // and the operator would only notice when deploy didn't reach that
-// host. yaml.Marshal failing on a well-formed Go struct is exotic,
-// but propagating the error costs nothing and keeps the signal-loss
-// fail-closed.
+// host. yaml.Node.Encode failing on a well-formed Go struct is
+// exotic, but propagating the error costs nothing and keeps the
+// signal-loss fail-closed.
 
 func masterEntries(ms []*spec.MasterServerSpec) ([]serverEntry, error) {
 	out := make([]serverEntry, 0, len(ms))
