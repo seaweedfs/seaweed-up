@@ -91,6 +91,25 @@ type DiskDefaults struct {
 	// want SeaweedFS on instance store (cache tier, scratch volume)
 	// can flip this on.
 	AllowEphemeral bool `yaml:"allow_ephemeral,omitempty"`
+
+	// AutoIdxTier, when true, lets the planner carve a single small
+	// fast disk out of each volume host's eligible disks and use it
+	// as the `-dir.idx` mount (the `weed volume -dir.idx=…` flag,
+	// equivalent to the helm chart's volume.idx field). The heuristic
+	// fires only when the host has BOTH rotational and non-rotational
+	// disks AND the smallest non-rotational disk is at most
+	// IdxTierSizeRatio of the smallest rotational one — the
+	// "small fast SSD + bulk HDDs" pattern. When fast disks are
+	// comparable in size to slow disks, or when the host is all
+	// uniform tier, no idx carve-out happens.
+	AutoIdxTier bool `yaml:"auto_idx_tier,omitempty"`
+
+	// IdxTierSizeRatio is the maximum ratio of (smallest fast disk) /
+	// (smallest slow disk) at which auto_idx_tier fires. 0 falls back
+	// to a built-in default (1/3). Set lower (e.g. 0.1) to require a
+	// more pronounced size gap, higher (e.g. 0.5) to be more
+	// permissive. Ignored when AutoIdxTier is false.
+	IdxTierSizeRatio float64 `yaml:"idx_tier_size_ratio,omitempty"`
 }
 
 // Host is a single entry in the inventory's hosts list.

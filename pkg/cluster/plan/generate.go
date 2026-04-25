@@ -217,8 +217,8 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 					}
 					eligibleFacts.Disks = kept
 				}
-				folders := deriveFolders(eligibleFacts, inv.Defaults.Disk, volumeSizeLimitMB)
-				if len(folders) == 0 {
+				derived := deriveFolders(eligibleFacts, inv.Defaults.Disk, volumeSizeLimitMB)
+				if len(derived.Data) == 0 {
 					// Emitting a volume_server entry with no folders
 					// would start `weed volume` without -dir, which
 					// silently runs against the working directory
@@ -232,17 +232,26 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 					// increments per disk so the processes don't collide
 					// on the same host (8080, 8081, 8082, ...). gRPC
 					// follows SeaweedFS convention of "service port +
-					// 10000".
-					for i, folder := range folders {
+					// 10000". The carved-out idx folder (if any) goes
+					// on the FIRST emitted volume_server only — sharing
+					// one .idx directory across multiple volume
+					// processes on the same host would collide on the
+					// .idx files.
+					for i, folder := range derived.Data {
 						port := DefaultVolumePort + i
 						vs := newVolumeSpec(h, ssh, []*spec.FolderSpec{folder})
 						vs.Port = port
 						vs.PortGrpc = port + 10000
+						if i == 0 {
+							vs.IdxFolder = derived.Idx
+						}
 						out.VolumeServers = append(out.VolumeServers, vs)
 					}
 					continue
 				}
-				out.VolumeServers = append(out.VolumeServers, newVolumeSpec(h, ssh, folders))
+				vs := newVolumeSpec(h, ssh, derived.Data)
+				vs.IdxFolder = derived.Idx
+				out.VolumeServers = append(out.VolumeServers, vs)
 			case inventory.RoleFiler:
 				out.FilerServers = append(out.FilerServers, newFilerSpec(h, ssh, opts.FilerBackend))
 			case inventory.RoleS3:
@@ -393,18 +402,48 @@ func newEnvoySpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.EnvoyServerS
 
 // --- disk layout derivation ----------------------------------------------
 
+// derivedFolders is the result of deriveFolders: data folders the
+// volume server should bind via -dir, plus an optional dedicated path
+// for -dir.idx when the auto_idx_tier heuristic carved one out.
+type derivedFolders struct {
+	Data []*spec.FolderSpec
+	// Idx is the /dataN mountpoint reserved for `weed volume -dir.idx`.
+	// Empty when the heuristic didn't fire (uniform tiering, or
+	// auto_idx_tier disabled). Always one of the assigned /dataN
+	// slots — deploy still mounts it as a normal disk; the volume
+	// server just points its index files there instead of next to
+	// the data files.
+	Idx string
+}
+
+// classifiedDisk is one row in deriveFolders' classification table.
+// Lifted to package scope so pickIdxTierEntry can reference it.
+type classifiedDisk struct {
+	disk    probe.DiskFact
+	mount   string // /dataN
+	slot    int    // N
+	isFresh bool   // needs provisioning + slot allocation
+}
+
 // deriveFolders maps probed disks onto FolderSpec entries per the
 // design doc's three-bucket classification (cluster-claimed / fresh /
 // foreign-or-fs-without-claim). For each kept disk, emit a /data<N>
 // folder and compute Max from usable size (after reserve_pct headroom,
 // capped at 10 GiB).
 //
-// When the host has no eligible disks the result is an empty slice;
-// Generate then drops the host's volume role entirely and records the
-// host in Report.VolumeHostsNoDisks. Emitting a volume_server with
+// When defaults.disk.auto_idx_tier is set and the host has both
+// rotational and non-rotational disks with a clear size gap, the
+// smallest non-rotational disk is carved out of the data tier and
+// returned as derivedFolders.Idx — the volume server will use it for
+// the -dir.idx flag (small fast indexes alongside large slow data,
+// matching the helm chart's volume.idx pattern).
+//
+// When the host has no eligible disks the result is empty; Generate
+// then drops the host's volume role entirely and records the host in
+// Report.VolumeHostsNoDisks. Emitting a volume_server with
 // `folders: []` would silently start `weed volume` against the working
 // directory because addToBuffer omits -dir for an empty list.
-func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSizeLimitMB int) []*spec.FolderSpec {
+func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSizeLimitMB int) derivedFolders {
 	reservePct := disk.ReservePct
 	if reservePct == 0 {
 		reservePct = 5 // documented default
@@ -431,14 +470,8 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 	// "skip" (foreign mount, filesystem with no /data claim, excluded).
 	// Second pass: allocate /data<N> slots to fresh disks, skipping
 	// numbers already claimed.
-	type classified struct {
-		disk    probe.DiskFact
-		mount   string // /dataN
-		slot    int    // N
-		isFresh bool   // needs provisioning + slot allocation
-	}
 	reserved := make(map[int]struct{})
-	var entries []classified
+	var entries []classifiedDisk
 
 	for _, d := range facts.Disks {
 		if isExcluded(d.Path, literalExcluded, prefixExcluded) {
@@ -454,7 +487,7 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 		if effective != "" {
 			if n, ok := parseClusterDataMount(effective); ok {
 				reserved[n] = struct{}{}
-				entries = append(entries, classified{disk: d, mount: effective, slot: n})
+				entries = append(entries, classifiedDisk{disk: d, mount: effective, slot: n})
 			}
 			// Foreign mount (/, /home, /var/lib/docker, …) — skip
 			// silently. We never reformat a disk we didn't claim.
@@ -466,7 +499,7 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 			// other use. Be conservative: skip and don't reformat.
 			continue
 		}
-		entries = append(entries, classified{disk: d, isFresh: true})
+		entries = append(entries, classifiedDisk{disk: d, isFresh: true})
 	}
 
 	// Allocate /data<N> for fresh disks, walking N upward and skipping
@@ -501,15 +534,84 @@ func deriveFolders(facts probe.HostFacts, disk inventory.DiskDefaults, volumeSiz
 		return entries[i].slot < entries[j].slot
 	})
 
+	// auto_idx_tier carve-out: when the host has both rotational and
+	// non-rotational eligible disks AND the smallest non-rotational
+	// is small enough relative to the smallest rotational, designate
+	// it as the index disk and pull it out of the data tier. The
+	// "smallest fast disk + bulk slow disks" pattern is the canonical
+	// SeaweedFS tiering for hosts with mixed media; see the helm
+	// chart's volume.idx field. Conservative: only fires for an
+	// unambiguous size gap, so a host with a few similarly-sized
+	// SSDs stays uniform.
+	idxIndex := -1
+	if disk.AutoIdxTier {
+		idxIndex = pickIdxTierEntry(entries, disk.IdxTierSizeRatio)
+	}
+
 	folders := make([]*spec.FolderSpec, 0, len(entries))
-	for _, e := range entries {
-		folders = append(folders, &spec.FolderSpec{
+	var idxMount string
+	for i, e := range entries {
+		fs := &spec.FolderSpec{
 			Folder:   e.mount,
 			DiskType: diskTypeFor(e.disk, disk),
 			Max:      computeMax(e.disk.Size, reservePct, volumeSizeLimitMB),
-		})
+		}
+		if i == idxIndex {
+			idxMount = e.mount
+			continue // omit from data folders; -dir.idx covers it
+		}
+		folders = append(folders, fs)
 	}
-	return folders
+	return derivedFolders{Data: folders, Idx: idxMount}
+}
+
+// pickIdxTierEntry returns the index (within entries) of the
+// non-rotational disk that should be carved out as the idx tier, or
+// -1 when the heuristic doesn't apply. Requires at least one
+// rotational and one non-rotational entry, plus a size ratio gap
+// below sizeRatio (default 1/3 when zero).
+//
+// Selection rule: the smallest non-rotational disk wins. In a tie
+// (e.g. two NVMe drives of equal size) we prefer NVMe paths over
+// /dev/sd* via path-prefix lexicography.
+func pickIdxTierEntry(entries []classifiedDisk, sizeRatio float64) int {
+	if sizeRatio <= 0 {
+		sizeRatio = 1.0 / 3.0
+	}
+	smallestSlow, smallestFast := uint64(0), uint64(0)
+	smallestFastIdx := -1
+	for i, e := range entries {
+		if e.disk.Rotational == nil {
+			// Tri-state: unknown → treat as slow conservatively
+			// (don't carve it out as the fast tier).
+			if smallestSlow == 0 || e.disk.Size < smallestSlow {
+				smallestSlow = e.disk.Size
+			}
+			continue
+		}
+		if *e.disk.Rotational {
+			if smallestSlow == 0 || e.disk.Size < smallestSlow {
+				smallestSlow = e.disk.Size
+			}
+		} else {
+			if smallestFast == 0 || e.disk.Size < smallestFast ||
+				(e.disk.Size == smallestFast && e.disk.Path < entries[smallestFastIdx].disk.Path) {
+				smallestFast = e.disk.Size
+				smallestFastIdx = i
+			}
+		}
+	}
+	if smallestSlow == 0 || smallestFast == 0 {
+		// Need both tiers; uniform-fast and uniform-slow hosts get
+		// no idx carve-out.
+		return -1
+	}
+	if float64(smallestFast)/float64(smallestSlow) > sizeRatio {
+		// Fast disk isn't notably smaller than the slow tier — not
+		// the small-fast pattern this heuristic targets.
+		return -1
+	}
+	return smallestFastIdx
 }
 
 // clusterDataMountRE recognizes the /data<N> mountpoint convention used

@@ -252,7 +252,15 @@ underlying disk.
 For each inventory host (skipping `external` hosts during probe):
 
 - **master**: append `MasterServerSpec{Ip, Port: 9333, PortSsh: …}`.
-- **volume**: append `VolumeServerSpec{Ip, Port: 8080, Folders: derive(facts.Disks)}`.
+- **volume**: append `VolumeServerSpec{Ip, Port: 8080, Folders, IdxFolder: derive(facts.Disks)}`.
+  When `defaults.disk.auto_idx_tier` is set on the inventory and a host
+  has both rotational and non-rotational eligible disks with an
+  unambiguous size gap (smallest fast ≤ `idx_tier_size_ratio` × smallest
+  slow; default 1/3), plan carves the smallest non-rotational disk out
+  of the data tier and routes it to `weed volume -dir.idx=…`. Matches
+  the helm chart's `volume.idx` field — small fast SSDs hold the
+  per-volume `.idx` files while bulk HDDs absorb the data writes.
+  Hosts with uniform tiers (all-fast or all-slow) get no carve-out.
   - Before classification, the planner drops any disk the probe
     flagged as **ephemeral** (cloud instance store: AWS Nitro
     instance store via the `Amazon EC2 NVMe Instance Storage` MODEL

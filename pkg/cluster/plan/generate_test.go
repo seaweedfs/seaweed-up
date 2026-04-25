@@ -606,7 +606,7 @@ func TestDeriveFolders_literalExcludeDoesNotCatchSiblings(t *testing.T) {
 			{Path: "/dev/nvme0n11", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
 		},
 	}
-	folders := deriveFolders(facts, disk, 5000)
+	folders := deriveFolders(facts, disk, 5000).Data
 	if len(folders) != 2 {
 		t.Fatalf("expected 2 folders (nvme0n10 + nvme0n11); got %d: %+v", len(folders), folders)
 	}
@@ -638,7 +638,7 @@ func TestDeriveFolders_recognizesCurrentlyMountedDataN(t *testing.T) {
 			},
 		},
 	}
-	folders := deriveFolders(facts, disk, 5000)
+	folders := deriveFolders(facts, disk, 5000).Data
 	if len(folders) != 2 {
 		t.Fatalf("got %d folders, want 2: %+v", len(folders), folders)
 	}
@@ -665,7 +665,7 @@ func TestDeriveFolders_recognizesFstabClaim(t *testing.T) {
 			},
 		},
 	}
-	folders := deriveFolders(facts, disk, 5000)
+	folders := deriveFolders(facts, disk, 5000).Data
 	if len(folders) != 1 || folders[0].Folder != "/data1" {
 		t.Errorf("got %+v, want one folder at /data1", folders)
 	}
@@ -681,7 +681,7 @@ func TestDeriveFolders_skipsForeignMount(t *testing.T) {
 			{Path: "/dev/sdc", Size: 100 << 30, FSType: "ext4", FstabMountPoint: "/home", Rotational: boolPtr(false)},
 		},
 	}
-	if folders := deriveFolders(facts, disk, 5000); len(folders) != 0 {
+	if folders := deriveFolders(facts, disk, 5000).Data; len(folders) != 0 {
 		t.Errorf("got %d folders, want 0 (foreign mounts): %+v", len(folders), folders)
 	}
 }
@@ -697,7 +697,7 @@ func TestDeriveFolders_allocatesAroundClaimedSlots(t *testing.T) {
 			{Path: "/dev/sdb", Size: 100 << 30, FSType: "ext4", MountPoint: "/data1", Rotational: boolPtr(false)}, // claimed
 		},
 	}
-	folders := deriveFolders(facts, disk, 5000)
+	folders := deriveFolders(facts, disk, 5000).Data
 	if len(folders) != 2 {
 		t.Fatalf("got %d folders, want 2: %+v", len(folders), folders)
 	}
@@ -707,6 +707,107 @@ func TestDeriveFolders_allocatesAroundClaimedSlots(t *testing.T) {
 	}
 	if folders[1].Folder != "/data2" {
 		t.Errorf("folder[1] = %q, want /data2 (sdc routed around the claim)", folders[1].Folder)
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_carvesSmallFastDisk(t *testing.T) {
+	// The classic "small fast SSD + bulk HDDs" pattern: planner
+	// designates the smallest non-rotational disk as the idx tier,
+	// drops it from data folders, and surfaces it via derived.Idx.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 100 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+			{Path: "/dev/sdc", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "/data1" {
+		t.Errorf("Idx: got %q, want /data1 (the small NVMe)", got.Idx)
+	}
+	if len(got.Data) != 2 {
+		t.Fatalf("Data: got %d entries, want 2 (idx carved out): %+v", len(got.Data), got.Data)
+	}
+	if got.Data[0].Folder != "/data2" || got.Data[1].Folder != "/data3" {
+		t.Errorf("Data folders: got %v / %v, want /data2 / /data3", got.Data[0].Folder, got.Data[1].Folder)
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_uniformDisksNoCarveOut(t *testing.T) {
+	// All-uniform tier (3 NVMe of similar size). The heuristic should
+	// not carve one out — sharing index storage across volumes on the
+	// same uniform tier provides no benefit.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 1000 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/nvme1n1", Size: 1000 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/nvme2n1", Size: 1000 * GiB, Rotational: boolPtr(false)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "" {
+		t.Errorf("Idx: got %q, want empty (uniform fast tier)", got.Idx)
+	}
+	if len(got.Data) != 3 {
+		t.Errorf("Data: got %d entries, want all 3", len(got.Data))
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_disabledLeavesAllAsData(t *testing.T) {
+	// auto_idx_tier defaults to false; without it the small NVMe just
+	// becomes another data folder.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{} // AutoIdxTier left at zero value
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 100 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "" {
+		t.Errorf("Idx should be empty when auto_idx_tier is off, got %q", got.Idx)
+	}
+	if len(got.Data) != 2 {
+		t.Errorf("Data: got %d, want both disks as data", len(got.Data))
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_fastNotSmallEnough(t *testing.T) {
+	// Fast disk is 50% of slow — above the default 1/3 threshold, so
+	// no carve-out (treat as uniform).
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 2000 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "" {
+		t.Errorf("Idx should be empty when fast/slow ratio is above threshold, got %q", got.Idx)
+	}
+}
+
+func TestDeriveFolders_autoIdxTier_customRatio(t *testing.T) {
+	// Operator can widen the ratio to be more permissive. With 0.5,
+	// a 50%-sized fast disk DOES qualify.
+	const GiB = uint64(1024) * 1024 * 1024
+	disk := inventory.DiskDefaults{AutoIdxTier: true, IdxTierSizeRatio: 0.5}
+	facts := probe.HostFacts{
+		Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 2000 * GiB, Rotational: boolPtr(false)},
+			{Path: "/dev/sdb", Size: 4000 * GiB, Rotational: boolPtr(true)},
+		},
+	}
+	got := deriveFolders(facts, disk, 5000)
+	if got.Idx != "/data1" {
+		t.Errorf("Idx: got %q, want /data1 (with widened ratio)", got.Idx)
 	}
 }
 
@@ -720,7 +821,7 @@ func TestDeriveFolders_skipsFSTypeWithoutClaim(t *testing.T) {
 			{Path: "/dev/sdb", Size: 100 << 30, FSType: "ext4", Rotational: boolPtr(false)},
 		},
 	}
-	if folders := deriveFolders(facts, disk, 5000); len(folders) != 0 {
+	if folders := deriveFolders(facts, disk, 5000).Data; len(folders) != 0 {
 		t.Errorf("got %d folders, want 0 (fs without claim): %+v", len(folders), folders)
 	}
 }
@@ -737,7 +838,7 @@ func TestDeriveFolders_prefixExcludeStillWorks(t *testing.T) {
 			{Path: "/dev/nvme0n1", Size: 100 * 1024 * 1024 * 1024, Rotational: boolPtr(false)},
 		},
 	}
-	folders := deriveFolders(facts, disk, 5000)
+	folders := deriveFolders(facts, disk, 5000).Data
 	if len(folders) != 1 {
 		t.Fatalf("expected 1 folder (only /dev/nvme0n1), got %d", len(folders))
 	}

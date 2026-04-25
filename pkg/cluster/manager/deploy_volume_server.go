@@ -80,7 +80,8 @@ func (m *Manager) prepareUnmountedDisksOnce(op operator.CommandOperator, target 
 // ensureVolumeFolders creates each configured -dir path on the remote host
 // before the volume server starts. SeaweedFS volume refuses to boot if any of
 // the -dir paths does not exist (Fatalf "Check Data Folder(-dir) Writable"),
-// so this must run on both initial deploys and rolling upgrades.
+// so this must run on both initial deploys and rolling upgrades. The
+// IdxFolder (-dir.idx target) gets the same treatment when set.
 func (m *Manager) ensureVolumeFolders(op operator.CommandOperator, volumeServerSpec *spec.VolumeServerSpec) error {
 	for _, folder := range volumeServerSpec.Folders {
 		if folder == nil || folder.Folder == "" {
@@ -88,6 +89,11 @@ func (m *Manager) ensureVolumeFolders(op operator.CommandOperator, volumeServerS
 		}
 		if err := m.sudo(op, fmt.Sprintf("mkdir -p %s", folder.Folder)); err != nil {
 			return fmt.Errorf("create volume data folder %s: %v", folder.Folder, err)
+		}
+	}
+	if volumeServerSpec.IdxFolder != "" {
+		if err := m.sudo(op, fmt.Sprintf("mkdir -p %s", volumeServerSpec.IdxFolder)); err != nil {
+			return fmt.Errorf("create volume idx folder %s: %v", volumeServerSpec.IdxFolder, err)
 		}
 	}
 	return nil
