@@ -218,7 +218,16 @@ For each inventory host (skipping `external` hosts during probe):
 
 - **master**: append `MasterServerSpec{Ip, Port: 9333, PortSsh: …}`.
 - **volume**: append `VolumeServerSpec{Ip, Port: 8080, Folders: derive(facts.Disks)}`.
-  - `derive` classifies each probed disk into one of three buckets
+  - Before classification, the planner drops any disk the probe
+    flagged as **ephemeral** (cloud instance store: AWS Nitro
+    instance store via the `Amazon EC2 NVMe Instance Storage` MODEL
+    string, GCP local SSD via `/dev/disk/by-id/google-local-*`
+    symlinks). Skipped disks land in `Report.EphemeralDisksSkipped`
+    so the operator sees what was excluded. Set
+    `defaults.disk.allow_ephemeral: true` to keep them — useful for
+    cache or scratch tiers where the data is intentionally
+    disposable.
+  - `derive` classifies each remaining disk into one of three buckets
     using *effective mountpoint* = `MountPoint || FstabMountPoint`
     (the kernel's view first, fstab as a fallback for disks that
     haven't been auto-mounted yet on this boot):

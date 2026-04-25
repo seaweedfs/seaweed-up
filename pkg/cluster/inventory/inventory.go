@@ -81,6 +81,16 @@ type DiskDefaults struct {
 	// DiskTypeAuto, when true, derives FolderSpec.DiskType from lsblk's
 	// rotational bit: rotational → "hdd", otherwise "ssd".
 	DiskTypeAuto bool `yaml:"disk_type_auto,omitempty"`
+
+	// AllowEphemeral, when true, lets the planner emit folders for
+	// disks the probe identified as cloud instance-store / ephemeral
+	// (AWS Nitro instance store, GCP local SSD). Default is false:
+	// ephemeral disks would lose all SeaweedFS data on stop/start, so
+	// the planner skips them and surfaces them in
+	// Report.EphemeralDisksSkipped instead. Operators who actually
+	// want SeaweedFS on instance store (cache tier, scratch volume)
+	// can flip this on.
+	AllowEphemeral bool `yaml:"allow_ephemeral,omitempty"`
 }
 
 // Host is a single entry in the inventory's hosts list.

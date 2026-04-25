@@ -209,6 +209,13 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 	// fstab is normally world-readable, but we tolerate read errors.
 	fstabByUUID, fstabByPath := probeFstab(r)
 
+	// Per-cloud ephemeral-disk identification. Both checks are
+	// best-effort and tolerate missing tools / empty results. The
+	// planner skips ephemeral disks by default; operators who want
+	// SeaweedFS on instance store (cache tier, scratch volume, …)
+	// can opt in via inventory's defaults.disk.allow_ephemeral.
+	gcpEphemeral := probeGCPLocalSSDPaths(r)
+
 	out := make([]DiskFact, 0, len(devs))
 	for _, d := range devs {
 		if d.Type != "disk" {
@@ -225,6 +232,12 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 			MountPoint: d.MountPoint,
 			Rotational: d.Rotational,
 			Model:      d.Model,
+		}
+		if isAWSEphemeralModel(d.Model) {
+			fact.Ephemeral = true
+		}
+		if _, ok := gcpEphemeral[d.Path]; ok {
+			fact.Ephemeral = true
 		}
 		// Only fill FstabMountPoint when MountPoint is empty — the
 		// kernel's view wins when both are present (and they should
@@ -246,6 +259,38 @@ func probeDisks(r Runner, globs []string) []DiskFact {
 		out = append(out, fact)
 	}
 	return out
+}
+
+// isAWSEphemeralModel returns true when the lsblk MODEL column points
+// at AWS Nitro instance-store hardware. EBS volumes report
+// "Amazon Elastic Block Store"; instance store reports
+// "Amazon EC2 NVMe Instance Storage". The substring match tolerates
+// trailing whitespace lsblk sometimes emits.
+func isAWSEphemeralModel(model string) bool {
+	return strings.Contains(strings.TrimSpace(model), "Amazon EC2 NVMe Instance Storage")
+}
+
+// probeGCPLocalSSDPaths returns the canonical /dev paths of any GCP
+// local-SSD devices on the host. GCP exposes them under
+// /dev/disk/by-id/google-local-* symlinks; the persistent-disk
+// counterpart uses google-pd-* and is durable. Best-effort — if the
+// command fails or no symlinks exist the result is an empty set.
+func probeGCPLocalSSDPaths(r Runner) map[string]struct{} {
+	paths := make(map[string]struct{})
+	// `for ...; do [ -e ]` guards against the literal-glob pattern
+	// when nothing matches; readlink -f resolves the symlink to a
+	// /dev/sdX or /dev/nvme*n1 path.
+	out, err := r.Output(`for d in /dev/disk/by-id/google-local-*; do [ -e "$d" ] && readlink -f "$d"; done 2>/dev/null`)
+	if err != nil {
+		return paths
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "/dev/") {
+			paths[line] = struct{}{}
+		}
+	}
+	return paths
 }
 
 // probeFstab returns two maps keying on `UUID=…` and on `/dev/…` device

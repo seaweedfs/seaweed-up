@@ -100,12 +100,26 @@ type Report struct {
 	// because no eligible free disks were discovered on them. Other
 	// roles on the same host (master, filer, ...) are still emitted.
 	VolumeHostsNoDisks []string
+
+	// EphemeralDisksSkipped lists ephemeral / instance-store disks
+	// that the planner refused to provision (AWS Nitro instance store,
+	// GCP local SSD). Set defaults.disk.allow_ephemeral on the
+	// inventory to opt in.
+	EphemeralDisksSkipped []EphemeralSkip
 }
 
 // ProbeFailure is a single skipped host + the reason.
 type ProbeFailure struct {
 	IP     string
 	Reason string
+}
+
+// EphemeralSkip is the per-host list of ephemeral disk paths that the
+// planner refused to include because defaults.disk.allow_ephemeral was
+// false.
+type EphemeralSkip struct {
+	IP    string
+	Disks []string
 }
 
 // Generate turns the inventory + probed facts into a Specification plus
@@ -185,7 +199,26 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 			case inventory.RoleMaster:
 				out.MasterServers = append(out.MasterServers, newMasterSpec(h, ssh))
 			case inventory.RoleVolume:
-				folders := deriveFolders(facts, inv.Defaults.Disk, volumeSizeLimitMB)
+				eligibleFacts := facts
+				if !inv.Defaults.Disk.AllowEphemeral {
+					var kept []probe.DiskFact
+					var skipped []string
+					for _, d := range facts.Disks {
+						if d.Ephemeral {
+							skipped = append(skipped, d.Path)
+							continue
+						}
+						kept = append(kept, d)
+					}
+					if len(skipped) > 0 {
+						report.EphemeralDisksSkipped = append(report.EphemeralDisksSkipped, EphemeralSkip{
+							IP:    h.IP,
+							Disks: skipped,
+						})
+					}
+					eligibleFacts.Disks = kept
+				}
+				folders := deriveFolders(eligibleFacts, inv.Defaults.Disk, volumeSizeLimitMB)
 				if len(folders) == 0 {
 					// Emitting a volume_server entry with no folders
 					// would start `weed volume` without -dir, which

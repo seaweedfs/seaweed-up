@@ -61,6 +61,13 @@ type DiskFact struct {
 	FstabMountPoint string `json:"fstab_mountpoint,omitempty"`
 	Rotational      *bool  `json:"rotational,omitempty"`
 	Model           string `json:"model,omitempty"`
+	// Ephemeral is true when the probe identified this disk as
+	// non-durable (cloud instance store: AWS Nitro EC2 instance store,
+	// GCP local SSD). The planner skips ephemeral disks by default
+	// unless the inventory sets defaults.disk.allow_ephemeral. Detection
+	// is heuristic and best-effort — see probe.go for the per-cloud
+	// signals used.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // NetIface is one non-loopback network interface. SpeedMbps is 0 when

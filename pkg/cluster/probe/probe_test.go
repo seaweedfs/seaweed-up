@@ -194,6 +194,76 @@ func TestProbeFstab_unreadableReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestProbeDisks_marksAWSNitroEphemeral(t *testing.T) {
+	// AWS Nitro instance store reports MODEL "Amazon EC2 NVMe Instance
+	// Storage"; EBS reports "Amazon Elastic Block Store". Verify the
+	// model-string heuristic flags only the instance-store disk.
+	lsblkOut := strings.Join([]string{
+		`KNAME="nvme0n1" PATH="/dev/nvme0n1" SIZE="500107862016" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="259:0" FSUSED="" ROTA="0" MODEL="Amazon Elastic Block Store"`,
+		`KNAME="nvme1n1" PATH="/dev/nvme1n1" SIZE="500107862016" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="259:1" FSUSED="" ROTA="0" MODEL="Amazon EC2 NVMe Instance Storage"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/nvme*"})
+	if len(disks) != 2 {
+		t.Fatalf("got %d disks, want 2", len(disks))
+	}
+	for _, d := range disks {
+		switch d.Path {
+		case "/dev/nvme0n1":
+			if d.Ephemeral {
+				t.Errorf("EBS disk %s wrongly flagged ephemeral", d.Path)
+			}
+		case "/dev/nvme1n1":
+			if !d.Ephemeral {
+				t.Errorf("instance-store disk %s should be ephemeral", d.Path)
+			}
+		}
+	}
+}
+
+func TestProbeDisks_marksGCPLocalSSDEphemeral(t *testing.T) {
+	// GCP local SSDs are reachable as /dev/disk/by-id/google-local-*
+	// symlinks. The probe runs a small shell snippet to resolve those
+	// symlinks to /dev/sdX paths and uses that to flag ephemeral.
+	lsblkOut := strings.Join([]string{
+		`KNAME="sda" PATH="/dev/sda" SIZE="1000000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:0" FSUSED="" ROTA="0" MODEL="PersistentDisk"`,
+		`KNAME="sdb" PATH="/dev/sdb" SIZE="375000000000" LABEL="" UUID="" FSTYPE="" TYPE="disk" MOUNTPOINT="" MAJ:MIN="8:16" FSUSED="" ROTA="0" MODEL="EphemeralDisk"`,
+	}, "\n") + "\n"
+	op := &scriptedOp{scriptedRunner: scriptedRunner{responses: []scriptedResponse{
+		{contains: "lsblk", out: lsblkOut},
+		{contains: "google-local", out: "/dev/sdb\n"},
+	}}}
+
+	disks := probeDisks(op, []string{"/dev/sd*"})
+	if len(disks) != 2 {
+		t.Fatalf("got %d disks, want 2", len(disks))
+	}
+	for _, d := range disks {
+		switch d.Path {
+		case "/dev/sda":
+			if d.Ephemeral {
+				t.Errorf("PD disk %s wrongly flagged ephemeral", d.Path)
+			}
+		case "/dev/sdb":
+			if !d.Ephemeral {
+				t.Errorf("local SSD %s should be ephemeral", d.Path)
+			}
+		}
+	}
+}
+
+func TestProbeGCPLocalSSDPaths_emptyOnNoMatch(t *testing.T) {
+	r := &scriptedRunner{responses: []scriptedResponse{
+		{contains: "google-local", err: fmt.Errorf("no such file")},
+	}}
+	if got := probeGCPLocalSSDPaths(r); len(got) != 0 {
+		t.Errorf("expected empty map, got %+v", got)
+	}
+}
+
 func TestProbeDisks_picksUpFstabClaim(t *testing.T) {
 	// A disk with FSType set but no current MountPoint should pick up
 	// its mountpoint from /etc/fstab so the planner can recognize it

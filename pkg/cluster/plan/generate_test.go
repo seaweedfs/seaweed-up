@@ -178,6 +178,72 @@ func TestGenerate_perDiskVolumeShape(t *testing.T) {
 	}
 }
 
+func TestGenerate_skipsEphemeralDisksByDefault(t *testing.T) {
+	// AllowEphemeral defaults to false. A host with one durable disk and
+	// one ephemeral disk should produce one folder for the durable disk
+	// and report the ephemeral one in Report.EphemeralDisksSkipped.
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.1", Roles: []string{"master"}},
+			{IP: "10.0.0.21", Roles: []string{"volume"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: []probe.DiskFact{
+			{Path: "/dev/nvme0n1", Size: 100 << 30, Rotational: boolPtr(false)},
+			{Path: "/dev/nvme1n1", Size: 100 << 30, Rotational: boolPtr(false), Ephemeral: true},
+		}},
+	}
+	spec, report, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(spec.VolumeServers) != 1 {
+		t.Fatalf("got %d volume entries, want 1", len(spec.VolumeServers))
+	}
+	if len(spec.VolumeServers[0].Folders) != 1 {
+		t.Errorf("got %d folders, want 1 (ephemeral skipped)", len(spec.VolumeServers[0].Folders))
+	}
+	if len(report.EphemeralDisksSkipped) != 1 ||
+		len(report.EphemeralDisksSkipped[0].Disks) != 1 ||
+		report.EphemeralDisksSkipped[0].Disks[0] != "/dev/nvme1n1" {
+		t.Errorf("Report.EphemeralDisksSkipped = %+v, want one entry for /dev/nvme1n1", report.EphemeralDisksSkipped)
+	}
+}
+
+func TestGenerate_includesEphemeralWhenAllowed(t *testing.T) {
+	// defaults.disk.allow_ephemeral: true is the cache-tier escape
+	// hatch. Ephemeral disks pass through and become regular folders.
+	inv := &inventory.Inventory{
+		Defaults: inventory.Defaults{Disk: inventory.DiskDefaults{AllowEphemeral: true}},
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.1", Roles: []string{"master"}},
+			{IP: "10.0.0.21", Roles: []string{"volume"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: []probe.DiskFact{
+			{Path: "/dev/nvme1n1", Size: 100 << 30, Rotational: boolPtr(false), Ephemeral: true},
+		}},
+	}
+	spec, report, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(spec.VolumeServers) != 1 || len(spec.VolumeServers[0].Folders) != 1 {
+		t.Errorf("expected 1 volume / 1 folder; got %+v", spec.VolumeServers)
+	}
+	if len(report.EphemeralDisksSkipped) != 0 {
+		t.Errorf("Report.EphemeralDisksSkipped should be empty when allowed; got %+v", report.EphemeralDisksSkipped)
+	}
+}
+
 func TestGenerate_unknownVolumeShape(t *testing.T) {
 	inv := &inventory.Inventory{
 		Hosts: []inventory.Host{{IP: "10.0.0.1", Roles: []string{"master"}}},

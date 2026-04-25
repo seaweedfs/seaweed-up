@@ -225,6 +225,12 @@ func printSkipReport(report plan.Report) {
 			fmt.Fprintf(os.Stderr, "  %s\n", ip)
 		}
 	}
+	if len(report.EphemeralDisksSkipped) > 0 {
+		_, _ = color.New(color.FgYellow).Fprintln(os.Stderr, "skipped ephemeral disks (set defaults.disk.allow_ephemeral: true to override):")
+		for _, e := range report.EphemeralDisksSkipped {
+			fmt.Fprintf(os.Stderr, "  %s: %s\n", e.IP, strings.Join(e.Disks, ", "))
+		}
+	}
 }
 
 // resolveFilerBackend picks the filer DSN from (in priority order)
