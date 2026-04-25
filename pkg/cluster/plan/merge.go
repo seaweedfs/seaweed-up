@@ -25,11 +25,13 @@ type MergeReport struct {
 	// YAML but didn't show up in this plan run's freshly-Generated
 	// spec. The most common cause is a host removed from inventory,
 	// but a host can also be missing because its probe failed or
-	// because the volume role got dropped (no eligible disks). The
-	// underlying signal is "deploy will not target this entry on
-	// the next run" — operators decide whether to delete the row,
-	// fix the probe, or repair the inventory. Append-merge never
-	// removes a YAML entry; the warning is advisory.
+	// because the volume role got dropped (no eligible disks).
+	//
+	// Append-merge never removes a YAML entry, and `cluster deploy
+	// -f cluster.yaml` will keep targeting it. The warning is the
+	// signal that plan and the YAML have drifted out of agreement —
+	// operators decide whether to delete the row, fix the probe, or
+	// repair the inventory.
 	Orphaned []string
 	// Unparseable lists `section: line N` markers for existing entries
 	// the dedup index couldn't extract a key from (typically a hand-
