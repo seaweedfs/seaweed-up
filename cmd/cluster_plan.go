@@ -184,8 +184,9 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	if mergeMode {
 		// Append-merge into the existing file. Merge() guarantees
 		// byte-stable output for unchanged inventory; new hosts are
-		// appended at each section's tail and orphans + drift surface
-		// in mergeReport without mutating existing entries.
+		// appended at each section's tail and orphans surface in
+		// mergeReport without mutating existing entries. (Drift
+		// detection lands in Phase 4 alongside --refresh-host.)
 		existing, readErr := os.ReadFile(opts.OutputFile)
 		if readErr != nil {
 			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
