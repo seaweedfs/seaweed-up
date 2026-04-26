@@ -43,7 +43,13 @@ type ClusterPlanOptions struct {
 	OutputFile    string
 	Overwrite     bool
 	JSONOutput    bool
-	Concurrency   int
+	// DryRun runs the full probe + synthesis pipeline but writes
+	// nothing. Instead it prints a unified diff between the existing
+	// -o file (or empty for greenfield) and the body plan would write.
+	// Implies -o (no diff target makes no sense without it). Sidecars
+	// are reported as "would write" lines but not actually written.
+	DryRun      bool
+	Concurrency int
 
 	ClusterName       string
 	VolumeSizeLimitMB int
@@ -71,7 +77,8 @@ When -o points at an existing cluster.yaml the run append-merges in
 place: new inventory hosts are appended at each section's tail and
 existing entries (along with operator hand-edits and comments) are
 preserved byte-for-byte. Pass --overwrite to regenerate from scratch
-instead. See docs/design/inventory-and-plan.md.
+instead. Pass --dry-run to print a unified diff of what -o would
+change without writing anything. See docs/design/inventory-and-plan.md.
 
 Purely read-only on the target hosts.`,
 		Example: `  # Probe-only (JSON to stdout)
@@ -80,6 +87,9 @@ Purely read-only on the target hosts.`,
   # Synthesize a cluster.yaml for review (greenfield or append-merge)
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
       --filer-backend-file /etc/seaweed-up/filer.dsn
+
+  # Preview what plan would change without writing anything
+  seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --dry-run
 
   # Force regeneration, discarding any existing cluster.yaml
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --overwrite`,
@@ -92,6 +102,7 @@ Purely read-only on the target hosts.`,
 	cmd.Flags().StringVarP(&opts.OutputFile, "output", "o", "", "write a synthesized cluster.yaml to this path")
 	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "regenerate -o from scratch instead of append-merging into the existing file")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "write probe facts as JSON to stdout (default when -o is absent)")
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "print a unified diff of what -o would change instead of writing it (requires -o)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 10, "max concurrent probes")
 
 	cmd.Flags().StringVar(&opts.ClusterName, "cluster-name", "", "cluster_name to stamp on the generated cluster.yaml")
@@ -119,6 +130,13 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	}
 	if opts.OutputFile != "" && opts.JSONOutput {
 		return fmt.Errorf("--json and -o are mutually exclusive; use one")
+	}
+	if opts.DryRun && opts.OutputFile == "" {
+		// --dry-run prints a diff of what -o would change. Without -o
+		// there's no diff target and nothing to preview — refuse with
+		// a clear error rather than silently turning into a probe-only
+		// run that ignores the flag.
+		return fmt.Errorf("--dry-run requires -o; pass the path you'd like to preview against")
 	}
 
 	// Three modes for `-o cluster.yaml`:
@@ -197,6 +215,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	var (
 		body        []byte
 		mergeReport *plan.MergeReport
+		existing    []byte // populated in mergeMode; reused by --dry-run
 	)
 	if mergeMode {
 		// Append-merge into the existing file. Merge() guarantees
@@ -204,7 +223,8 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		// appended at each section's tail and orphans surface in
 		// mergeReport without mutating existing entries. (Drift
 		// detection lands in Phase 4 alongside --refresh-host.)
-		existing, readErr := os.ReadFile(opts.OutputFile)
+		var readErr error
+		existing, readErr = os.ReadFile(opts.OutputFile)
 		if readErr != nil {
 			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
 		}
@@ -220,6 +240,44 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 			return fmt.Errorf("marshal cluster spec: %w", err)
 		}
 	}
+	// In --dry-run mode, render a unified diff to stdout against the
+	// existing -o (or empty for greenfield / missing file) and exit
+	// without touching any file. The sidecars are summarized but not
+	// written so the preview is purely read-only on disk.
+	if opts.DryRun {
+		// In merge mode `existing` was already loaded above; reuse it
+		// so the diff bytes match the bytes Merge consumed (no TOCTOU
+		// window between the two reads). Outside merge mode (greenfield
+		// or --overwrite path) read here, tolerating ErrNotExist as the
+		// legitimate greenfield case. Any other read failure surfaces
+		// so an EACCES doesn't silently degrade the preview.
+		if !mergeMode {
+			loaded, readErr := os.ReadFile(opts.OutputFile)
+			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+				return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
+			}
+			existing = loaded
+		}
+		diff := plan.UnifiedDiff(opts.OutputFile, existing, body)
+		if diff == "" {
+			fmt.Fprintf(os.Stderr, "no changes — %s would be byte-identical to the existing file\n", opts.OutputFile)
+		} else {
+			fmt.Print(diff)
+		}
+		// Match the layout of the write-path summary (one artifact
+		// per line, same column shape) so operators eyeballing both
+		// modes see consistent messaging.
+		fmt.Fprintf(os.Stderr,
+			"dry-run: would write %s (%d masters, %d volumes, %d filers)\n"+
+				"dry-run: would write %s (%d host facts)\n"+
+				"dry-run: would write %s (%d targets, %d eligible disks)\n",
+			opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
+			factsFile, len(facts),
+			deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
+		printMergeReport(mergeReport)
+		return nil
+	}
+
 	// The generated cluster.yaml may carry the filer metadata-store DSN
 	// (username + password) in config:, so restrict to the deploying
 	// user. Matches gosec G306 / CWE-276.

@@ -4,7 +4,9 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -126,6 +128,70 @@ func TestClusterPlanGreenfield(t *testing.T) {
 	overwriteOut, overwriteErr := runPlan(h, invPath, outPath, "--overwrite")
 	if overwriteErr != nil {
 		t.Errorf("cluster plan --overwrite failed: %v\noutput:\n%s", overwriteErr, overwriteOut)
+	}
+}
+
+// TestClusterPlanDryRun exercises the --dry-run preview path against
+// real SSH-reachable harness containers. The contract:
+//   - Greenfield --dry-run writes nothing and prints the proposed
+//     cluster.yaml as a unified-diff hunk of additions.
+//   - --dry-run after a write produces a "no changes" message
+//     (inventory + facts unchanged → byte-stable merge).
+//   - The on-disk cluster.yaml must not change across dry-run calls.
+func TestClusterPlanDryRun(t *testing.T) {
+	h := New(t, 2)
+	hosts := h.Hosts()
+	invPath := filepath.Join(h.TempDir(), "inventory.yaml")
+	if err := writeInventory(invPath, hosts, h.SSHKey()); err != nil {
+		t.Fatalf("write inventory: %v", err)
+	}
+	outPath := filepath.Join(h.TempDir(), "cluster.yaml")
+	h.BuildBinary(t)
+
+	// 1. Greenfield --dry-run: -o doesn't exist yet. Output should
+	//    show every line of the would-be cluster.yaml as a `+` line
+	//    and the file must NOT be created on disk.
+	dryOut, dryErr := runPlan(h, invPath, outPath, "--dry-run")
+	if dryErr != nil {
+		t.Fatalf("greenfield --dry-run failed: %v\noutput:\n%s", dryErr, dryOut)
+	}
+	if _, err := os.Stat(outPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("--dry-run wrote cluster.yaml on disk (stat err = %v)", err)
+	}
+	if !strings.Contains(dryOut, "+cluster_name:") {
+		t.Errorf("greenfield --dry-run output missing `+cluster_name:` line:\n%s", dryOut)
+	}
+	if !strings.Contains(dryOut, "dry-run: would write") {
+		t.Errorf("missing dry-run summary line:\n%s", dryOut)
+	}
+
+	// 2. Now actually write the file, then re-run --dry-run with the
+	//    same inventory. With identical inventory + facts the merge is
+	//    a no-op, so the diff should be empty and the helper prints
+	//    the "no changes" notice on stderr.
+	writeOut, writeErr := runPlan(h, invPath, outPath)
+	if writeErr != nil {
+		t.Fatalf("plan (write) failed: %v\noutput:\n%s", writeErr, writeOut)
+	}
+	originalBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", outPath, err)
+	}
+	noopOut, noopErr := runPlan(h, invPath, outPath, "--dry-run")
+	if noopErr != nil {
+		t.Fatalf("no-op --dry-run failed: %v\noutput:\n%s", noopErr, noopOut)
+	}
+	if !strings.Contains(noopOut, "no changes") {
+		t.Errorf("no-op --dry-run should announce 'no changes':\n%s", noopOut)
+	}
+	// Byte-identity guard: dry-run must not mutate the file.
+	afterBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("re-read %s after dry-run: %v", outPath, err)
+	}
+	if string(afterBytes) != string(originalBytes) {
+		t.Errorf("--dry-run mutated cluster.yaml bytes:\n--- before ---\n%s\n--- after ---\n%s",
+			originalBytes, afterBytes)
 	}
 }
 
