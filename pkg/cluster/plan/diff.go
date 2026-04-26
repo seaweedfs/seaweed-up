@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -31,7 +32,7 @@ import (
 // new file shows as one large hunk of `+` lines; for an append-merge
 // no-op the function returns "" without printing any header.
 func UnifiedDiff(name string, oldText, newText []byte) string {
-	if string(oldText) == string(newText) {
+	if bytes.Equal(oldText, newText) {
 		return ""
 	}
 	oldLines := splitLines(oldText)
