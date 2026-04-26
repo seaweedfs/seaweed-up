@@ -167,6 +167,14 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		}
 	}
 
+	// Load the previous facts sidecar (if any) BEFORE the fresh
+	// probe runs. We need both sides to compute drift after Generate
+	// completes; deferring the read until after we'd already
+	// overwritten the file would lose the comparison baseline.
+	// Missing or unreadable is fine — drift detection silently
+	// degrades to "no prior facts" in that case.
+	prevFacts := loadPreviousFacts(opts.OutputFile)
+
 	hosts := inv.ProbeHosts()
 	if len(hosts) == 0 {
 		return fmt.Errorf("no probeable hosts in %s (all entries are 'external'?)", opts.InventoryFile)
@@ -210,6 +218,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// deploy share one source of truth on disk eligibility (including
 	// inventory excludes and ephemeral filtering).
 	allowlist := plan.EligibleDisks(inv, factsByTarget)
+	driftReports := plan.DetectDrift(prevFacts, facts)
 	printSkipReport(report)
 
 	var (
@@ -221,8 +230,9 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		// Append-merge into the existing file. Merge() guarantees
 		// byte-stable output for unchanged inventory; new hosts are
 		// appended at each section's tail and orphans surface in
-		// mergeReport without mutating existing entries. (Drift
-		// detection lands in Phase 4 alongside --refresh-host.)
+		// mergeReport without mutating existing entries. Hardware
+		// drift surfaces independently via plan.DetectDrift earlier
+		// in this function.
 		var readErr error
 		existing, readErr = os.ReadFile(opts.OutputFile)
 		if readErr != nil {
@@ -275,6 +285,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 			factsFile, len(facts),
 			deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
 		printMergeReport(mergeReport)
+		printDriftReport(driftReports)
 		return nil
 	}
 
@@ -336,6 +347,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		factsFile, len(facts),
 		deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
 	printMergeReport(mergeReport) // no-op when nil (greenfield path)
+	printDriftReport(driftReports)
 	return nil
 }
 
@@ -344,9 +356,8 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 // produced by this plan run — removed from inventory, probe failed,
 // or role was dropped because no eligible disks were found). All go
 // to stderr to keep stdout reserved for --json mode and because
-// they're advisory. Drift detection (warn when a previously-emitted
-// entry's facts changed) is deferred to Phase 4 alongside
-// `--refresh-host`.
+// they're advisory. Hardware drift between successive plan runs is
+// surfaced separately by printDriftReport.
 func printMergeReport(r *plan.MergeReport) {
 	if r == nil {
 		return
@@ -373,6 +384,52 @@ func printMergeReport(r *plan.MergeReport) {
 	for _, u := range r.Unparseable {
 		fmt.Fprintf(os.Stderr, "  WARN: unparseable existing entry — fresh inventory hosts won't dedupe against it: %s\n", u)
 	}
+}
+
+// printDriftReport surfaces per-host hardware drift between the
+// previous plan run's facts.json and the fresh probe. Each entry
+// becomes a stderr WARN line so operators see hosts whose disk set
+// has shifted since the last run — typically a drive added or
+// pulled without anyone re-running plan in between. Empty input is
+// the common case (no prior facts, or no observed drift) and
+// silently produces no output.
+func printDriftReport(reports []plan.DriftReport) {
+	for _, r := range reports {
+		var parts []string
+		if len(r.Added) > 0 {
+			parts = append(parts, "added "+strings.Join(r.Added, ","))
+		}
+		if len(r.Removed) > 0 {
+			parts = append(parts, "removed "+strings.Join(r.Removed, ","))
+		}
+		fmt.Fprintf(os.Stderr, "  WARN: drift on %s (since previous facts.json): %s\n",
+			r.Host, strings.Join(parts, "; "))
+	}
+}
+
+// loadPreviousFacts reads the cluster.facts.json sidecar that the
+// previous plan run wrote next to outputFile. Returns nil for any
+// failure path — missing file (greenfield), unreadable file, or
+// unparseable JSON. Drift detection is a soft signal; we never want
+// a corrupted sidecar to fail the whole plan run.
+//
+// outputFile may be empty (the --json branch never reaches this
+// helper, so the empty-path case is unreachable in practice but
+// handled defensively).
+func loadPreviousFacts(outputFile string) []probe.HostFacts {
+	if outputFile == "" {
+		return nil
+	}
+	path := factsFilePath(outputFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var prev []probe.HostFacts
+	if err := json.Unmarshal(data, &prev); err != nil {
+		return nil
+	}
+	return prev
 }
 
 func countAllowlistDisks(a plan.DeployDiskAllowlist) int {

@@ -100,6 +100,48 @@ func TestLoadPlannedDeployDisks_handWritten_noMarkerNoSidecar_returnsNilNil(t *t
 	}
 }
 
+// TestLoadPreviousFacts covers the soft-fail loader: a missing,
+// unreadable, or malformed cluster.facts.json must return nil rather
+// than failing the plan run. Drift detection is a soft advisory
+// signal; a corrupt sidecar shouldn't block legitimate work.
+func TestLoadPreviousFacts(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "cluster.yaml")
+	factsPath := factsFilePath(specPath)
+
+	// 1. Missing sidecar → nil.
+	if got := loadPreviousFacts(specPath); got != nil {
+		t.Errorf("missing sidecar should return nil, got %+v", got)
+	}
+
+	// 2. Malformed JSON → nil (soft fail, no error surface).
+	if err := os.WriteFile(factsPath, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadPreviousFacts(specPath); got != nil {
+		t.Errorf("malformed sidecar should return nil, got %+v", got)
+	}
+
+	// 3. Valid JSON → decoded into HostFacts.
+	body := `[{"ip":"10.0.0.21","ssh_port":22,"disks":[{"path":"/dev/sdb","size_bytes":0}]}]`
+	if err := os.WriteFile(factsPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadPreviousFacts(specPath)
+	if len(got) != 1 {
+		t.Fatalf("valid sidecar: got %d facts, want 1", len(got))
+	}
+	if got[0].IP != "10.0.0.21" || len(got[0].Disks) != 1 || got[0].Disks[0].Path != "/dev/sdb" {
+		t.Errorf("decoded facts mismatch: %+v", got[0])
+	}
+
+	// 4. Empty outputFile → nil (defensive; the --json branch never
+	// reaches this helper, but the contract is "nil when nothing to load").
+	if got := loadPreviousFacts(""); got != nil {
+		t.Errorf("empty path should return nil, got %+v", got)
+	}
+}
+
 // TestRunClusterPlan_dryRunRequiresOutput pins down the early-exit
 // validation: --dry-run renders a diff against -o, so without -o
 // there's no diff target to render. The check fires before any SSH

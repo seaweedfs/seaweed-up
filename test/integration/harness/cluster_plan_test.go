@@ -131,6 +131,77 @@ func TestClusterPlanGreenfield(t *testing.T) {
 	}
 }
 
+// TestClusterPlanDriftWarning exercises the drift-detection path:
+// run plan to write the initial facts.json, then mutate the recorded
+// facts file by hand to simulate a host whose disk set has shifted
+// since the last run, and re-run plan. The drift warning must
+// surface on stderr; the on-disk cluster.yaml stays mid-merge.
+//
+// Mutating the sidecar instead of actually attaching/detaching disks
+// keeps the test independent of container disk topology.
+func TestClusterPlanDriftWarning(t *testing.T) {
+	h := New(t, 2)
+	hosts := h.Hosts()
+	invPath := filepath.Join(h.TempDir(), "inventory.yaml")
+	if err := writeInventory(invPath, hosts, h.SSHKey()); err != nil {
+		t.Fatalf("write inventory: %v", err)
+	}
+	outPath := filepath.Join(h.TempDir(), "cluster.yaml")
+	h.BuildBinary(t)
+
+	// 1. Initial plan run: writes facts.json from scratch, no prior to
+	//    compare against, so no drift WARN is expected.
+	out, err := runPlan(h, invPath, outPath)
+	if err != nil {
+		t.Fatalf("initial plan failed: %v\noutput:\n%s", err, out)
+	}
+	if strings.Contains(out, "WARN: drift") {
+		t.Errorf("first plan run should produce no drift warning; got:\n%s", out)
+	}
+
+	// 2. Inject a fake "previous" disk path into facts.json so the
+	//    next run sees it as removed-since-last-run drift.
+	factsPath := strings.TrimSuffix(outPath, ".yaml") + ".facts.json"
+	factsRaw, err := os.ReadFile(factsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", factsPath, err)
+	}
+	var prev []map[string]any
+	if err := json.Unmarshal(factsRaw, &prev); err != nil {
+		t.Fatalf("decode facts.json: %v", err)
+	}
+	if len(prev) == 0 {
+		t.Fatalf("facts.json carried no host entries: %s", factsRaw)
+	}
+	// Append a phantom disk path to the first host. The next probe
+	// won't see it (the harness containers don't expose extra
+	// devices), so DetectDrift will flag it as Removed.
+	prev[0]["disks"] = []map[string]any{
+		{"path": "/dev/zzphantom", "size_bytes": 0},
+	}
+	mutated, err := json.MarshalIndent(prev, "", "  ")
+	if err != nil {
+		t.Fatalf("re-encode facts.json: %v", err)
+	}
+	if err := os.WriteFile(factsPath, append(mutated, '\n'), 0o600); err != nil {
+		t.Fatalf("write %s: %v", factsPath, err)
+	}
+
+	// 3. Re-run plan. The drift detector reads the mutated facts.json
+	//    BEFORE overwriting it, compares against the fresh probe, and
+	//    surfaces "WARN: drift on <host>: removed /dev/zzphantom".
+	out, err = runPlan(h, invPath, outPath)
+	if err != nil {
+		t.Fatalf("second plan failed: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "WARN: drift") {
+		t.Errorf("expected drift warning after sidecar mutation; got:\n%s", out)
+	}
+	if !strings.Contains(out, "/dev/zzphantom") {
+		t.Errorf("drift warning should name the phantom path; got:\n%s", out)
+	}
+}
+
 // TestClusterPlanDryRun exercises the --dry-run preview path against
 // real SSH-reachable harness containers. The contract:
 //   - Greenfield --dry-run writes nothing and prints the proposed

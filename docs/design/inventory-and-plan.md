@@ -206,15 +206,16 @@ planner observed.
 When `-o cluster.yaml` is set, the same `HostFacts` slice is also
 written as a sidecar JSON file alongside the synthesized YAML
 (`cluster.yaml` → `cluster.facts.json`). The sidecar gives operators
-a record of what the probe saw without re-running it, and is the
-intended audit input for Phase 4 drift detection (compare the
-previously-recorded facts against a fresh probe to surface hosts
-whose disks/NICs/CPU shape have changed since plan last ran).
-Phase 3 append-merge does not consult the sidecar — it works
-entirely off the parsed YAML — but it does refresh it on every
-run so the next plan/diff has current facts to compare against.
-Sidecar permissions are `0600` since facts include hostnames, NIC
-addresses, and disk model strings.
+a record of what the probe saw without re-running it, and feeds
+Phase 4 drift detection: each plan run loads the previous sidecar
+*before* the fresh probe writes its replacement, then `plan.DetectDrift`
+compares per-host disk paths and surfaces a `WARN: drift on <host>` line
+when the set has changed (see `pkg/cluster/plan/drift.go`). Phase 3
+append-merge does not consult the sidecar — it works entirely off the
+parsed YAML — but it does refresh it on every run so the next drift
+comparison has current facts to compare against. Sidecar permissions
+are `0600` since facts include hostnames, NIC addresses, and disk
+model strings.
 
 `cluster plan -o` also writes an explicit allowlist sidecar at
 `cluster.deploy-disks.json` carrying the *result* of plan's
@@ -639,11 +640,18 @@ pkg/disks/
      `pkg/cluster/plan/diff.go`. Sidecars are summarized but not
      touched. Pairs naturally with append-merge: operators preview
      before letting plan mutate the file.
+   - **Drift detection** *(done)* — load the previous
+     `cluster.facts.json` before the fresh probe writes its
+     replacement; for each host present on both sides, compare disk
+     paths and surface a `WARN: drift on <host>: added /…; removed
+     /…` line so operators see hardware that's shifted since the
+     last plan run. Currently disk-path-only on purpose: size,
+     model, NIC, and CPU signals are too noisy on cloud hosts
+     (resizes, NIC reattach) to be worth flagging today; expand one
+     dimension at a time if real use surfaces a need. Implementation
+     in `pkg/cluster/plan/drift.go`.
    - `--refresh-host=<ip>` — re-emit a single host's entry from
      fresh facts without mutating the rest of the file.
-   - Drift detection — compare the previously-recorded
-     `cluster.facts.json` against a fresh probe and surface hosts
-     whose hardware shape has changed since plan last ran.
    - Inventory tag references (`tag: postgres-metadata` → DSN
      rewrite).
 
