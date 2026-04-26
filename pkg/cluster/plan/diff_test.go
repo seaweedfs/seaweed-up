@@ -35,9 +35,9 @@ func TestUnifiedDiff_appendOnly(t *testing.T) {
 	// Append-merge: old file is a prefix of the new file. The output
 	// should contain no `-` lines and the appended block should appear
 	// as a single hunk near the tail.
-	old := []byte("a\nb\nc\n")
-	new := []byte("a\nb\nc\nd\ne\n")
-	got := UnifiedDiff("cluster.yaml", old, new)
+	oldB := []byte("a\nb\nc\n")
+	newB := []byte("a\nb\nc\nd\ne\n")
+	got := UnifiedDiff("cluster.yaml", oldB, newB)
 	if strings.Contains(got, "\n-") {
 		t.Errorf("append-only diff contains removals:\n%s", got)
 	}
@@ -53,9 +53,9 @@ func TestUnifiedDiff_appendOnly(t *testing.T) {
 func TestUnifiedDiff_overwriteShowsBothSides(t *testing.T) {
 	// Overwrite: a single line edited mid-file. Should show both - and
 	// + on adjacent lines, with surrounding context.
-	old := []byte("a\nb\nc\nd\ne\n")
-	new := []byte("a\nb\nCHANGED\nd\ne\n")
-	got := UnifiedDiff("cluster.yaml", old, new)
+	oldB := []byte("a\nb\nc\nd\ne\n")
+	newB := []byte("a\nb\nCHANGED\nd\ne\n")
+	got := UnifiedDiff("cluster.yaml", oldB, newB)
 	if !strings.Contains(got, "-c\n") {
 		t.Errorf("overwrite diff missing removed line:\n%s", got)
 	}
@@ -74,9 +74,9 @@ func TestUnifiedDiff_overwriteShowsBothSides(t *testing.T) {
 func TestUnifiedDiff_distantHunksSeparate(t *testing.T) {
 	// Two changes far apart should land in two separate hunks rather
 	// than one giant block of context.
-	old := []byte("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
-	new := []byte("a\nB\nc\nd\ne\nf\ng\nh\nI\nj\n")
-	got := UnifiedDiff("file", old, new)
+	oldB := []byte("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n")
+	newB := []byte("a\nB\nc\nd\ne\nf\ng\nh\nI\nj\n")
+	got := UnifiedDiff("file", oldB, newB)
 	hunks := strings.Count(got, "@@ -")
 	if hunks != 2 {
 		t.Errorf("expected 2 hunks for distant changes, got %d:\n%s", hunks, got)
