@@ -264,8 +264,13 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		} else {
 			fmt.Print(diff)
 		}
+		// Match the layout of the write-path summary (one artifact
+		// per line, same column shape) so operators eyeballing both
+		// modes see consistent messaging.
 		fmt.Fprintf(os.Stderr,
-			"dry-run: would write %s (%d masters, %d volumes, %d filers), %s (%d host facts), %s (%d targets, %d eligible disks)\n",
+			"dry-run: would write %s (%d masters, %d volumes, %d filers)\n"+
+				"dry-run: would write %s (%d host facts)\n"+
+				"dry-run: would write %s (%d targets, %d eligible disks)\n",
 			opts.OutputFile, len(spec.MasterServers), len(spec.VolumeServers), len(spec.FilerServers),
 			factsFile, len(facts),
 			deployDisksFile, len(allowlist), countAllowlistDisks(allowlist))
