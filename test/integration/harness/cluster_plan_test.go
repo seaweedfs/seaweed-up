@@ -4,7 +4,9 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,7 +155,7 @@ func TestClusterPlanDryRun(t *testing.T) {
 	if dryErr != nil {
 		t.Fatalf("greenfield --dry-run failed: %v\noutput:\n%s", dryErr, dryOut)
 	}
-	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(outPath); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("--dry-run wrote cluster.yaml on disk (stat err = %v)", err)
 	}
 	if !strings.Contains(dryOut, "+cluster_name:") {
