@@ -241,13 +241,9 @@ func makeHunk(ops []diffOp, start, end int) hunk {
 		}
 	}
 	// Empty-side hunks (e.g. pure-additions when oldText is empty)
-	// still need a sensible 0,0 header.
-	if h.oldStart == 0 && h.oldCount == 0 {
-		h.oldStart = 0
-	}
-	if h.newStart == 0 && h.newCount == 0 {
-		h.newStart = 0
-	}
+	// keep the zero-initialized 0,0 header from the struct literal —
+	// the loop above only ever writes non-zero starts via the
+	// `h.oldStart == 0` / `h.newStart == 0` guards.
 	return h
 }
 
