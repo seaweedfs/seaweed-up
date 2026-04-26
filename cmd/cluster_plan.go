@@ -215,6 +215,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	var (
 		body        []byte
 		mergeReport *plan.MergeReport
+		existing    []byte // populated in mergeMode; reused by --dry-run
 	)
 	if mergeMode {
 		// Append-merge into the existing file. Merge() guarantees
@@ -222,7 +223,8 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		// appended at each section's tail and orphans surface in
 		// mergeReport without mutating existing entries. (Drift
 		// detection lands in Phase 4 alongside --refresh-host.)
-		existing, readErr := os.ReadFile(opts.OutputFile)
+		var readErr error
+		existing, readErr = os.ReadFile(opts.OutputFile)
 		if readErr != nil {
 			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
 		}
@@ -243,13 +245,18 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// without touching any file. The sidecars are summarized but not
 	// written so the preview is purely read-only on disk.
 	if opts.DryRun {
-		// Read directly and tolerate ErrNotExist: a missing file is
-		// the greenfield case (existing == nil → diff shows the whole
-		// proposed body as additions). Any other read failure is
-		// surfaced so an EACCES doesn't silently swap to greenfield.
-		existing, readErr := os.ReadFile(opts.OutputFile)
-		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
+		// In merge mode `existing` was already loaded above; reuse it
+		// so the diff bytes match the bytes Merge consumed (no TOCTOU
+		// window between the two reads). Outside merge mode (greenfield
+		// or --overwrite path) read here, tolerating ErrNotExist as the
+		// legitimate greenfield case. Any other read failure surfaces
+		// so an EACCES doesn't silently degrade the preview.
+		if !mergeMode {
+			loaded, readErr := os.ReadFile(opts.OutputFile)
+			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+				return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
+			}
+			existing = loaded
 		}
 		diff := plan.UnifiedDiff(opts.OutputFile, existing, body)
 		if diff == "" {
