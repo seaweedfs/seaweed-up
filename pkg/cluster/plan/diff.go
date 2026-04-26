@@ -91,7 +91,9 @@ func splitLines(raw []byte, dropTrailingEmpty bool) []string {
 // table for a and b, laid out as a single flat slice with `cols`
 // stride: the cell for (i, j) is at table[i*cols + j]. Length at
 // (i, j) is the LCS of a[i:] and b[j:]; indexing from the end keeps
-// diffOps's recovery loop tidy. One allocation instead of len(a)+1.
+// diffOps's recovery loop tidy. One contiguous allocation, instead
+// of the previous slice-of-slices that allocated len(a)+1 separate
+// row backing arrays.
 func lcsTable(a, b []string) (table []int, cols int) {
 	rows := len(a) + 1
 	cols = len(b) + 1
