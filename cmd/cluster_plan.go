@@ -239,27 +239,17 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		}
 	}
 	// In --dry-run mode, render a unified diff to stdout against the
-	// existing -o (or empty for greenfield) and exit without touching
-	// any file. The sidecars are summarized but not written so the
-	// preview is purely read-only on disk.
+	// existing -o (or empty for greenfield / missing file) and exit
+	// without touching any file. The sidecars are summarized but not
+	// written so the preview is purely read-only on disk.
 	if opts.DryRun {
-		var existing []byte
-		if mergeMode {
-			// existing was already read above for Merge(); re-read
-			// here for the greenfield-with-existing case (--overwrite)
-			// so the diff reflects what's truly on disk.
-			existing, err = os.ReadFile(opts.OutputFile)
-			if err != nil {
-				return fmt.Errorf("read existing %s: %w", opts.OutputFile, err)
-			}
-		} else if _, statErr := os.Stat(opts.OutputFile); statErr == nil {
-			// --overwrite path: file exists but mergeMode is false.
-			// Show the diff against current bytes so the operator sees
-			// what --overwrite is about to throw away.
-			existing, err = os.ReadFile(opts.OutputFile)
-			if err != nil {
-				return fmt.Errorf("read existing %s: %w", opts.OutputFile, err)
-			}
+		// Read directly and tolerate ErrNotExist: a missing file is
+		// the greenfield case (existing == nil → diff shows the whole
+		// proposed body as additions). Any other read failure is
+		// surfaced so an EACCES doesn't silently swap to greenfield.
+		existing, readErr := os.ReadFile(opts.OutputFile)
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
 		}
 		diff := plan.UnifiedDiff(opts.OutputFile, existing, body)
 		if diff == "" {
