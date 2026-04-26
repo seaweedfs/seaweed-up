@@ -83,6 +83,23 @@ func TestUnifiedDiff_distantHunksSeparate(t *testing.T) {
 	}
 }
 
+// TestUnifiedDiff_trailingNewlineDifference is the regression test
+// for the splitLines drop-trailing-empty bug. Two inputs whose only
+// difference is the trailing newline used to produce only the diff
+// header with zero hunks, which read as "no changes" while the
+// bytes were obviously different. The diff must surface the
+// difference somewhere — even a phantom-blank-line entry is
+// sufficient signal that the two inputs aren't byte-identical.
+func TestUnifiedDiff_trailingNewlineDifference(t *testing.T) {
+	got := UnifiedDiff("file", []byte("a\n"), []byte("a"))
+	if got == "" {
+		t.Fatal("inputs differ on trailing newline; diff must not be empty")
+	}
+	if !strings.Contains(got, "@@ -") {
+		t.Errorf("expected at least one hunk in trailing-newline diff:\n%s", got)
+	}
+}
+
 func TestUnifiedDiff_nameAppearsInHeader(t *testing.T) {
 	got := UnifiedDiff("cluster.yaml", []byte("a\n"), []byte("b\n"))
 	if !strings.Contains(got, "--- cluster.yaml (current)\n") ||

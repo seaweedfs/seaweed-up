@@ -35,8 +35,21 @@ func UnifiedDiff(name string, oldText, newText []byte) string {
 	if bytes.Equal(oldText, newText) {
 		return ""
 	}
-	oldLines := splitLines(oldText)
-	newLines := splitLines(newText)
+	// When BOTH inputs end with '\n' (the cluster.yaml norm) we
+	// drop the trailing empty element so the diff is free of
+	// phantom blank-line context. An empty input is treated as
+	// "compatible with either" — greenfield diffs (oldText nil)
+	// against a normal newline-terminated newText then produce the
+	// expected `+1,N` hunk instead of one with a trailing blank
+	// addition. When exactly one non-empty side ends without '\n',
+	// the trailing "" stays so the LCS can surface the difference
+	// (otherwise "a\n" vs "a" would reduce to identical line lists
+	// and emit a header with no hunks).
+	oldEndsNL := len(oldText) == 0 || bytes.HasSuffix(oldText, []byte{'\n'})
+	newEndsNL := len(newText) == 0 || bytes.HasSuffix(newText, []byte{'\n'})
+	dropTrailing := oldEndsNL && newEndsNL
+	oldLines := splitLines(oldText, dropTrailing)
+	newLines := splitLines(newText, dropTrailing)
 
 	// Compute the LCS table on lines. The cluster.yaml files we feed
 	// this are O(100s) of lines, so the O(n*m) table is fine.
@@ -53,22 +66,20 @@ func UnifiedDiff(name string, oldText, newText []byte) string {
 	return b.String()
 }
 
-// splitLines breaks raw into lines, preserving intermediate blanks
-// and dropping the trailing empty string that strings.Split produces
-// when the input ends in '\n'. Unlike bufio.Scanner we keep the
-// trailing-newline semantics implicit (each line is rendered with a
-// '\n' appended back at output time), which keeps the diff math
-// honest about line boundaries without juggling EOL bytes inside the
-// LCS.
-func splitLines(raw []byte) []string {
+// splitLines breaks raw into lines via strings.Split. When
+// dropTrailingEmpty is true and the input ends in '\n', the empty
+// trailing element strings.Split returns is dropped so the diff
+// doesn't render a phantom blank line of context. Caller (UnifiedDiff)
+// only sets that flag when BOTH inputs end in '\n'; if exactly one
+// does, the trailing "" stays so the LCS can surface the
+// no-trailing-newline difference instead of silently flattening
+// "a\n" and "a" to the same line list.
+func splitLines(raw []byte, dropTrailingEmpty bool) []string {
 	if len(raw) == 0 {
 		return nil
 	}
-	s := string(raw)
-	parts := strings.Split(s, "\n")
-	// strings.Split("a\nb\n", "\n") => {"a", "b", ""}; drop the
-	// empty trailing element so the LCS doesn't see a phantom line.
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
+	parts := strings.Split(string(raw), "\n")
+	if dropTrailingEmpty && len(parts) > 0 && parts[len(parts)-1] == "" {
 		parts = parts[:len(parts)-1]
 	}
 	return parts
