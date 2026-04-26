@@ -52,9 +52,11 @@ func UnifiedDiff(name string, oldText, newText []byte) string {
 	newLines := splitLines(newText, dropTrailing)
 
 	// Compute the LCS table on lines. The cluster.yaml files we feed
-	// this are O(100s) of lines, so the O(n*m) table is fine.
-	lcs := lcsTable(oldLines, newLines)
-	ops := diffOps(oldLines, newLines, lcs)
+	// this are O(100s) of lines, so the O(n*m) table is fine. The
+	// table is laid out as one flat slice (cols-stride) for cache
+	// locality and a single allocation; lcsAt does the indexing.
+	lcs, cols := lcsTable(oldLines, newLines)
+	ops := diffOps(oldLines, newLines, lcs, cols)
 	hunks := groupHunks(ops, 3)
 
 	var b strings.Builder
@@ -86,27 +88,29 @@ func splitLines(raw []byte, dropTrailingEmpty bool) []string {
 }
 
 // lcsTable returns the standard dynamic-programming length-of-LCS
-// table for a and b. lcs[i][j] is the LCS length of a[i:] and b[j:];
-// indexing from the end keeps diffOps's recovery loop tidy.
-func lcsTable(a, b []string) [][]int {
+// table for a and b, laid out as a single flat slice with `cols`
+// stride: the cell for (i, j) is at table[i*cols + j]. Length at
+// (i, j) is the LCS of a[i:] and b[j:]; indexing from the end keeps
+// diffOps's recovery loop tidy. One allocation instead of len(a)+1.
+func lcsTable(a, b []string) (table []int, cols int) {
 	rows := len(a) + 1
-	cols := len(b) + 1
-	table := make([][]int, rows)
-	for i := range table {
-		table[i] = make([]int, cols)
-	}
+	cols = len(b) + 1
+	table = make([]int, rows*cols)
 	for i := len(a) - 1; i >= 0; i-- {
+		row := i * cols
+		next := row + cols
 		for j := len(b) - 1; j >= 0; j-- {
-			if a[i] == b[j] {
-				table[i][j] = table[i+1][j+1] + 1
-			} else if table[i+1][j] >= table[i][j+1] {
-				table[i][j] = table[i+1][j]
-			} else {
-				table[i][j] = table[i][j+1]
+			switch {
+			case a[i] == b[j]:
+				table[row+j] = table[next+j+1] + 1
+			case table[next+j] >= table[row+j+1]:
+				table[row+j] = table[next+j]
+			default:
+				table[row+j] = table[row+j+1]
 			}
 		}
 	}
-	return table
+	return table, cols
 }
 
 // diffOp is one line in the per-line edit script. Kind is ' ' (kept),
@@ -122,19 +126,22 @@ type diffOp struct {
 
 // diffOps walks the LCS table and emits the flat edit script. Output
 // lines are in interleaved order: removals come before additions at
-// the same divergence point so the hunk reads `-old / +new`.
-func diffOps(a, b []string, lcs [][]int) []diffOp {
+// the same divergence point so the hunk reads `-old / +new`. The
+// table is the flat layout from lcsTable; (i, j) lives at
+// lcs[i*cols + j].
+func diffOps(a, b []string, lcs []int, cols int) []diffOp {
 	var ops []diffOp
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		if a[i] == b[j] {
+		switch {
+		case a[i] == b[j]:
 			ops = append(ops, diffOp{kind: ' ', text: a[i], oldLine: i + 1, newLine: j + 1})
 			i++
 			j++
-		} else if lcs[i+1][j] >= lcs[i][j+1] {
+		case lcs[(i+1)*cols+j] >= lcs[i*cols+(j+1)]:
 			ops = append(ops, diffOp{kind: '-', text: a[i], oldLine: i + 1})
 			i++
-		} else {
+		default:
 			ops = append(ops, diffOp{kind: '+', text: b[j], newLine: j + 1})
 			j++
 		}
