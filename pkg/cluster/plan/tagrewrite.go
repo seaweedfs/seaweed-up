@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 )
@@ -86,10 +87,8 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 // Detection is shallow on purpose — anything containing `:` is
 // treated as v6.
 func formatTagSubstitution(ip string) string {
-	for i := 0; i < len(ip); i++ {
-		if ip[i] == ':' {
-			return "[" + ip + "]"
-		}
+	if strings.Contains(ip, ":") {
+		return "[" + ip + "]"
 	}
 	return ip
 }
