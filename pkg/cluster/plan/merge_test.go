@@ -550,6 +550,215 @@ func TestDetectIndent(t *testing.T) {
 	}
 }
 
+// TestMerge_refreshHost_replacesSingleEntryOnly: --refresh-host=<ip>
+// re-emits one host's entry from the fresh spec while leaving every
+// other entry's bytes intact. Operator workflow: drift detection
+// flagged 10.0.0.21, operator runs `plan --refresh-host=10.0.0.21`
+// to fix that one entry without --overwrite (which would discard
+// every hand edit).
+func TestMerge_refreshHost_replacesSingleEntryOnly(t *testing.T) {
+	base, st := buildBaseSpec(t)
+
+	// Operator hand-tightened max: 9999 on /data1 of 10.0.0.21. After
+	// refresh we expect THAT edit to be clobbered (refresh re-emits
+	// the entry from fresh facts), but sibling entries (the masters)
+	// should stay byte-identical.
+	const userMax = "max: 9999"
+	edited := strings.Replace(string(base), "max: 19", userMax, 1)
+	if edited == string(base) {
+		t.Fatal("test setup: max: 19 not present in baseline")
+	}
+
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge([]byte(edited), spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.21": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	got := string(merged)
+
+	// 1. Hand edit on the refreshed entry is gone (refresh re-emits).
+	if strings.Contains(got, userMax) {
+		t.Errorf("--refresh-host should clobber hand edits on the refreshed entry, but %q survived:\n%s", userMax, got)
+	}
+	// 2. Refresh report names the section + key.
+	if len(report.Refreshed) != 1 || report.Refreshed[0] != "volume_servers: 10.0.0.21:8080" {
+		t.Errorf("Report.Refreshed = %+v, want [volume_servers: 10.0.0.21:8080]", report.Refreshed)
+	}
+	// 3. Sibling entries (masters) stay byte-identical. Cheap check:
+	// every master_servers line from the baseline must appear in the
+	// merged output.
+	masters := []string{
+		"    - ip: 10.0.0.11",
+		"    - ip: 10.0.0.12",
+		"    - ip: 10.0.0.13",
+	}
+	for _, line := range masters {
+		if !strings.Contains(got, line) {
+			t.Errorf("sibling entry line %q lost during refresh:\n%s", line, got)
+		}
+	}
+	// 4. No spurious appends or orphans.
+	if total := len(report.Appended); total != 0 {
+		t.Errorf("Report.Appended should be empty on a no-change refresh, got %+v", report.Appended)
+	}
+	if len(report.RefreshNotFound) != 0 {
+		t.Errorf("Report.RefreshNotFound should be empty for a matched IP, got %+v", report.RefreshNotFound)
+	}
+}
+
+// TestMerge_refreshHost_unmatchedSurfaces: an IP passed to
+// --refresh-host that doesn't match any existing entry shows up in
+// MergeReport.RefreshNotFound. Typical cause: typo, or the host
+// hasn't been deployed yet.
+func TestMerge_refreshHost_unmatchedSurfaces(t *testing.T) {
+	base, st := buildBaseSpec(t)
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge(base, spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.99": {}, "10.0.0.21": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	// 10.0.0.21 matched the volume host; 10.0.0.99 didn't match anything.
+	if got, want := report.RefreshNotFound, []string{"10.0.0.99"}; !equalStrings(got, want) {
+		t.Errorf("RefreshNotFound = %+v, want %+v", got, want)
+	}
+	if len(report.Refreshed) != 1 {
+		t.Errorf("Refreshed should still capture the matched IP, got %+v", report.Refreshed)
+	}
+	// Other hosts' bytes still survive.
+	for _, ip := range []string{"10.0.0.11", "10.0.0.12", "10.0.0.13"} {
+		if !strings.Contains(string(merged), ip) {
+			t.Errorf("non-refreshed host %s lost from merged output", ip)
+		}
+	}
+}
+
+// TestMerge_refreshHost_preservesEntryComment: head/line/foot
+// comments attached to the SEQUENCE-ITEM node survive a refresh.
+// Operators frequently annotate entries with a leading comment
+// (`# primary HDD bank`); losing those on a refresh would surprise
+// them. Field-level inline comments on individual key/value pairs
+// inside the mapping (e.g. `ip: 10.0.0.11   # primary`) are NOT
+// preserved by Phase 4 — see TestMerge_refreshHost_dropsFieldLevelComment.
+func TestMerge_refreshHost_preservesEntryComment(t *testing.T) {
+	existing := `cluster_name: merge-test
+master_servers:
+    # primary master, do not move
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.11": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if !strings.Contains(string(merged), "primary master, do not move") {
+		t.Errorf("entry head comment lost on refresh:\n%s", merged)
+	}
+}
+
+// TestMerge_refreshHost_dropsFieldLevelComment pins down the
+// documented Phase 4 limitation: comments attached to individual
+// key/value pairs INSIDE the mapping (yaml.v3 stores these as
+// LineComment on the value scalar) do not survive a refresh.
+// Operators who care can re-add the comment after refresh, or
+// promote it to an entry head comment (which IS preserved).
+//
+// Implementing field-level comment carry would require pairing each
+// fresh field with its corresponding old field by key — explicitly
+// scoped out of Phase 4 to keep the merge surface small.
+func TestMerge_refreshHost_dropsFieldLevelComment(t *testing.T) {
+	existing := `cluster_name: merge-test
+master_servers:
+    - ip: 10.0.0.11   # primary master, do not move
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.11": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if strings.Contains(string(merged), "primary master, do not move") {
+		t.Errorf("documented limitation broke: field-level inline comment survived a refresh — if this is now intentional, update the doc on carryEntryComments and remove this test:\n%s", merged)
+	}
+}
+
+// TestMerge_refreshHost_noOpWhenSetEmpty: an empty / nil
+// RefreshHosts map leaves Merge in its existing append-only mode —
+// no refreshes, no RefreshNotFound entries. Belt-and-braces test in
+// case future code refactors break the gate.
+func TestMerge_refreshHost_noOpWhenSetEmpty(t *testing.T) {
+	base, st := buildBaseSpec(t)
+	spec, _, err := Generate(st.inv, st.facts, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, report, err := Merge(base, spec, MergeOptions{
+		Marshal: MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if string(merged) != string(base) {
+		t.Errorf("nil RefreshHosts should leave bytes byte-identical")
+	}
+	if len(report.Refreshed) != 0 || len(report.RefreshNotFound) != 0 {
+		t.Errorf("nil RefreshHosts should produce no refresh report; got Refreshed=%+v NotFound=%+v",
+			report.Refreshed, report.RefreshNotFound)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestMerge_handWrittenSpec_noMarkerSurvives: merging into a hand-
 // written cluster.yaml (no plan marker) doesn't sneak the marker in.
 // Whether the file gets the marker is the writer's call, not Merge's;

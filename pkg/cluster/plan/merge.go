@@ -41,6 +41,19 @@ type MergeReport struct {
 	// with the same IP would still get appended, producing a duplicate.
 	// Surface them so the operator can clean up before next merge.
 	Unparseable []string
+	// Refreshed lists `section: ip:port` entries that were
+	// re-emitted from fresh facts because the operator passed
+	// `--refresh-host=<ip>`. The replacement preserves the entry's
+	// surrounding head/line/foot comments but otherwise overwrites
+	// every field — operators who tightened `max:` on an entry get
+	// that edit clobbered for that entry on a refresh, by design.
+	Refreshed []string
+	// RefreshNotFound lists IPs the operator passed via
+	// `--refresh-host` that didn't match any existing entry in the
+	// YAML. The most common cause is a typo or a host that hasn't
+	// been deployed yet; either way the refresh is a no-op for that
+	// entry and we surface the miss so the operator notices.
+	RefreshNotFound []string
 }
 
 // MergeOptions tweak append-merge behavior. Zero value is fine for
@@ -53,6 +66,20 @@ type MergeOptions struct {
 	// indistinguishable from "this is the first plan run", so we fall
 	// back to greenfield generation in that case.)
 	Marshal MarshalOptions
+	// RefreshHosts is the set of host IPs whose existing entries
+	// should be replaced by their freshly-Generated equivalents
+	// instead of being preserved byte-for-byte. Targets the
+	// "drift detected → refresh that one host" workflow without
+	// forcing --overwrite (which discards every hand edit). Empty
+	// or nil disables refresh entirely; entries that don't match an
+	// existing IP land in MergeReport.RefreshNotFound.
+	//
+	// Refresh is per-IP, not per-(ip, port). A host that maps to
+	// multiple sections (master + filer + volume) gets all of its
+	// entries refreshed in one shot — operators almost never want
+	// to refresh just one role's entry while leaving the others
+	// stale, and the inventory keys hosts by IP anyway.
+	RefreshHosts map[string]struct{}
 }
 
 // Merge appends entries from `fresh` into `existing`, preserving every
@@ -131,15 +158,26 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 		{key: "worker_servers", build: func() ([]serverEntry, error) { return workerEntries(fresh.WorkerServers) }, keyOfNode: ipSentinelKeyFn("worker")},
 	}
 
+	// Track which refresh-host IPs landed somewhere so we can surface
+	// the misses (typo, host not yet deployed, etc.) at the end.
+	refreshSeen := make(map[string]struct{}, len(opts.RefreshHosts))
 	for _, p := range plans {
 		entries, err := p.build()
 		if err != nil {
 			return nil, nil, fmt.Errorf("build %s entries: %w", p.key, err)
 		}
-		if err := mergeSection(root, p.key, entries, p.keyOfNode, report); err != nil {
+		if err := mergeSection(root, p.key, entries, p.keyOfNode, opts.RefreshHosts, refreshSeen, report); err != nil {
 			return nil, nil, fmt.Errorf("merge %s: %w", p.key, err)
 		}
 	}
+	// Order the not-found list deterministically so the warning text
+	// is stable across runs (and across map iteration orders).
+	for ip := range opts.RefreshHosts {
+		if _, ok := refreshSeen[ip]; !ok {
+			report.RefreshNotFound = append(report.RefreshNotFound, ip)
+		}
+	}
+	sort.Strings(report.RefreshNotFound)
 
 	// Re-encode. yaml.v3's encoder preserves comments and styles on the
 	// existing nodes; appended nodes use whatever style they were
@@ -242,13 +280,17 @@ type serverEntry struct {
 // any entry whose key isn't already present. Records appends and
 // orphans into report. keyOfNode extracts the dedup key from an
 // existing sequence item (per-section because worker/envoy don't have
-// a single service port).
+// a single service port). When refreshHosts is non-empty, existing
+// entries whose IP appears in the set are replaced in place by the
+// matching fresh entry instead of being preserved byte-for-byte;
+// refreshSeen records each successful replacement so the caller can
+// surface the misses (refresh-host IPs that didn't match anything).
 //
 // Returns an error if the section value exists but isn't a sequence
 // (operator may have hand-edited `master_servers: foo` or
 // `master_servers: {…}`). Silently overwriting that would lose data;
 // instead we ask the operator to clean it up.
-func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOfNode func(*yaml.Node) string, report *MergeReport) error {
+func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOfNode func(*yaml.Node) string, refreshHosts, refreshSeen map[string]struct{}, report *MergeReport) error {
 	// When the inventory carries no entries for this section, there's
 	// nothing to merge — and crucially, nothing to mutate. Look up the
 	// existing node only to compute orphans (so a stale section gets
@@ -284,9 +326,52 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 	}
 
 	freshKeys := map[string]struct{}{}
+	freshByKey := make(map[string]*yaml.Node, len(fresh))
 	for _, e := range fresh {
 		freshKeys[e.key] = struct{}{}
+		freshByKey[e.key] = e.node
 	}
+
+	// Refresh pass first so the existing-key index built by the
+	// orphan check still recognizes the (now-replaced) node — the
+	// keyOfNode extractor reads the `ip:` scalar, which the fresh
+	// node carries unchanged. Walking seqNode.Content directly here
+	// (rather than going through recordOrphansAndUnparseable) lets
+	// us mutate Content[i] in place.
+	if len(refreshHosts) > 0 {
+		for i, item := range seqNode.Content {
+			ip := ipOfNode(item)
+			if ip == "" {
+				continue
+			}
+			if _, want := refreshHosts[ip]; !want {
+				continue
+			}
+			key := keyOfNode(item)
+			fresh, ok := freshByKey[key]
+			if !ok {
+				// Refresh requested for a host whose existing entry's
+				// (ip, port) doesn't line up with any fresh entry's
+				// key — typically the operator hand-edited the port,
+				// or the spec moved the host between sections. Leave
+				// the entry alone; the IP-level "not found" warning
+				// already covers it elsewhere.
+				continue
+			}
+			// Carry the entry-level head/line/foot comments from
+			// the old node onto the replacement so a `# primary HDD
+			// bank` annotation survives a refresh. Field-level
+			// comments (e.g. an inline note on `port:`) are still
+			// dropped — preserving those would require a structural
+			// merge of the two mappings, which Phase 4 explicitly
+			// scopes out.
+			carryEntryComments(fresh, item)
+			seqNode.Content[i] = fresh
+			refreshSeen[ip] = struct{}{}
+			report.Refreshed = append(report.Refreshed, fmt.Sprintf("%s: %s", sectionKey, key))
+		}
+	}
+
 	existingKeys := recordOrphansAndUnparseable(seqNode, sectionKey, keyOfNode, freshKeys, report)
 
 	// Append fresh entries that aren't already present, reusing the
@@ -302,6 +387,45 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 	}
 
 	return nil
+}
+
+// ipOfNode pulls the `ip:` scalar out of a sequence-item mapping.
+// Returns "" for any shape we don't recognize (matches the soft
+// behavior of keyOfNode — operators with hand-edited weird shapes
+// don't blow up the merge). Used by the refresh pass to look up
+// entries by IP without committing to the section-specific
+// ip:port / ip:role keying.
+func ipOfNode(node *yaml.Node) string {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return ""
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k := node.Content[i]
+		v := node.Content[i+1]
+		if k.Kind != yaml.ScalarNode || v.Kind != yaml.ScalarNode {
+			continue
+		}
+		if k.Value == "ip" {
+			return v.Value
+		}
+	}
+	return ""
+}
+
+// carryEntryComments copies the head/line/foot comments from src to
+// dst at the entry (top-level mapping) level. Used by the refresh
+// pass so a fresh entry node inherits the operator's entry-level
+// annotations from the entry it's replacing. Field-level comments
+// (on individual key/value pairs inside the mapping) aren't carried
+// — that would require pairing each fresh field with its
+// corresponding old field, which is out of scope for Phase 4.
+func carryEntryComments(dst, src *yaml.Node) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.HeadComment = src.HeadComment
+	dst.LineComment = src.LineComment
+	dst.FootComment = src.FootComment
 }
 
 // recordOrphansAndUnparseable walks seqNode's children, classifying
