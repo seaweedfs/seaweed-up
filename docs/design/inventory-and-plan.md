@@ -664,11 +664,21 @@ pkg/disks/
      out of scope for now. Misses (an IP that didn't match any
      existing entry) surface as a `WARN: --refresh-host …` line.
      Implementation extends `pkg/cluster/plan/merge.go`.
-   - Inventory tag references (`tag: postgres-metadata` → DSN
-     rewrite).
+   - **Inventory `tag:` references** *(done)* — declare a host as
+     `roles: [external]` with `tag: postgres-metadata`, then write
+     `--filer-backend postgres://user:pw@tag:postgres-metadata:5432/db`.
+     Plan substitutes the tagged host's IP before parsing the DSN,
+     so the generated `cluster.yaml` carries the resolved address
+     and `cluster deploy` doesn't need to know about tags. Decouples
+     "where the metadata DB lives" (inventory edit) from "what its
+     credentials are" (DSN file). Tag uniqueness is enforced at
+     inventory load; missing-tag references error at plan time
+     rather than reaching the DSN parser. v6 IPs get bracketed for
+     URL safety. Implementation in `pkg/cluster/plan/tagrewrite.go`.
 
-Phases 1–3 are the minimum product. Phase 4 is ice cream — each
-flag is opt-in and lands independently as it earns its keep.
+With this last item Phase 4 is feature-complete. Phases 1–3 are the
+minimum product; Phase 4 is ice cream — each flag landed
+independently as it earned its keep.
 
 ## Resolved design decisions
 

@@ -180,12 +180,25 @@ func (inv *Inventory) Validate() error {
 	sshSeen := make(map[sshKey]SSHConfig)
 	sshWhere := make(map[sshKey]string) // for the error message
 
+	// Tag uniqueness: --filer-backend tag:<name> rewrites resolve a
+	// tag to the IP of the host carrying it. A duplicate tag would
+	// be ambiguous; refuse at load time so the operator sees the
+	// collision before the planner picks an arbitrary winner.
+	tagOwner := make(map[string]string) // tag → ip-of-first-bearer
 	for i, h := range inv.Hosts {
 		if h.IP == "" {
 			return fmt.Errorf("host[%d] has no ip", i)
 		}
 		if len(h.Roles) == 0 {
 			return fmt.Errorf("host %s has no roles", h.IP)
+		}
+		if h.Tag != "" {
+			if owner, dup := tagOwner[h.Tag]; dup {
+				return fmt.Errorf(
+					"tag %q is declared on both host %s and host %s; tags must be unique within an inventory",
+					h.Tag, owner, h.IP)
+			}
+			tagOwner[h.Tag] = h.IP
 		}
 		for _, role := range h.Roles {
 			if _, ok := validRoles[role]; !ok {
@@ -267,6 +280,22 @@ func validateDeviceGlob(g string) error {
 		return fmt.Errorf("unsupported glob %q: only a literal path with an optional trailing '*' is allowed", g)
 	}
 	return nil
+}
+
+// HostByTag returns the (first and, after Validate, only) host
+// carrying the given tag. The bool is false when no host owns the
+// tag. Used by the --filer-backend `tag:<name>` rewrite to resolve
+// a symbolic reference to a concrete IP at plan time.
+func (inv *Inventory) HostByTag(tag string) (*Host, bool) {
+	if tag == "" {
+		return nil, false
+	}
+	for i := range inv.Hosts {
+		if inv.Hosts[i].Tag == tag {
+			return &inv.Hosts[i], true
+		}
+	}
+	return nil, false
 }
 
 // ProbeHosts returns the deduplicated set of hosts to SSH-probe. External-only

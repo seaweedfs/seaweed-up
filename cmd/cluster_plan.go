@@ -123,8 +123,8 @@ Purely read-only on the target hosts.`,
 
 	cmd.Flags().StringVar(&opts.ClusterName, "cluster-name", "", "cluster_name to stamp on the generated cluster.yaml")
 	cmd.Flags().IntVar(&opts.VolumeSizeLimitMB, "volume-size-limit-mb", 0, "volumeSizeLimitMB for the generated global block (default 5000)")
-	cmd.Flags().StringVar(&opts.FilerBackend, "filer-backend", "", "filer metadata DSN, e.g. postgres://user:pass@host/db (leaks via ps; prefer --filer-backend-file)")
-	cmd.Flags().StringVar(&opts.FilerBackendFile, "filer-backend-file", "", "path to a file containing the filer metadata DSN")
+	cmd.Flags().StringVar(&opts.FilerBackend, "filer-backend", "", "filer metadata DSN, e.g. postgres://user:pass@host/db; the host segment may be `tag:<name>` to resolve against an inventory tag (leaks via ps; prefer --filer-backend-file)")
+	cmd.Flags().StringVar(&opts.FilerBackendFile, "filer-backend-file", "", "path to a file containing the filer metadata DSN (same `tag:<name>` host substitution applies)")
 	cmd.Flags().StringVar(&opts.VolumeServerShape, "volume-server-shape", "", "how to map disks to volume_server entries: per-host (default; one entry, all disks under folders:) or per-disk (one entry per disk, distinct ports)")
 
 	_ = cmd.MarkFlagRequired("inventory")
@@ -224,7 +224,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// json-only branch) so a stray $SEAWEEDUP_FILER_BACKEND in the
 	// environment can't fail a probe-only run with a backend it
 	// doesn't even need.
-	backend, err := resolveFilerBackend(opts)
+	backend, err := resolveFilerBackend(opts, inv)
 	if err != nil {
 		return err
 	}
@@ -650,10 +650,16 @@ func printSkipReport(report plan.Report) {
 }
 
 // resolveFilerBackend picks the filer DSN from (in priority order)
-// --filer-backend-file, --filer-backend, SEAWEEDUP_FILER_BACKEND. Zero
-// return value (nil) is fine — the planner emits a placeholder comment
-// instead of a config block.
-func resolveFilerBackend(opts *ClusterPlanOptions) (map[string]interface{}, error) {
+// --filer-backend-file, --filer-backend, SEAWEEDUP_FILER_BACKEND, then
+// resolves any `tag:<name>` references against the inventory before
+// parsing. Zero return value (nil) is fine — the planner emits a
+// placeholder comment instead of a config block.
+//
+// inv may be nil when the caller couldn't load it; tag rewriting
+// then no-ops and a literal `tag:` in the DSN reaches the parser
+// (which will error with a host-shaped message — acceptable since
+// the operator should pair tag references with a working inventory).
+func resolveFilerBackend(opts *ClusterPlanOptions, inv *inventory.Inventory) (map[string]interface{}, error) {
 	var dsn string
 	switch {
 	case opts.FilerBackendFile != "":
@@ -669,6 +675,10 @@ func resolveFilerBackend(opts *ClusterPlanOptions) (map[string]interface{}, erro
 	}
 	if dsn == "" {
 		return nil, nil
+	}
+	dsn, err := plan.RewriteTagReferences(dsn, inv)
+	if err != nil {
+		return nil, fmt.Errorf("filer backend: %w", err)
 	}
 	backend, err := plan.ParseFilerBackendDSN(dsn)
 	if err != nil {
