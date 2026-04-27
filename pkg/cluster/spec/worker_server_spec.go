@@ -18,10 +18,14 @@ type WorkerServerSpec struct {
 	// `weed worker -jobType=<value>` flag (enterprise build): `all`,
 	// `default`, `heavy`, or comma-separated explicit names like
 	// `ec,balance,iceberg`. When empty, WriteToBuffer fills in
-	// "all" so a worker started by seaweed-up always picks up
-	// every task type the admin offers — operators who want to
-	// shard task handling across worker pools override per-pool.
-	JobType string                 `yaml:"jobType,omitempty" default:"all"`
+	// DefaultWorkerJobType ("all") so a worker started by
+	// seaweed-up always picks up every task type the admin offers —
+	// operators who want to shard task handling across worker pools
+	// override per-pool. No struct-tag default: nothing in this
+	// codebase reads `default:` at unmarshal time, so a tag would
+	// only be decorative; the doc comment and DefaultWorkerJobType
+	// are the real source of truth.
+	JobType string                 `yaml:"jobType,omitempty"`
 	Config  map[string]interface{} `yaml:"config,omitempty"`
 	Arch    string                 `yaml:"arch,omitempty"`
 	OS      string                 `yaml:"os,omitempty"`
