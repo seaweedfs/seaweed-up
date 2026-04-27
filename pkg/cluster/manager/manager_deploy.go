@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -51,6 +52,34 @@ func validateS3Prerequisites(specification *spec.Specification) error {
 		}
 	}
 	return nil
+}
+
+// validateSingleAdminServer enforces the at-most-one-admin rule.
+// SeaweedFS's admin UI is single-instance today: there's no leader
+// election or shared-state story for the `weed admin` component, so
+// running two admin processes against the same cluster would race on
+// task scheduling and produce conflicting decisions. Refuse the spec
+// at deploy time before any SSH session opens — fail fast with the
+// offending IPs in the error so the operator can see exactly which
+// rows to consolidate.
+//
+// Zero admin_servers entries is allowed: the cluster runs without
+// the admin UI, and any worker_servers must carry their own explicit
+// `admin:` endpoint (or resolveWorkerDefaultAdmins errors instead).
+func validateSingleAdminServer(specification *spec.Specification) error {
+	if len(specification.AdminServers) <= 1 {
+		return nil
+	}
+	ips := make([]string, 0, len(specification.AdminServers))
+	for _, a := range specification.AdminServers {
+		if a == nil {
+			continue
+		}
+		ips = append(ips, a.Ip)
+	}
+	return fmt.Errorf(
+		"invalid cluster spec: %d admin_servers entries (%s); SeaweedFS's admin UI is single-instance — keep at most one admin_server row, or remove the role from the extras",
+		len(specification.AdminServers), strings.Join(ips, ", "))
 }
 
 // validateSftpFilerPrerequisite ensures that any SFTP server can reach a
@@ -133,6 +162,9 @@ func computeVolumeTargetDemand(volumes []*spec.VolumeServerSpec) (mountpoints, s
 }
 
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
+	if err := validateSingleAdminServer(specification); err != nil {
+		return err
+	}
 	if err := validateS3Prerequisites(specification); err != nil {
 		return err
 	}

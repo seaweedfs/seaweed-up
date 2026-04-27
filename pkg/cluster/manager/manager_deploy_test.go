@@ -7,6 +7,39 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
+func TestValidateSingleAdminServer_zeroOrOneOK(t *testing.T) {
+	// Zero admins: cluster runs without the admin UI. Allowed.
+	if err := validateSingleAdminServer(&spec.Specification{}); err != nil {
+		t.Errorf("zero admins should pass: %v", err)
+	}
+	// One admin: canonical shape. Allowed.
+	one := &spec.Specification{}
+	one.AdminServers = append(one.AdminServers, &spec.AdminServerSpec{Ip: "10.0.0.61"})
+	if err := validateSingleAdminServer(one); err != nil {
+		t.Errorf("single admin should pass: %v", err)
+	}
+}
+
+func TestValidateSingleAdminServer_rejectsTwo(t *testing.T) {
+	// Two admins: SeaweedFS's admin UI is single-instance, so this
+	// would race on task scheduling. Refuse before any SSH session.
+	s := &spec.Specification{}
+	s.AdminServers = append(s.AdminServers,
+		&spec.AdminServerSpec{Ip: "10.0.0.61"},
+		&spec.AdminServerSpec{Ip: "10.0.0.62"},
+	)
+	err := validateSingleAdminServer(s)
+	if err == nil {
+		t.Fatal("expected error for two admins, got nil")
+	}
+	if !strings.Contains(err.Error(), "10.0.0.61") || !strings.Contains(err.Error(), "10.0.0.62") {
+		t.Errorf("error should name both admin IPs, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "single-instance") {
+		t.Errorf("error should explain the rationale, got: %v", err)
+	}
+}
+
 func TestValidateSftpFilerPrerequisite_NoSftp(t *testing.T) {
 	s := &spec.Specification{}
 	if err := validateSftpFilerPrerequisite(s); err != nil {
