@@ -142,6 +142,54 @@ func TestLoadPreviousFacts(t *testing.T) {
 	}
 }
 
+// TestRunClusterPlan_refreshHostRequiresOutput mirrors the dry-run
+// validator: --refresh-host targets entries in -o, so without -o
+// the flag is meaningless. The check fires before any SSH probe so
+// the test doesn't need network or fake hosts.
+func TestRunClusterPlan_refreshHostRequiresOutput(t *testing.T) {
+	dir := t.TempDir()
+	invPath := filepath.Join(dir, "inv.yaml")
+	if err := os.WriteFile(invPath, []byte("hosts:\n  - ip: 10.0.0.1\n    roles: [master]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := &ClusterPlanOptions{
+		InventoryFile: invPath,
+		RefreshHosts:  []string{"10.0.0.1"},
+	}
+	err := runClusterPlan(nil, opts)
+	if err == nil {
+		t.Fatal("expected refusal when --refresh-host is set without -o")
+	}
+	if !strings.Contains(err.Error(), "--refresh-host requires -o") {
+		t.Errorf("error should explain the missing -o, got: %v", err)
+	}
+}
+
+// TestRefreshHostSet covers the small slice→set converter: blank
+// entries get dropped, an empty input returns nil so plan.Merge
+// takes the no-refresh fast path.
+func TestRefreshHostSet(t *testing.T) {
+	if refreshHostSet(nil) != nil {
+		t.Errorf("nil input should return nil")
+	}
+	if refreshHostSet([]string{}) != nil {
+		t.Errorf("empty input should return nil")
+	}
+	if refreshHostSet([]string{"  ", ""}) != nil {
+		t.Errorf("all-blank input should return nil after trimming")
+	}
+	got := refreshHostSet([]string{"10.0.0.21", "  10.0.0.22  ", ""})
+	if len(got) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(got), got)
+	}
+	if _, ok := got["10.0.0.21"]; !ok {
+		t.Errorf("10.0.0.21 missing from set: %+v", got)
+	}
+	if _, ok := got["10.0.0.22"]; !ok {
+		t.Errorf("trimmed 10.0.0.22 missing from set: %+v", got)
+	}
+}
+
 // TestRunClusterPlan_dryRunRequiresOutput pins down the early-exit
 // validation: --dry-run renders a diff against -o, so without -o
 // there's no diff target to render. The check fires before any SSH

@@ -49,7 +49,15 @@ type ClusterPlanOptions struct {
 	// Implies -o (no diff target makes no sense without it). Sidecars
 	// are reported as "would write" lines but not actually written.
 	DryRun      bool
-	Concurrency int
+	// RefreshHosts is the list of host IPs whose existing entries
+	// should be replaced from fresh facts during append-merge,
+	// instead of being preserved byte-for-byte. Repeatable; pairs
+	// with the drift-detection WARN to give operators a one-shot
+	// fix for hosts whose hardware shape has shifted. Implies -o
+	// pointing at an existing file (greenfield runs have nothing to
+	// refresh).
+	RefreshHosts []string
+	Concurrency  int
 
 	ClusterName       string
 	VolumeSizeLimitMB int
@@ -78,7 +86,10 @@ place: new inventory hosts are appended at each section's tail and
 existing entries (along with operator hand-edits and comments) are
 preserved byte-for-byte. Pass --overwrite to regenerate from scratch
 instead. Pass --dry-run to print a unified diff of what -o would
-change without writing anything. See docs/design/inventory-and-plan.md.
+change without writing anything. Pass --refresh-host=<ip> (repeatable)
+to re-emit just that host's entries from fresh facts — pairs with
+the drift-detection WARN that the previous run's facts.json comparison
+emits. See docs/design/inventory-and-plan.md.
 
 Purely read-only on the target hosts.`,
 		Example: `  # Probe-only (JSON to stdout)
@@ -90,6 +101,10 @@ Purely read-only on the target hosts.`,
 
   # Preview what plan would change without writing anything
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --dry-run
+
+  # Re-emit one host's entries from fresh facts (drift remediation)
+  seaweed-up cluster plan -i inventory.yaml -o cluster.yaml \
+      --refresh-host 10.0.0.21
 
   # Force regeneration, discarding any existing cluster.yaml
   seaweed-up cluster plan -i inventory.yaml -o cluster.yaml --overwrite`,
@@ -103,6 +118,7 @@ Purely read-only on the target hosts.`,
 	cmd.Flags().BoolVar(&opts.Overwrite, "overwrite", false, "regenerate -o from scratch instead of append-merging into the existing file")
 	cmd.Flags().BoolVar(&opts.JSONOutput, "json", false, "write probe facts as JSON to stdout (default when -o is absent)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "print a unified diff of what -o would change instead of writing it (requires -o)")
+	cmd.Flags().StringSliceVar(&opts.RefreshHosts, "refresh-host", nil, "re-emit the named host's existing entries from fresh facts (repeatable; requires -o pointing at an existing cluster.yaml)")
 	cmd.Flags().IntVar(&opts.Concurrency, "concurrency", 10, "max concurrent probes")
 
 	cmd.Flags().StringVar(&opts.ClusterName, "cluster-name", "", "cluster_name to stamp on the generated cluster.yaml")
@@ -137,6 +153,12 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		// a clear error rather than silently turning into a probe-only
 		// run that ignores the flag.
 		return fmt.Errorf("--dry-run requires -o; pass the path you'd like to preview against")
+	}
+	if len(opts.RefreshHosts) > 0 && opts.OutputFile == "" {
+		// --refresh-host targets entries in -o. Without -o there's no
+		// existing file to refresh; surface the misuse instead of
+		// silently dropping the flag.
+		return fmt.Errorf("--refresh-host requires -o pointing at an existing cluster.yaml")
 	}
 
 	// Three modes for `-o cluster.yaml`:
@@ -221,6 +243,16 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	driftReports := plan.DetectDrift(prevFacts, facts)
 	printSkipReport(report)
 
+	// --refresh-host targets entries in an existing -o. If the
+	// operator passed it but we're not in merge mode (file absent
+	// or --overwrite set), the flag is a no-op for this run; warn
+	// loudly so it doesn't look like a successful refresh.
+	if len(opts.RefreshHosts) > 0 && !mergeMode {
+		fmt.Fprintf(os.Stderr,
+			"  WARN: --refresh-host ignored because -o doesn't exist (greenfield) or --overwrite was passed; "+
+				"refresh applies only to append-merge runs against an existing cluster.yaml\n")
+	}
+
 	var (
 		body        []byte
 		mergeReport *plan.MergeReport
@@ -239,7 +271,8 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 			return fmt.Errorf("read existing %s: %w", opts.OutputFile, readErr)
 		}
 		body, mergeReport, err = plan.Merge(existing, spec, plan.MergeOptions{
-			Marshal: plan.MarshalOptions{InventoryPath: opts.InventoryFile},
+			Marshal:      plan.MarshalOptions{InventoryPath: opts.InventoryFile},
+			RefreshHosts: refreshHostSet(opts.RefreshHosts),
 		})
 		if err != nil {
 			return fmt.Errorf("merge into existing cluster spec: %w", err)
@@ -384,6 +417,33 @@ func printMergeReport(r *plan.MergeReport) {
 	for _, u := range r.Unparseable {
 		fmt.Fprintf(os.Stderr, "  WARN: unparseable existing entry — fresh inventory hosts won't dedupe against it: %s\n", u)
 	}
+	for _, k := range r.Refreshed {
+		fmt.Fprintf(os.Stderr, "  refreshed %s\n", k)
+	}
+	for _, ip := range r.RefreshNotFound {
+		fmt.Fprintf(os.Stderr, "  WARN: --refresh-host %s did not match any existing entry; nothing to refresh\n", ip)
+	}
+}
+
+// refreshHostSet turns the repeatable --refresh-host CLI slice into a
+// set keyed by IP. nil/empty input returns nil so plan.Merge takes the
+// no-refresh fast path.
+func refreshHostSet(ips []string) map[string]struct{} {
+	if len(ips) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(ips))
+	for _, ip := range ips {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
+		out[ip] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // printDriftReport surfaces per-host hardware drift between the
