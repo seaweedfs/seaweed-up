@@ -235,6 +235,55 @@ func TestProbeHosts_dedupsBySSHTarget(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsMultipleAdminHosts(t *testing.T) {
+	// SeaweedFS's admin UI is single-instance — there's no leader
+	// election or shared-state story for the `weed admin` component,
+	// so an inventory with two admin hosts would silently produce
+	// conflicting task scheduling at deploy time. Refuse at load.
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.61", Roles: []string{"admin"}},
+			{IP: "10.0.0.62", Roles: []string{"admin"}},
+		},
+	}
+	err := inv.Validate()
+	if err == nil {
+		t.Fatal("expected multi-admin error, got nil")
+	}
+	if !strings.Contains(err.Error(), "10.0.0.61") || !strings.Contains(err.Error(), "10.0.0.62") {
+		t.Errorf("error should name both admin hosts, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "single-instance") {
+		t.Errorf("error should explain the rationale, got: %v", err)
+	}
+}
+
+func TestValidate_singleAdminAllowed(t *testing.T) {
+	// One admin host is the canonical shape. Make sure the new
+	// guard doesn't accidentally trip on it.
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.61", Roles: []string{"admin"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Errorf("single admin should validate: %v", err)
+	}
+}
+
+func TestValidate_zeroAdminsAllowed(t *testing.T) {
+	// Cluster without an admin UI is legitimate — the `weed admin`
+	// component is optional. Make sure the guard doesn't require it.
+	inv := &Inventory{
+		Hosts: []Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Errorf("inventory without admin role should validate: %v", err)
+	}
+}
+
 func TestValidate_rejectsDuplicateTag(t *testing.T) {
 	// Two hosts carrying the same tag would make tag:<name> rewrites
 	// ambiguous. Refuse at load time so the operator sees the

@@ -7,6 +7,67 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
+func TestValidateSingleAdminServer_zeroOrOneOK(t *testing.T) {
+	// Zero admins: cluster runs without the admin UI. Allowed.
+	if err := validateSingleAdminServer(&spec.Specification{}); err != nil {
+		t.Errorf("zero admins should pass: %v", err)
+	}
+	// One admin: canonical shape. Allowed.
+	one := &spec.Specification{}
+	one.AdminServers = append(one.AdminServers, &spec.AdminServerSpec{Ip: "10.0.0.61"})
+	if err := validateSingleAdminServer(one); err != nil {
+		t.Errorf("single admin should pass: %v", err)
+	}
+}
+
+func TestValidateSingleAdminServer_rejectsNilEntry(t *testing.T) {
+	// A YAML null list item (`admin_servers: [null]` or a stray
+	// bullet on its own line) decodes to a nil *AdminServerSpec.
+	// Without the defensive nil check, resolveWorkerDefaultAdmins
+	// would later panic on AdminServers[0].Port; the validator
+	// turns that into an actionable error.
+	s := &spec.Specification{}
+	s.AdminServers = append(s.AdminServers, nil)
+	err := validateSingleAdminServer(s)
+	if err == nil {
+		t.Fatal("expected error for nil admin entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "null") {
+		t.Errorf("error should mention the null entry, got: %v", err)
+	}
+
+	// Same protection when the nil sits next to a real entry —
+	// the count alone (>1) might mask the nil otherwise.
+	s2 := &spec.Specification{}
+	s2.AdminServers = append(s2.AdminServers,
+		&spec.AdminServerSpec{Ip: "10.0.0.61"},
+		nil,
+	)
+	if err := validateSingleAdminServer(s2); err == nil {
+		t.Fatal("expected error for mixed nil-and-valid admin entries, got nil")
+	}
+}
+
+func TestValidateSingleAdminServer_rejectsTwo(t *testing.T) {
+	// Two admins: SeaweedFS's admin UI is single-instance, so this
+	// would race on task scheduling. Refuse before any SSH session.
+	s := &spec.Specification{}
+	s.AdminServers = append(s.AdminServers,
+		&spec.AdminServerSpec{Ip: "10.0.0.61"},
+		&spec.AdminServerSpec{Ip: "10.0.0.62"},
+	)
+	err := validateSingleAdminServer(s)
+	if err == nil {
+		t.Fatal("expected error for two admins, got nil")
+	}
+	if !strings.Contains(err.Error(), "10.0.0.61") || !strings.Contains(err.Error(), "10.0.0.62") {
+		t.Errorf("error should name both admin IPs, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "single-instance") {
+		t.Errorf("error should explain the rationale, got: %v", err)
+	}
+}
+
 func TestValidateSftpFilerPrerequisite_NoSftp(t *testing.T) {
 	s := &spec.Specification{}
 	if err := validateSftpFilerPrerequisite(s); err != nil {
