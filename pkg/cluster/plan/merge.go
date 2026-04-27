@@ -428,6 +428,14 @@ func ipOfNode(node *yaml.Node) string {
 // (on individual key/value pairs inside the mapping) aren't carried
 // — that would require pairing each fresh field with its
 // corresponding old field, which is out of scope for Phase 4.
+//
+// The same *yaml.Node from freshByKey may end up assigned to
+// multiple positions in seqNode.Content if the existing YAML has
+// hand-edited duplicate `ip:port` entries (rare; would also have
+// surfaced via Unparseable on a previous merge run). Verified
+// behavior: yaml.v3's encoder renders both copies as literal
+// duplicates rather than emitting `&anchor` / `*alias` markers,
+// so no defensive deep-copy is needed here.
 func carryEntryComments(dst, src *yaml.Node) {
 	if dst == nil || src == nil {
 		return
