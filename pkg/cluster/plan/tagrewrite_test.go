@@ -96,6 +96,25 @@ func TestRewriteTagReferences_ipv6BracketsTaggedHost(t *testing.T) {
 	}
 }
 
+// TestRewriteTagReferences_alreadyBracketedIPv6PassThrough: an
+// operator who pastes `[2001:db8::1]` into inventory.yaml's `ip:`
+// field shouldn't see the rewrite produce `@[[2001:db8::1]]:5432`
+// (which the DSN parser would reject as a malformed host). The
+// shallow brackets-already-present check keeps the value verbatim.
+func TestRewriteTagReferences_alreadyBracketedIPv6PassThrough(t *testing.T) {
+	inv := invWithTags(t, map[string]string{"v6db": "[2001:db8::1]"})
+	got, err := RewriteTagReferences("postgres://u:p@tag:v6db:5432/db", inv)
+	if err != nil {
+		t.Fatalf("RewriteTagReferences: %v", err)
+	}
+	if !strings.Contains(got, "@[2001:db8::1]:5432/") {
+		t.Errorf("already-bracketed v6 should pass through; got %q", got)
+	}
+	if strings.Contains(got, "[[") {
+		t.Errorf("output should not double-bracket; got %q", got)
+	}
+}
+
 func TestRewriteTagReferences_nilInventoryNoOp(t *testing.T) {
 	in := "postgres://u:p@tag:foo/db"
 	got, err := RewriteTagReferences(in, nil)

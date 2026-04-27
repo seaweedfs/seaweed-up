@@ -86,7 +86,16 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 // sees a single authority component; v4 and DNS names go in raw.
 // Detection is shallow on purpose — anything containing `:` is
 // treated as v6.
+//
+// Already-bracketed inputs (operator typed `ip: "[2001:db8::1]"`
+// in inventory.yaml — natural after a copy-paste from a connection
+// URL) pass through unchanged so the rewrite doesn't produce
+// `@[[2001:db8::1]]:5432`, which the DSN parser would reject with
+// a confusing host-shaped error.
 func formatTagSubstitution(ip string) string {
+	if strings.HasPrefix(ip, "[") {
+		return ip
+	}
 	if strings.Contains(ip, ":") {
 		return "[" + ip + "]"
 	}
