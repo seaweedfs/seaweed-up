@@ -404,6 +404,12 @@ func newWorkerSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.WorkerServe
 	return &spec.WorkerServerSpec{
 		Ip:      h.IP,
 		PortSsh: ssh.Port,
+		// Stamp the default job-type explicitly so the rendered
+		// cluster.yaml is self-describing — operators reading the
+		// file shouldn't have to know `weed worker`'s implicit
+		// default to predict what task categories the worker will
+		// pick up.
+		JobType: spec.DefaultWorkerJobType,
 	}
 }
 
