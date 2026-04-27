@@ -326,18 +326,27 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 	}
 
 	freshKeys := map[string]struct{}{}
-	freshByKey := make(map[string]*yaml.Node, len(fresh))
+	freshByIP := make(map[string]serverEntry, len(fresh))
 	for _, e := range fresh {
 		freshKeys[e.key] = struct{}{}
-		freshByKey[e.key] = e.node
+		if ip := ipOfNode(e.node); ip != "" {
+			freshByIP[ip] = e
+		}
 	}
 
 	// Refresh pass first so the existing-key index built by the
-	// orphan check still recognizes the (now-replaced) node — the
-	// keyOfNode extractor reads the `ip:` scalar, which the fresh
-	// node carries unchanged. Walking seqNode.Content directly here
-	// (rather than going through recordOrphansAndUnparseable) lets
-	// us mutate Content[i] in place.
+	// orphan check sees the post-refresh state. We key on IP alone
+	// (NOT on the section's full ip:port / ip:role identity): an
+	// operator typing `--refresh-host=10.0.0.21` doesn't know or
+	// care about ports, they just want that host's entry brought in
+	// line with what plan would generate today. Re-emitting the
+	// entry from fresh facts is the contract — including clobbering
+	// a hand-edited port. Without per-IP keying the partial-match
+	// path (existing port 8889, fresh port 8888) would skip refresh,
+	// then leave both rows behind: orphan + appended fresh = two
+	// entries for the same host. By replacing in place keyed on IP,
+	// the post-refresh entry's key matches the fresh one, the orphan
+	// check stays quiet, and the append loop dedupes.
 	if len(refreshHosts) > 0 {
 		for i, item := range seqNode.Content {
 			ip := ipOfNode(item)
@@ -347,24 +356,17 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			if _, want := refreshHosts[ip]; !want {
 				continue
 			}
-			key := keyOfNode(item)
-			freshNode, ok := freshByKey[key]
+			e, ok := freshByIP[ip]
 			if !ok {
-				// Refresh requested for a host whose existing entry's
-				// (ip, port) doesn't line up with any fresh entry's
-				// key — typically the operator hand-edited the port,
-				// or the spec moved the host between sections. Record
-				// the partial-match miss explicitly: the IP-level
-				// RefreshNotFound check at the end of Merge fires
-				// only when refreshSeen[ip] was never set in ANY
-				// section, so a clean match on master_servers + port
-				// mismatch on filer_servers would otherwise leave
-				// the operator with no signal that one role was left
-				// stale. Section-qualified Unparseable surfaces it
-				// without inventing a new field.
-				report.Unparseable = append(report.Unparseable,
-					fmt.Sprintf("%s: line %d (refresh-host %s: existing entry's port doesn't match the fresh spec — refresh skipped for this section)",
-						sectionKey, item.Line, ip))
+				// Refresh wanted but the fresh spec has no entry
+				// for this IP in this section. Two real causes:
+				// (a) the host was removed from inventory or its
+				// role for this section was dropped (no eligible
+				// disks etc.) — recordOrphansAndUnparseable below
+				// surfaces the orphan; (b) the inventory key for
+				// this IP changed entirely. Either way, the orphan
+				// signal is the right operator hint; don't add a
+				// per-section Unparseable line.
 				continue
 			}
 			// Carry the entry-level head/line/foot comments from
@@ -374,10 +376,10 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			// dropped — preserving those would require a structural
 			// merge of the two mappings, which Phase 4 explicitly
 			// scopes out.
-			carryEntryComments(freshNode, item)
-			seqNode.Content[i] = freshNode
+			carryEntryComments(e.node, item)
+			seqNode.Content[i] = e.node
 			refreshSeen[ip] = struct{}{}
-			report.Refreshed = append(report.Refreshed, fmt.Sprintf("%s: %s", sectionKey, key))
+			report.Refreshed = append(report.Refreshed, fmt.Sprintf("%s: %s", sectionKey, e.key))
 		}
 	}
 

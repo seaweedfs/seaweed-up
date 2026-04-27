@@ -722,17 +722,18 @@ master_servers:
 	}
 }
 
-// TestMerge_refreshHost_partialPortMismatchSurfaces: the
-// IP-level RefreshNotFound check only fires when refreshSeen[ip]
-// was never set in ANY section. If a refresh IP matches cleanly
-// in master_servers but the operator has hand-edited the port on
-// the same host's filer_servers entry, refreshSeen[ip] gets set
-// by the master match and the filer entry stays silently stale.
-// The per-section Unparseable surface captures that miss so the
-// operator sees a signal for the role that didn't refresh.
-func TestMerge_refreshHost_partialPortMismatchSurfaces(t *testing.T) {
-	// Hand-edited filer port (8889 instead of the fresh spec's 8888)
-	// — common when an operator runs filer on a non-standard port.
+// TestMerge_refreshHost_clobbersHandEditedPort exercises the
+// partial-match path that an earlier pass (commit 4791ef8) handled
+// incorrectly: the operator hand-edited a section's port, then
+// asked for a refresh on the host. Refresh's contract is "re-emit
+// from fresh facts" — including the port, which is incidentally
+// part of the dedup key. Refreshing in place by IP rather than by
+// (ip, port) means the entry's port becomes whatever the fresh
+// spec says. Crucially, the section ends up with EXACTLY ONE row
+// for the host, not the duplicate the previous implementation left
+// behind (existing 8889 marked orphan + freshly-appended 8888).
+func TestMerge_refreshHost_clobbersHandEditedPort(t *testing.T) {
+	// Hand-edited filer port (8889 instead of the fresh spec's 8888).
 	existing := `cluster_name: merge-test
 master_servers:
     - ip: 10.0.0.11
@@ -755,37 +756,52 @@ filer_servers:
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	_, report, err := Merge([]byte(existing), spec, MergeOptions{
+	merged, report, err := Merge([]byte(existing), spec, MergeOptions{
 		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
 		RefreshHosts: map[string]struct{}{"10.0.0.11": {}},
 	})
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
-	// master_servers refreshed cleanly.
-	foundMaster := false
+
+	// Both sections refreshed cleanly — the filer's hand-edited port
+	// 8889 got clobbered by the fresh spec's 8888.
+	wantRefreshed := map[string]bool{
+		"master_servers: 10.0.0.11:9333": false,
+		"filer_servers: 10.0.0.11:8888":  false,
+	}
 	for _, k := range report.Refreshed {
-		if strings.Contains(k, "master_servers") && strings.Contains(k, "10.0.0.11:9333") {
-			foundMaster = true
+		if _, ok := wantRefreshed[k]; ok {
+			wantRefreshed[k] = true
 		}
 	}
-	if !foundMaster {
-		t.Errorf("Refreshed should contain master_servers entry, got %+v", report.Refreshed)
-	}
-	// filer_servers entry (port 8889 in existing vs 8888 in fresh)
-	// must surface as a section-qualified miss.
-	foundFilerMiss := false
-	for _, u := range report.Unparseable {
-		if strings.Contains(u, "filer_servers") && strings.Contains(u, "refresh-host 10.0.0.11") {
-			foundFilerMiss = true
+	for k, seen := range wantRefreshed {
+		if !seen {
+			t.Errorf("Refreshed should contain %q, got %+v", k, report.Refreshed)
 		}
 	}
-	if !foundFilerMiss {
-		t.Errorf("Unparseable should record the filer_servers refresh miss, got %+v", report.Unparseable)
+
+	// No phantom entries. Without the IP-keyed refresh fix, the
+	// filer section ended up with TWO rows for 10.0.0.11 (the stale
+	// 8889 marked orphan + freshly-appended 8888). After the fix,
+	// the section has exactly one filer row at the fresh port.
+	got := string(merged)
+	if got8889 := strings.Count(got, "port: 8889"); got8889 != 0 {
+		t.Errorf("hand-edited port 8889 should be clobbered by refresh, got %d occurrences in:\n%s", got8889, merged)
 	}
-	// And RefreshNotFound stays empty: the IP DID match somewhere.
+	if got8888 := strings.Count(got, "port: 8888"); got8888 != 1 {
+		t.Errorf("expected exactly one filer entry at fresh port 8888, got %d in:\n%s", got8888, merged)
+	}
+
+	// And no warning surfaces are unintentionally tripped:
 	if len(report.RefreshNotFound) != 0 {
-		t.Errorf("RefreshNotFound should stay empty when the IP matched at least one section, got %+v", report.RefreshNotFound)
+		t.Errorf("RefreshNotFound should stay empty for an IP that matched, got %+v", report.RefreshNotFound)
+	}
+	if len(report.Unparseable) != 0 {
+		t.Errorf("Unparseable should stay empty (the in-place refresh leaves no parseable-but-mismatched leftovers), got %+v", report.Unparseable)
+	}
+	if len(report.Orphaned) != 0 {
+		t.Errorf("Orphaned should stay empty after refresh-in-place, got %+v", report.Orphaned)
 	}
 }
 
