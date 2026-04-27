@@ -57,7 +57,13 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 	// Build the output by interleaving unchanged spans with
 	// resolved IPs. ReplaceAllStringFunc would work but loses the
 	// per-match error path we want for unknown tags.
-	var out []byte
+	//
+	// Pre-allocate at the input length: the common substitution
+	// (tag:<short-name> → 10.0.0.X) is roughly the same number of
+	// bytes, so this gets us through most rewrites in a single
+	// allocation. v6 substitutions slightly grow the output and
+	// trigger one append-resize, which is fine.
+	out := make([]byte, 0, len(dsn))
 	last := 0
 	for _, m := range matches {
 		// m = [start, end, prefixStart, prefixEnd, tagStart, tagEnd].
