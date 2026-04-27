@@ -54,13 +54,58 @@ func TestRewriteTagReferences_noTagPassesThrough(t *testing.T) {
 	}
 }
 
-func TestRewriteTagReferences_multipleTags(t *testing.T) {
+// TestRewriteTagReferences_passwordContainingTagPrefixIsNotRewritten
+// is the regression test for the host-only-substitution rule: a
+// password literal that happens to start with `tag:` (operator
+// chose `tag:secret` as their password — unwise but valid) must
+// not be touched by the rewriter. Before the fix, the regex
+// matched anywhere in the DSN and either errored on an unknown
+// tag or silently substituted credentials with an inventory IP.
+func TestRewriteTagReferences_passwordContainingTagPrefixIsNotRewritten(t *testing.T) {
+	inv := invWithTags(t, map[string]string{"primary": "10.0.0.41"})
+	in := "postgres://user:tag:secret@10.0.0.41/db"
+	got, err := RewriteTagReferences(in, inv)
+	if err != nil {
+		t.Fatalf("RewriteTagReferences: %v", err)
+	}
+	if got != in {
+		t.Errorf("password-containing-`tag:` DSN should pass through; got %q", got)
+	}
+}
+
+// TestRewriteTagReferences_queryValueContainingTagIsNotRewritten
+// pairs with the password test above: a `?note=tag:prod` query
+// value (or any tag-shaped substring after `?`) must stay
+// verbatim. Without the host-only constraint the rewriter would
+// either error on unknown tags or substitute credentials/queries
+// with an inventory IP.
+func TestRewriteTagReferences_queryValueContainingTagIsNotRewritten(t *testing.T) {
+	inv := invWithTags(t, map[string]string{"primary": "10.0.0.41"})
+	in := "postgres://user:p@10.0.0.41/db?note=tag:prod&fallback=tag:primary"
+	got, err := RewriteTagReferences(in, inv)
+	if err != nil {
+		t.Fatalf("RewriteTagReferences: %v", err)
+	}
+	if got != in {
+		t.Errorf("query-string `tag:` substrings should pass through; got %q", got)
+	}
+}
+
+// TestRewriteTagReferences_multipleTagsInHost is the upper bound
+// of host-segment substitution: a DSN that legitimately needs two
+// tag references in the same authority position (extremely rare;
+// included to pin behavior). With the host-only constraint the
+// rewriter substitutes both, leaving the rest of the DSN alone.
+func TestRewriteTagReferences_multipleTagsInHost(t *testing.T) {
+	// SeaweedFS doesn't actually parse multi-host DSNs in
+	// --filer-backend, but this exercises the loop logic against a
+	// concocted shape (no port to keep the regex unambiguous).
 	inv := invWithTags(t, map[string]string{
 		"primary": "10.0.0.41",
 		"replica": "10.0.0.42",
 	})
-	dsn := "tag:primary,tag:replica?weight=1"
-	got, err := RewriteTagReferences(dsn, inv)
+	in := "postgres://u:p@tag:primary,tag:replica/db"
+	got, err := RewriteTagReferences(in, inv)
 	if err != nil {
 		t.Fatalf("RewriteTagReferences: %v", err)
 	}
@@ -69,6 +114,22 @@ func TestRewriteTagReferences_multipleTags(t *testing.T) {
 	}
 	if strings.Contains(got, "tag:") {
 		t.Errorf("output still contains a literal tag: reference: %q", got)
+	}
+}
+
+// TestRewriteTagReferences_noSchemePassesThrough: without `://`
+// we can't locate the host segment safely, so the rewriter is a
+// no-op. The downstream parser will complain about a missing
+// scheme on its own terms — better than guessing.
+func TestRewriteTagReferences_noSchemePassesThrough(t *testing.T) {
+	inv := invWithTags(t, map[string]string{"primary": "10.0.0.41"})
+	in := "host=tag:primary user=foo password=bar" // libpq-style key/value
+	got, err := RewriteTagReferences(in, inv)
+	if err != nil {
+		t.Fatalf("RewriteTagReferences: %v", err)
+	}
+	if got != in {
+		t.Errorf("schemeless DSN should pass through; got %q", got)
 	}
 }
 

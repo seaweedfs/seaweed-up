@@ -23,16 +23,27 @@ import (
 // tag name and stops at the next `:` or `/` etc.
 var tagRefRE = regexp.MustCompile(`(^|\W)tag:([a-zA-Z0-9_.\-]+)`)
 
-// RewriteTagReferences resolves `tag:<name>` references in dsn by
-// substituting the tagged host's IP from inv. Returns the rewritten
-// string and a non-nil error when any referenced tag isn't declared
-// on a host (typo, host removed, etc.) — failing loud rather than
-// passing through a `tag:` literal that ParseFilerBackendDSN would
-// then reject as a malformed host.
+// RewriteTagReferences resolves `tag:<name>` references in dsn's
+// authority host segment (the bytes after `://[userinfo@]` and
+// before the next `/?#`) by substituting the tagged host's IP from
+// inv. Other parts of the DSN — scheme, userinfo, port, path,
+// query, fragment — are left strictly alone. Constraining the
+// rewrite to the host position avoids clobbering literal `tag:`
+// substrings that legitimately appear in passwords (`user:tag:secret@…`)
+// or query values (`?note=tag:prod`).
 //
-// When dsn carries no tag references the function is a fast no-op
-// and returns the input unchanged. Useful for the operator who just
-// wants to keep typing literal IPs/hostnames.
+// Returns a non-nil error when a tag in the host segment isn't
+// declared on any host in the inventory (typo, host removed, etc.)
+// — failing loud rather than passing through a `tag:` literal that
+// ParseFilerBackendDSN would then reject as a malformed host.
+//
+// Fast no-ops, in priority order:
+//   - inv is nil or dsn is empty
+//   - dsn doesn't contain the substring "tag:" anywhere
+//   - dsn doesn't contain the scheme separator "://" (we can't
+//     locate the host segment without one; the operator gets the
+//     literal pass-through and ParseFilerBackendDSN can complain
+//     about the missing scheme on its own terms)
 //
 // IPv6: a v6 IP is wrapped in brackets so it slots cleanly into a
 // URL authority (`postgres://user:pw@[2001:db8::1]:5432/db`). v4
@@ -49,31 +60,76 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 	if !strings.Contains(dsn, "tag:") {
 		return dsn, nil
 	}
-	matches := tagRefRE.FindAllStringSubmatchIndex(dsn, -1)
-	if len(matches) == 0 {
+
+	// Locate the authority host segment — the slice we're allowed
+	// to touch. Anything outside it (userinfo password, path,
+	// query, fragment) stays verbatim even if it contains `tag:`.
+	hostStart, hostEnd, ok := authorityHostRange(dsn)
+	if !ok {
 		return dsn, nil
 	}
+	rewritten, err := rewriteTagsInRange(dsn, hostStart, hostEnd, inv)
+	if err != nil {
+		return "", err
+	}
+	return dsn[:hostStart] + rewritten + dsn[hostEnd:], nil
+}
 
-	// Build the output by interleaving unchanged spans with
-	// resolved IPs. ReplaceAllStringFunc would work but loses the
-	// per-match error path we want for unknown tags.
-	//
-	// Pre-allocate at the input length: the common substitution
+// authorityHostRange returns the [start, end) byte offsets of the
+// host segment within a URL-style DSN: everything after `://` and
+// the optional `userinfo@`, up to the first authority terminator
+// (`/`, `?`, `#`) or end-of-string. The bool reports whether a
+// scheme separator was found at all; callers use it to skip the
+// rewrite on non-URL inputs.
+//
+// Splitting the userinfo on the LAST `@` handles passwords that
+// contain `@` (e.g. `user:p@ss@host`); the URL spec is ambiguous
+// here but the de-facto convention is "everything before the last
+// @ is userinfo". Authority-end uses the FIRST occurrence of `/`,
+// `?`, or `#` after the scheme — a literal `?` inside userinfo
+// would already have made the DSN unparseable.
+func authorityHostRange(dsn string) (start, end int, ok bool) {
+	scheme := strings.Index(dsn, "://")
+	if scheme < 0 {
+		return 0, 0, false
+	}
+	authStart := scheme + 3
+	authEnd := len(dsn)
+	if i := strings.IndexAny(dsn[authStart:], "/?#"); i >= 0 {
+		authEnd = authStart + i
+	}
+	hostStart := authStart
+	if at := strings.LastIndex(dsn[authStart:authEnd], "@"); at >= 0 {
+		hostStart = authStart + at + 1
+	}
+	return hostStart, authEnd, true
+}
+
+// rewriteTagsInRange runs the tag regex against dsn[start:end] and
+// returns the substituted segment. Errors loudly on unknown tags;
+// no-op when the segment carries no tag references.
+func rewriteTagsInRange(dsn string, start, end int, inv *inventory.Inventory) (string, error) {
+	segment := dsn[start:end]
+	matches := tagRefRE.FindAllStringSubmatchIndex(segment, -1)
+	if len(matches) == 0 {
+		return segment, nil
+	}
+	// Pre-allocate at the segment length: the common substitution
 	// (tag:<short-name> → 10.0.0.X) is roughly the same number of
 	// bytes, so this gets us through most rewrites in a single
 	// allocation. v6 substitutions slightly grow the output and
 	// trigger one append-resize, which is fine.
-	out := make([]byte, 0, len(dsn))
+	out := make([]byte, 0, len(segment))
 	last := 0
 	for _, m := range matches {
 		// m = [start, end, prefixStart, prefixEnd, tagStart, tagEnd].
-		// prefixStart isn't needed: dsn[last:prefixEnd] copies
+		// prefixStart isn't needed: segment[last:prefixEnd] copies
 		// everything from the previous match's tail through and
 		// including the boundary character (the `\W` or BOL the
 		// regex matched), so the substitution drops in cleanly.
 		_, prefixEnd := m[2], m[3]
 		tagStart, tagEnd := m[4], m[5]
-		tag := dsn[tagStart:tagEnd]
+		tag := segment[tagStart:tagEnd]
 
 		host, ok := inv.HostByTag(tag)
 		if !ok {
@@ -84,12 +140,11 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 			// message.
 			return "", fmt.Errorf("tag:%s not found in inventory", tag)
 		}
-
-		out = append(out, dsn[last:prefixEnd]...) // includes the prefix byte
+		out = append(out, segment[last:prefixEnd]...)
 		out = append(out, formatTagSubstitution(host.IP)...)
 		last = tagEnd
 	}
-	out = append(out, dsn[last:]...)
+	out = append(out, segment[last:]...)
 	return string(out), nil
 }
 
