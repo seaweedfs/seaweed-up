@@ -165,6 +165,34 @@ func TestRunClusterPlan_refreshHostRequiresOutput(t *testing.T) {
 	}
 }
 
+// TestRunClusterPlan_refreshHostBlankOnlyTreatedAsEmpty pins the
+// trim-before-validate fix: passing only whitespace values to
+// --refresh-host used to slip past the require-`-o` check (the
+// validator counted raw flag values, refreshHostSet then trimmed
+// them all to nil, and plan.Merge silently no-op'd). The trimmed
+// set should now share the empty-input semantics — no
+// `--refresh-host requires -o` error fires because there's nothing
+// effectively requested.
+//
+// Routed through a malformed inventory path so the call exits
+// early without reaching the SSH probe (which would crash on a
+// nil cobra cmd in this unit-test scaffolding).
+func TestRunClusterPlan_refreshHostBlankOnlyTreatedAsEmpty(t *testing.T) {
+	opts := &ClusterPlanOptions{
+		InventoryFile: filepath.Join(t.TempDir(), "does-not-exist.yaml"),
+		RefreshHosts:  []string{"  ", ""},
+		// OutputFile left empty — without trimming, the validator
+		// would fire a `--refresh-host requires -o` error here.
+	}
+	err := runClusterPlan(nil, opts)
+	if err == nil {
+		t.Fatal("expected inventory-load error, got nil")
+	}
+	if strings.Contains(err.Error(), "--refresh-host requires -o") {
+		t.Errorf("blank-only --refresh-host should not trigger the require-o error, got: %v", err)
+	}
+}
+
 // TestRefreshHostSet covers the small slice→set converter: blank
 // entries get dropped, an empty input returns nil so plan.Merge
 // takes the no-refresh fast path.

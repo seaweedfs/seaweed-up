@@ -154,7 +154,14 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		// run that ignores the flag.
 		return fmt.Errorf("--dry-run requires -o; pass the path you'd like to preview against")
 	}
-	if len(opts.RefreshHosts) > 0 && opts.OutputFile == "" {
+	// Trim once and reuse: validating against the raw slice would
+	// let `--refresh-host=" "` slip past the -o check (refreshHostSet
+	// drops whitespace-only entries and returns nil, so plan.Merge
+	// would silently no-op). Trim first so blanks-only and empty
+	// share the "no refresh requested" semantics, and pass the
+	// resulting set down to the merge call.
+	refreshSet := refreshHostSet(opts.RefreshHosts)
+	if len(refreshSet) > 0 && opts.OutputFile == "" {
 		// --refresh-host targets entries in -o. Without -o there's no
 		// existing file to refresh; surface the misuse instead of
 		// silently dropping the flag.
@@ -247,7 +254,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 	// operator passed it but we're not in merge mode (file absent
 	// or --overwrite set), the flag is a no-op for this run; warn
 	// loudly so it doesn't look like a successful refresh.
-	if len(opts.RefreshHosts) > 0 && !mergeMode {
+	if len(refreshSet) > 0 && !mergeMode {
 		fmt.Fprintf(os.Stderr,
 			"  WARN: --refresh-host ignored because -o doesn't exist (greenfield) or --overwrite was passed; "+
 				"refresh applies only to append-merge runs against an existing cluster.yaml\n")
@@ -272,7 +279,7 @@ func runClusterPlan(cmd *cobra.Command, opts *ClusterPlanOptions) error {
 		}
 		body, mergeReport, err = plan.Merge(existing, spec, plan.MergeOptions{
 			Marshal:      plan.MarshalOptions{InventoryPath: opts.InventoryFile},
-			RefreshHosts: refreshHostSet(opts.RefreshHosts),
+			RefreshHosts: refreshSet,
 		})
 		if err != nil {
 			return fmt.Errorf("merge into existing cluster spec: %w", err)
