@@ -650,8 +650,20 @@ pkg/disks/
      (resizes, NIC reattach) to be worth flagging today; expand one
      dimension at a time if real use surfaces a need. Implementation
      in `pkg/cluster/plan/drift.go`.
-   - `--refresh-host=<ip>` — re-emit a single host's entry from
-     fresh facts without mutating the rest of the file.
+   - **`--refresh-host=<ip>`** *(done)* — re-emit a host's entries
+     from fresh facts during append-merge while leaving every other
+     entry's bytes intact. Repeatable; pairs with the drift WARN
+     above (operator sees `drift on 10.0.0.21: added /dev/sdc`,
+     re-runs `plan --refresh-host 10.0.0.21` to fix that one
+     entry without resorting to `--overwrite`). Refresh is per-IP,
+     so a host that maps to multiple sections (master + filer +
+     volume) gets all of its entries refreshed in one shot.
+     Entry-level head/line/foot comments survive; field-level
+     inline comments inside the mapping (e.g. on `port:`) do not —
+     pairing each fresh field with its old counterpart by key is
+     out of scope for now. Misses (an IP that didn't match any
+     existing entry) surface as a `WARN: --refresh-host …` line.
+     Implementation extends `pkg/cluster/plan/merge.go`.
    - Inventory tag references (`tag: postgres-metadata` → DSN
      rewrite).
 
