@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/plan"
 )
 
@@ -215,6 +216,59 @@ func TestRefreshHostSet(t *testing.T) {
 	}
 	if _, ok := got["10.0.0.22"]; !ok {
 		t.Errorf("trimmed 10.0.0.22 missing from set: %+v", got)
+	}
+}
+
+// TestResolveFilerBackend_rewritesTagReference confirms the cmd
+// layer threads the inventory through to plan.RewriteTagReferences
+// before parsing the DSN. An inventory carrying tag:postgres-metadata
+// on 10.0.0.41 means `--filer-backend postgres://…@tag:postgres-
+// metadata:5432/db` resolves to the host's IP in the parsed config.
+func TestResolveFilerBackend_rewritesTagReference(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.41", Roles: []string{"external"}, Tag: "postgres-metadata"},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	opts := &ClusterPlanOptions{
+		FilerBackend: "postgres://seaweed:s3cret@tag:postgres-metadata:5432/seaweedfs?sslmode=disable",
+	}
+	got, err := resolveFilerBackend(opts, inv)
+	if err != nil {
+		t.Fatalf("resolveFilerBackend: %v", err)
+	}
+	if got["hostname"] != "10.0.0.41" {
+		t.Errorf("hostname = %v, want 10.0.0.41 (tag rewrite didn't happen)", got["hostname"])
+	}
+	if got["username"] != "seaweed" || got["database"] != "seaweedfs" {
+		t.Errorf("non-host fields lost in tag rewrite path: %+v", got)
+	}
+}
+
+// TestResolveFilerBackend_unknownTagErrors: a typo in the tag name
+// surfaces as an error instead of falling through to the parser
+// (which would reject `tag:nonexistent` as a malformed host with a
+// confusing message).
+func TestResolveFilerBackend_unknownTagErrors(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	opts := &ClusterPlanOptions{
+		FilerBackend: "postgres://u:p@tag:typo:5432/db",
+	}
+	_, err := resolveFilerBackend(opts, inv)
+	if err == nil {
+		t.Fatal("expected unknown-tag error, got nil")
+	}
+	if !strings.Contains(err.Error(), "tag:typo") {
+		t.Errorf("error should name the missing tag, got: %v", err)
 	}
 }
 

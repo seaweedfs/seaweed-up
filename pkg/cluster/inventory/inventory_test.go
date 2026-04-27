@@ -235,6 +235,66 @@ func TestProbeHosts_dedupsBySSHTarget(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsDuplicateTag(t *testing.T) {
+	// Two hosts carrying the same tag would make tag:<name> rewrites
+	// ambiguous. Refuse at load time so the operator sees the
+	// collision instead of the planner picking an arbitrary winner.
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.41", Roles: []string{"external"}, Tag: "postgres-metadata"},
+			{IP: "10.0.0.42", Roles: []string{"external"}, Tag: "postgres-metadata"},
+		},
+	}
+	err := inv.Validate()
+	if err == nil {
+		t.Fatal("expected duplicate-tag error, got nil")
+	}
+	if !strings.Contains(err.Error(), "postgres-metadata") {
+		t.Errorf("error should name the offending tag, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "10.0.0.41") || !strings.Contains(err.Error(), "10.0.0.42") {
+		t.Errorf("error should name both hosts, got: %v", err)
+	}
+}
+
+func TestValidate_emptyTagIsNotShared(t *testing.T) {
+	// Empty tag means "no tag at all" — multiple hosts without a tag
+	// must not collide with each other.
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.12", Roles: []string{"master"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Errorf("empty tags should not collide: %v", err)
+	}
+}
+
+func TestHostByTag(t *testing.T) {
+	inv := &Inventory{
+		Hosts: []Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.41", Roles: []string{"external"}, Tag: "postgres-metadata"},
+			{IP: "10.0.0.51", Roles: []string{"external"}, Tag: "redis"},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	h, ok := inv.HostByTag("postgres-metadata")
+	if !ok || h.IP != "10.0.0.41" {
+		t.Errorf("HostByTag(postgres-metadata) = (%+v, %v), want 10.0.0.41 / true", h, ok)
+	}
+	if _, ok := inv.HostByTag("nonexistent"); ok {
+		t.Errorf("HostByTag should miss on unknown tag")
+	}
+	if _, ok := inv.HostByTag(""); ok {
+		t.Errorf("HostByTag(\"\") should miss — empty tag is not a key")
+	}
+}
+
 func TestHasRole(t *testing.T) {
 	h := &Host{Roles: []string{"master", "filer"}}
 	if !h.HasRole("master") || !h.HasRole("filer") {
