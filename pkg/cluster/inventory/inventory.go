@@ -185,6 +185,13 @@ func (inv *Inventory) Validate() error {
 	// be ambiguous; refuse at load time so the operator sees the
 	// collision before the planner picks an arbitrary winner.
 	tagOwner := make(map[string]string) // tag → ip-of-first-bearer
+	// Single-admin guard: SeaweedFS's admin UI is single-instance,
+	// so an inventory with multiple `admin` role bearers would
+	// produce a deploy-time failure. Catch it here so plan errors
+	// before doing any probe work; the deploy-side validator in
+	// pkg/cluster/manager catches hand-written specs that bypass
+	// this path.
+	var adminHost string
 	for i, h := range inv.Hosts {
 		if h.IP == "" {
 			return fmt.Errorf("host[%d] has no ip", i)
@@ -209,6 +216,14 @@ func (inv *Inventory) Validate() error {
 				return fmt.Errorf("host %s declares role %q twice", h.IP, role)
 			}
 			seenRoles[rk] = struct{}{}
+			if role == RoleAdmin {
+				if adminHost != "" {
+					return fmt.Errorf(
+						"the admin role is declared on both host %s and host %s; SeaweedFS's admin UI is single-instance, keep at most one host with `roles: [admin]`",
+						adminHost, h.IP)
+				}
+				adminHost = h.IP
+			}
 		}
 
 		// External entries don't open SSH sessions, so they don't need to
