@@ -53,8 +53,12 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 	var out []byte
 	last := 0
 	for _, m := range matches {
-		// m = [start, end, prefixStart, prefixEnd, tagStart, tagEnd]
-		prefixStart, prefixEnd := m[2], m[3]
+		// m = [start, end, prefixStart, prefixEnd, tagStart, tagEnd].
+		// prefixStart isn't needed: dsn[last:prefixEnd] copies
+		// everything from the previous match's tail through and
+		// including the boundary character (the `\W` or BOL the
+		// regex matched), so the substitution drops in cleanly.
+		_, prefixEnd := m[2], m[3]
 		tagStart, tagEnd := m[4], m[5]
 		tag := dsn[tagStart:tagEnd]
 
@@ -71,7 +75,6 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 		out = append(out, dsn[last:prefixEnd]...) // includes the prefix byte
 		out = append(out, formatTagSubstitution(host.IP)...)
 		last = tagEnd
-		_ = prefixStart // already covered by the append above
 	}
 	out = append(out, dsn[last:]...)
 	return string(out), nil
