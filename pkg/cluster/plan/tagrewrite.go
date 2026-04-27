@@ -60,7 +60,12 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 
 		host, ok := inv.HostByTag(tag)
 		if !ok {
-			return "", fmt.Errorf("--filer-backend references tag:%s but no host in the inventory carries that tag", tag)
+			// Stay generic here so the error reads sensibly when
+			// future callers reuse RewriteTagReferences for more
+			// than just --filer-backend; the cmd layer already
+			// wraps with "filer backend: " for the operator-facing
+			// message.
+			return "", fmt.Errorf("tag:%s not found in inventory", tag)
 		}
 
 		out = append(out, dsn[last:prefixEnd]...) // includes the prefix byte
