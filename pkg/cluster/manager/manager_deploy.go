@@ -54,32 +54,41 @@ func validateS3Prerequisites(specification *spec.Specification) error {
 	return nil
 }
 
-// validateSingleAdminServer enforces the at-most-one-admin rule.
-// SeaweedFS's admin UI is single-instance today: there's no leader
-// election or shared-state story for the `weed admin` component, so
-// running two admin processes against the same cluster would race on
-// task scheduling and produce conflicting decisions. Refuse the spec
-// at deploy time before any SSH session opens — fail fast with the
-// offending IPs in the error so the operator can see exactly which
-// rows to consolidate.
+// validateSingleAdminServer enforces the at-most-one-admin rule and
+// rejects nil entries. SeaweedFS's admin UI is single-instance today:
+// there's no leader election or shared-state story for the `weed
+// admin` component, so running two admin processes against the same
+// cluster would race on task scheduling and produce conflicting
+// decisions. Refuse the spec at deploy time before any SSH session
+// opens — fail fast with the offending IPs in the error so the
+// operator can see exactly which rows to consolidate.
+//
+// Nil entries are caught even on a single-element list: a YAML null
+// list item (`admin_servers: [null]` or a stray bullet on its own
+// line) decodes to a nil *AdminServerSpec, and resolveWorkerDefault
+// Admins would then panic on AdminServers[0].Port. The defensive
+// scan turns that into a clear error.
 //
 // Zero admin_servers entries is allowed: the cluster runs without
 // the admin UI, and any worker_servers must carry their own explicit
 // `admin:` endpoint (or resolveWorkerDefaultAdmins errors instead).
 func validateSingleAdminServer(specification *spec.Specification) error {
-	if len(specification.AdminServers) <= 1 {
+	if len(specification.AdminServers) == 0 {
 		return nil
 	}
 	ips := make([]string, 0, len(specification.AdminServers))
-	for _, a := range specification.AdminServers {
+	for i, a := range specification.AdminServers {
 		if a == nil {
-			continue
+			return fmt.Errorf("invalid cluster spec: admin_servers[%d] is null (yaml null list item?)", i)
 		}
 		ips = append(ips, a.Ip)
 	}
+	if len(ips) <= 1 {
+		return nil
+	}
 	return fmt.Errorf(
 		"invalid cluster spec: %d admin_servers entries (%s); SeaweedFS's admin UI is single-instance — keep at most one admin_server row, or remove the role from the extras",
-		len(specification.AdminServers), strings.Join(ips, ", "))
+		len(ips), strings.Join(ips, ", "))
 }
 
 // validateSftpFilerPrerequisite ensures that any SFTP server can reach a
