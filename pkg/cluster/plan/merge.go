@@ -369,6 +369,16 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 				// per-section Unparseable line.
 				continue
 			}
+			// Clone before mutating: when the existing YAML has
+			// hand-edited duplicate entries for the same IP in this
+			// section (rare), every iteration would otherwise reuse
+			// the same *yaml.Node pointer from freshByIP, and
+			// carryEntryComments writes the head/line/foot comments
+			// in place — the second iteration would clobber the
+			// first one's preserved comments. Cloning gives each
+			// refreshed slot its own node so each retains the
+			// comments from the entry it's replacing.
+			//
 			// Carry the entry-level head/line/foot comments from
 			// the old node onto the replacement so a `# primary HDD
 			// bank` annotation survives a refresh. Field-level
@@ -376,8 +386,9 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			// dropped — preserving those would require a structural
 			// merge of the two mappings, which Phase 4 explicitly
 			// scopes out.
-			carryEntryComments(e.node, item)
-			seqNode.Content[i] = e.node
+			replacement := cloneYAMLNode(e.node)
+			carryEntryComments(replacement, item)
+			seqNode.Content[i] = replacement
 			refreshSeen[ip] = struct{}{}
 			report.Refreshed = append(report.Refreshed, fmt.Sprintf("%s: %s", sectionKey, e.key))
 		}
@@ -421,6 +432,30 @@ func ipOfNode(node *yaml.Node) string {
 		}
 	}
 	return ""
+}
+
+// cloneYAMLNode returns a deep copy of n: every field is copied,
+// and the Content slice is recursively cloned so the caller can
+// mutate either tree without affecting the other. Used by the
+// refresh pass when the same fresh entry would otherwise be
+// assigned to multiple sequence positions (hand-edited duplicate
+// existing entries) — without cloning, a per-position comment
+// carry would clobber siblings sharing the pointer.
+func cloneYAMLNode(n *yaml.Node) *yaml.Node {
+	if n == nil {
+		return nil
+	}
+	out := *n // copy scalar/style/tag/value/anchor/comments by value
+	if n.Alias != nil {
+		out.Alias = cloneYAMLNode(n.Alias)
+	}
+	if n.Content != nil {
+		out.Content = make([]*yaml.Node, len(n.Content))
+		for i, c := range n.Content {
+			out.Content[i] = cloneYAMLNode(c)
+		}
+	}
+	return &out
 }
 
 // carryEntryComments copies the head/line/foot comments from src to

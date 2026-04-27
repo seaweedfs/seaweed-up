@@ -805,6 +805,59 @@ filer_servers:
 	}
 }
 
+// TestMerge_refreshHost_duplicateEntriesPreserveOwnComments: the
+// rare hand-edited duplicate-entry case. Two existing rows for the
+// same IP each carry their own head comment. Refresh on that IP
+// must replace both — and each replacement must keep its own
+// original comment, not the LAST iteration's. Without cloning the
+// fresh node before carrying comments, both refreshed slots end
+// up sharing one mutated node and the second iteration's
+// carryEntryComments call clobbers the first slot's preserved
+// comment.
+func TestMerge_refreshHost_duplicateEntriesPreserveOwnComments(t *testing.T) {
+	existing := `cluster_name: merge-test
+master_servers:
+    # primary master
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+    # standby master, do not move
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	merged, _, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.11": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	got := string(merged)
+	// Both head comments must survive their respective refresh slots.
+	// Without cloning, the second iteration's comment would overwrite
+	// the first ("primary master" would vanish, leaving two copies of
+	// "standby master, do not move").
+	if !strings.Contains(got, "primary master") {
+		t.Errorf("first refreshed slot lost its `# primary master` head comment:\n%s", got)
+	}
+	if !strings.Contains(got, "standby master, do not move") {
+		t.Errorf("second refreshed slot lost its `# standby master` head comment:\n%s", got)
+	}
+}
+
 // TestMerge_refreshHost_noOpWhenSetEmpty: an empty / nil
 // RefreshHosts map leaves Merge in its existing append-only mode —
 // no refreshes, no RefreshNotFound entries. Belt-and-braces test in
