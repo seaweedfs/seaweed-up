@@ -722,6 +722,73 @@ master_servers:
 	}
 }
 
+// TestMerge_refreshHost_partialPortMismatchSurfaces: the
+// IP-level RefreshNotFound check only fires when refreshSeen[ip]
+// was never set in ANY section. If a refresh IP matches cleanly
+// in master_servers but the operator has hand-edited the port on
+// the same host's filer_servers entry, refreshSeen[ip] gets set
+// by the master match and the filer entry stays silently stale.
+// The per-section Unparseable surface captures that miss so the
+// operator sees a signal for the role that didn't refresh.
+func TestMerge_refreshHost_partialPortMismatchSurfaces(t *testing.T) {
+	// Hand-edited filer port (8889 instead of the fresh spec's 8888)
+	// — common when an operator runs filer on a non-standard port.
+	existing := `cluster_name: merge-test
+master_servers:
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 9333
+      port.grpc: 19333
+filer_servers:
+    - ip: 10.0.0.11
+      port.ssh: 22
+      port: 8889
+      port.grpc: 18888
+`
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{{IP: "10.0.0.11", Roles: []string{"master", "filer"}}},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, map[string]probe.HostFacts{}, Options{ClusterName: "merge-test"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	_, report, err := Merge([]byte(existing), spec, MergeOptions{
+		Marshal:      MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp},
+		RefreshHosts: map[string]struct{}{"10.0.0.11": {}},
+	})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	// master_servers refreshed cleanly.
+	foundMaster := false
+	for _, k := range report.Refreshed {
+		if strings.Contains(k, "master_servers") && strings.Contains(k, "10.0.0.11:9333") {
+			foundMaster = true
+		}
+	}
+	if !foundMaster {
+		t.Errorf("Refreshed should contain master_servers entry, got %+v", report.Refreshed)
+	}
+	// filer_servers entry (port 8889 in existing vs 8888 in fresh)
+	// must surface as a section-qualified miss.
+	foundFilerMiss := false
+	for _, u := range report.Unparseable {
+		if strings.Contains(u, "filer_servers") && strings.Contains(u, "refresh-host 10.0.0.11") {
+			foundFilerMiss = true
+		}
+	}
+	if !foundFilerMiss {
+		t.Errorf("Unparseable should record the filer_servers refresh miss, got %+v", report.Unparseable)
+	}
+	// And RefreshNotFound stays empty: the IP DID match somewhere.
+	if len(report.RefreshNotFound) != 0 {
+		t.Errorf("RefreshNotFound should stay empty when the IP matched at least one section, got %+v", report.RefreshNotFound)
+	}
+}
+
 // TestMerge_refreshHost_noOpWhenSetEmpty: an empty / nil
 // RefreshHosts map leaves Merge in its existing append-only mode —
 // no refreshes, no RefreshNotFound entries. Belt-and-braces test in

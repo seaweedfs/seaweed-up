@@ -353,9 +353,18 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 				// Refresh requested for a host whose existing entry's
 				// (ip, port) doesn't line up with any fresh entry's
 				// key — typically the operator hand-edited the port,
-				// or the spec moved the host between sections. Leave
-				// the entry alone; the IP-level "not found" warning
-				// already covers it elsewhere.
+				// or the spec moved the host between sections. Record
+				// the partial-match miss explicitly: the IP-level
+				// RefreshNotFound check at the end of Merge fires
+				// only when refreshSeen[ip] was never set in ANY
+				// section, so a clean match on master_servers + port
+				// mismatch on filer_servers would otherwise leave
+				// the operator with no signal that one role was left
+				// stale. Section-qualified Unparseable surfaces it
+				// without inventing a new field.
+				report.Unparseable = append(report.Unparseable,
+					fmt.Sprintf("%s: line %d (refresh-host %s: existing entry's port doesn't match the fresh spec — refresh skipped for this section)",
+						sectionKey, item.Line, ip))
 				continue
 			}
 			// Carry the entry-level head/line/foot comments from
