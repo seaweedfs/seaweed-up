@@ -41,8 +41,14 @@ func RewriteTagReferences(dsn string, inv *inventory.Inventory) (string, error) 
 	if inv == nil || dsn == "" {
 		return dsn, nil
 	}
-	// Cheap pre-check: avoid the regexp engine on the common case
-	// where the operator typed a plain DSN with no tag: forms.
+	// Cheap pre-check: avoid spinning up the regexp state machine
+	// on the common case where the operator typed a plain DSN with
+	// no tag: forms. strings.Contains is O(n) byte-by-byte; the
+	// regex would do considerably more work to reach the same "no
+	// matches" answer.
+	if !strings.Contains(dsn, "tag:") {
+		return dsn, nil
+	}
 	matches := tagRefRE.FindAllStringSubmatchIndex(dsn, -1)
 	if len(matches) == 0 {
 		return dsn, nil
