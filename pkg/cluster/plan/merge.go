@@ -348,7 +348,7 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 				continue
 			}
 			key := keyOfNode(item)
-			fresh, ok := freshByKey[key]
+			freshNode, ok := freshByKey[key]
 			if !ok {
 				// Refresh requested for a host whose existing entry's
 				// (ip, port) doesn't line up with any fresh entry's
@@ -365,8 +365,8 @@ func mergeSection(root *yaml.Node, sectionKey string, fresh []serverEntry, keyOf
 			// dropped — preserving those would require a structural
 			// merge of the two mappings, which Phase 4 explicitly
 			// scopes out.
-			carryEntryComments(fresh, item)
-			seqNode.Content[i] = fresh
+			carryEntryComments(freshNode, item)
+			seqNode.Content[i] = freshNode
 			refreshSeen[ip] = struct{}{}
 			report.Refreshed = append(report.Refreshed, fmt.Sprintf("%s: %s", sectionKey, key))
 		}
