@@ -721,6 +721,21 @@ independently as it earned its keep.
 7. **Network probe degrades gracefully.** Prefer `ip -j addr` (JSON,
    iproute2 ≥ 4.15); fall back to parsing `ip addr` text output so
    older LTS images (CentOS 7, Ubuntu 16.04) still probe.
+8. **Admin UI is single-instance; refuse multiples at validation
+   time.** SeaweedFS's `weed admin` component has no leader
+   election or shared-state story, so two instances would race on
+   task scheduling. Both `inventory.Validate()` (plan-side) and
+   `Manager.DeployCluster` (deploy-side, for hand-written specs)
+   refuse specs with more than one admin entry up front, before
+   any SSH session opens. Zero admins is allowed — the cluster
+   runs without the admin UI.
+9. **Workers run with `-jobType=all` by default.** Stamping the
+   default explicitly on every plan-generated `worker_servers`
+   entry makes the rendered `cluster.yaml` self-describing —
+   operators don't have to know `weed worker`'s implicit default
+   to predict task coverage. Override per-pool via
+   `worker_servers[].jobType: ec,balance` etc. when sharding task
+   handling.
 
 ## Open questions
 
