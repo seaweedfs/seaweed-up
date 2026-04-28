@@ -342,6 +342,52 @@ func TestGenerate_hostWithProbeErrorIsSkippedEntirely(t *testing.T) {
 	}
 }
 
+// TestGenerate_stampsIpBindOnInboundRoles pins the
+// ip.bind=DefaultIpBind default. SeaweedFS components default to
+// binding 127.0.0.1 when -ip.bind is unset, which makes them
+// unreachable across the network in any multi-host deploy. Plan
+// stamps "0.0.0.0" on every role that accepts inbound connections
+// (master, volume, filer, s3, sftp, admin) so the rendered
+// cluster.yaml is reachable out of the box.
+func TestGenerate_stampsIpBindOnInboundRoles(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.21", Roles: []string{"volume"}},
+			{IP: "10.0.0.22", Roles: []string{"filer"}},
+			{IP: "10.0.0.31", Roles: []string{"s3"}},
+			{IP: "10.0.0.32", Roles: []string{"sftp"}},
+			{IP: "10.0.0.41", Roles: []string{"admin"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(1, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	checks := []struct {
+		role string
+		got  string
+	}{
+		{"master", spec.MasterServers[0].IpBind},
+		{"volume", spec.VolumeServers[0].IpBind},
+		{"filer", spec.FilerServers[0].IpBind},
+		{"s3", spec.S3Servers[0].IpBind},
+		{"sftp", spec.SftpServers[0].IpBind},
+		{"admin", spec.AdminServers[0].IpBind},
+	}
+	for _, c := range checks {
+		if c.got != DefaultIpBind {
+			t.Errorf("%s.IpBind = %q, want %q", c.role, c.got, DefaultIpBind)
+		}
+	}
+}
+
 func TestGenerate_adminGetsChangeMePlaceholders(t *testing.T) {
 	// admin_servers require admin_user / admin_password. Leaving them
 	// empty starts the admin UI unauthenticated because

@@ -322,10 +322,23 @@ func sshTargetKey(ip string, port int) string {
 
 // --- per-role constructors ------------------------------------------------
 
+// DefaultIpBind is the value plan synthesis stamps on every inbound
+// role's `ip.bind` field (master, volume, filer, s3, sftp, admin).
+// SeaweedFS components default to binding 127.0.0.1 when -ip.bind is
+// unset, which leaves them unreachable across the network in any
+// multi-host deploy — peer masters can't form raft quorum, volumes
+// can't register with masters, filers can't be reached by S3 or
+// clients. Operators with a multi-NIC host who need bind to a
+// specific NIC override per-host in the generated cluster.yaml;
+// hand-written specs keep whatever IpBind they declared (or weed's
+// own default when omitted).
+const DefaultIpBind = "0.0.0.0"
+
 func newMasterSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.MasterServerSpec {
 	return &spec.MasterServerSpec{
 		Ip:       h.IP,
 		PortSsh:  ssh.Port,
+		IpBind:   DefaultIpBind,
 		Port:     DefaultMasterPort,
 		PortGrpc: DefaultMasterGrpcPort,
 	}
@@ -335,6 +348,7 @@ func newVolumeSpec(h *inventory.Host, ssh inventory.SSHConfig, folders []*spec.F
 	return &spec.VolumeServerSpec{
 		Ip:         h.IP,
 		PortSsh:    ssh.Port,
+		IpBind:     DefaultIpBind,
 		Port:       DefaultVolumePort,
 		PortGrpc:   DefaultVolumeGrpcPort,
 		DataCenter: h.Labels["zone"],
@@ -347,6 +361,7 @@ func newFilerSpec(h *inventory.Host, ssh inventory.SSHConfig, backend map[string
 	f := &spec.FilerServerSpec{
 		Ip:         h.IP,
 		PortSsh:    ssh.Port,
+		IpBind:     DefaultIpBind,
 		Port:       DefaultFilerPort,
 		PortGrpc:   DefaultFilerGrpcPort,
 		DataCenter: h.Labels["zone"],
@@ -367,6 +382,7 @@ func newS3Spec(h *inventory.Host, ssh inventory.SSHConfig) *spec.S3ServerSpec {
 	return &spec.S3ServerSpec{
 		Ip:      h.IP,
 		PortSsh: ssh.Port,
+		IpBind:  DefaultIpBind,
 		Port:    DefaultS3Port,
 	}
 }
@@ -375,6 +391,7 @@ func newSftpSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.SftpServerSpe
 	return &spec.SftpServerSpec{
 		Ip:      h.IP,
 		PortSsh: ssh.Port,
+		IpBind:  DefaultIpBind,
 		Port:    DefaultSftpPort,
 	}
 }
@@ -394,6 +411,7 @@ func newAdminSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.AdminServerS
 	return &spec.AdminServerSpec{
 		Ip:            h.IP,
 		PortSsh:       ssh.Port,
+		IpBind:        DefaultIpBind,
 		Port:          DefaultAdminPort,
 		AdminUser:     "admin",
 		AdminPassword: AdminPasswordPlaceholder,
