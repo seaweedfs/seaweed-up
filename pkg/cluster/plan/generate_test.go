@@ -388,6 +388,61 @@ func TestGenerate_stampsIpBindOnInboundRoles(t *testing.T) {
 	}
 }
 
+// TestGenerate_stampsIpBindV6OnIPv6Hosts: the per-family bind
+// helper picks "::" for v6-only inventory hosts so SeaweedFS
+// doesn't refuse to bind 0.0.0.0 on a v6-only network. Mixed-family
+// inventories produce a per-host result.
+func TestGenerate_stampsIpBindV6OnIPv6Hosts(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "2001:db8::1", Roles: []string{"master"}},
+			{IP: "fd00:abcd::5", Roles: []string{"filer"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, nil, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got := spec.MasterServers[0].IpBind; got != DefaultIpBind {
+		t.Errorf("v4 master.IpBind = %q, want %q", got, DefaultIpBind)
+	}
+	if got := spec.MasterServers[1].IpBind; got != DefaultIpBindV6 {
+		t.Errorf("v6 master.IpBind = %q, want %q", got, DefaultIpBindV6)
+	}
+	if got := spec.FilerServers[0].IpBind; got != DefaultIpBindV6 {
+		t.Errorf("v6 filer.IpBind = %q, want %q", got, DefaultIpBindV6)
+	}
+}
+
+// TestDefaultIpBindFor covers the family-detection helper directly:
+// v4 / v6 / DNS-name / unparseable inputs.
+func TestDefaultIpBindFor(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"10.0.0.11", DefaultIpBind},
+		{"127.0.0.1", DefaultIpBind},
+		{"2001:db8::1", DefaultIpBindV6},
+		{"::1", DefaultIpBindV6},
+		{"fd00:abcd::5", DefaultIpBindV6},
+		// DNS-name and unparseable strings fall back to v4 — we
+		// can't classify the bind family confidently, and v4 is
+		// the safer "definitely fails on v6-only" default.
+		{"db.internal", DefaultIpBind},
+		{"", DefaultIpBind},
+		{"not-an-ip", DefaultIpBind},
+	}
+	for _, tc := range cases {
+		if got := defaultIpBindFor(tc.in); got != tc.want {
+			t.Errorf("defaultIpBindFor(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestGenerate_adminGetsChangeMePlaceholders(t *testing.T) {
 	// admin_servers require admin_user / admin_password. Leaving them
 	// empty starts the admin UI unauthenticated because
