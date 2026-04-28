@@ -736,6 +736,17 @@ independently as it earned its keep.
    to predict task coverage. Override per-pool via
    `worker_servers[].jobType: ec,balance` etc. when sharding task
    handling.
+10. **Inbound roles default to `ip.bind: 0.0.0.0`.** SeaweedFS's
+    `weed master`/`weed volume`/`weed filer`/`weed s3`/`weed sftp`/
+    `weed admin` all bind 127.0.0.1 when `-ip.bind` is unset, which
+    makes them unreachable across the network in any multi-host
+    deploy. Plan stamps `ip.bind: 0.0.0.0` on every inbound role
+    so the generated cluster.yaml works out of the box; operators
+    on multi-NIC hosts that need to bind a specific interface
+    hand-edit the field, and merge runs preserve the override.
+    Hand-written specs that omit `ip.bind:` keep the upstream
+    127.0.0.1 default — plan doesn't reach into specs it didn't
+    generate.
 
 ## Open questions
 
