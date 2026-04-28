@@ -350,7 +350,7 @@ const DefaultIpBindV6 = "::"
 // the box on both v4 and v6 single-stack networks.
 func defaultIpBindFor(ip string) string {
 	parsed := net.ParseIP(ip)
-	if parsed != nil && parsed.To4() == nil && parsed.To16() != nil {
+	if parsed != nil && parsed.To4() == nil {
 		return DefaultIpBindV6
 	}
 	return DefaultIpBind
