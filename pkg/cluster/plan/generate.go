@@ -322,10 +322,45 @@ func sshTargetKey(ip string, port int) string {
 
 // --- per-role constructors ------------------------------------------------
 
+// DefaultIpBind is the IPv4 wildcard bind plan synthesis falls back
+// to when the host's declared IP isn't a v6 literal. SeaweedFS
+// components default to binding 127.0.0.1 when -ip.bind is unset,
+// which leaves them unreachable across the network in any
+// multi-host deploy — peer masters can't form raft quorum, volumes
+// can't register with masters, filers can't be reached by S3 or
+// clients. Operators with a multi-NIC host who need to bind a
+// specific NIC override per-host in the generated cluster.yaml;
+// hand-written specs keep whatever IpBind they declared (or weed's
+// own default when omitted).
+const DefaultIpBind = "0.0.0.0"
+
+// DefaultIpBindV6 is the v6 counterpart. Bound on IPv6-only hosts
+// where 0.0.0.0 would refuse to bind. On dual-stack Linux this
+// also accepts v4 traffic (default net.ipv6.bindv6only=0), but
+// we don't switch every host to "::" because that would hide v4
+// bind failures on hosts where the operator intentionally wants v4
+// only.
+const DefaultIpBindV6 = "::"
+
+// defaultIpBindFor returns the wildcard bind address appropriate
+// for the host's declared IP family. v6-only hosts get "::" so
+// SeaweedFS doesn't refuse to bind 0.0.0.0; v4 and DNS-name hosts
+// (which we can't classify confidently) get "0.0.0.0", the safer
+// default. Net effect: a planner-emitted cluster.yaml works out of
+// the box on both v4 and v6 single-stack networks.
+func defaultIpBindFor(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed != nil && parsed.To4() == nil {
+		return DefaultIpBindV6
+	}
+	return DefaultIpBind
+}
+
 func newMasterSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.MasterServerSpec {
 	return &spec.MasterServerSpec{
 		Ip:       h.IP,
 		PortSsh:  ssh.Port,
+		IpBind:   defaultIpBindFor(h.IP),
 		Port:     DefaultMasterPort,
 		PortGrpc: DefaultMasterGrpcPort,
 	}
@@ -335,6 +370,7 @@ func newVolumeSpec(h *inventory.Host, ssh inventory.SSHConfig, folders []*spec.F
 	return &spec.VolumeServerSpec{
 		Ip:         h.IP,
 		PortSsh:    ssh.Port,
+		IpBind:     defaultIpBindFor(h.IP),
 		Port:       DefaultVolumePort,
 		PortGrpc:   DefaultVolumeGrpcPort,
 		DataCenter: h.Labels["zone"],
@@ -347,6 +383,7 @@ func newFilerSpec(h *inventory.Host, ssh inventory.SSHConfig, backend map[string
 	f := &spec.FilerServerSpec{
 		Ip:         h.IP,
 		PortSsh:    ssh.Port,
+		IpBind:     defaultIpBindFor(h.IP),
 		Port:       DefaultFilerPort,
 		PortGrpc:   DefaultFilerGrpcPort,
 		DataCenter: h.Labels["zone"],
@@ -367,6 +404,7 @@ func newS3Spec(h *inventory.Host, ssh inventory.SSHConfig) *spec.S3ServerSpec {
 	return &spec.S3ServerSpec{
 		Ip:      h.IP,
 		PortSsh: ssh.Port,
+		IpBind:  defaultIpBindFor(h.IP),
 		Port:    DefaultS3Port,
 	}
 }
@@ -375,6 +413,7 @@ func newSftpSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.SftpServerSpe
 	return &spec.SftpServerSpec{
 		Ip:      h.IP,
 		PortSsh: ssh.Port,
+		IpBind:  defaultIpBindFor(h.IP),
 		Port:    DefaultSftpPort,
 	}
 }
@@ -394,6 +433,7 @@ func newAdminSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.AdminServerS
 	return &spec.AdminServerSpec{
 		Ip:            h.IP,
 		PortSsh:       ssh.Port,
+		IpBind:        defaultIpBindFor(h.IP),
 		Port:          DefaultAdminPort,
 		AdminUser:     "admin",
 		AdminPassword: AdminPasswordPlaceholder,

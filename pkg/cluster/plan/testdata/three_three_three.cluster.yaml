@@ -15,19 +15,23 @@ global:
 master_servers:
     - ip: 10.0.0.11
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 9333
       port.grpc: 19333
     - ip: 10.0.0.12
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 9333
       port.grpc: 19333
     - ip: 10.0.0.13
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 9333
       port.grpc: 19333
 volume_servers:
     - ip: 10.0.0.21
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8080
       port.grpc: 18080
       folders:
@@ -47,6 +51,7 @@ volume_servers:
       rack: r1
     - ip: 10.0.0.22
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8080
       port.grpc: 18080
       folders:
@@ -66,6 +71,7 @@ volume_servers:
       rack: r2
     - ip: 10.0.0.23
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8080
       port.grpc: 18080
       folders:
@@ -86,18 +92,21 @@ volume_servers:
 filer_servers:
     - ip: 10.0.0.11
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8888
       port.grpc: 18888
       dataCenter: a
       rack: r1
     - ip: 10.0.0.12
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8888
       port.grpc: 18888
       dataCenter: b
       rack: r2
     - ip: 10.0.0.13
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8888
       port.grpc: 18888
       dataCenter: c

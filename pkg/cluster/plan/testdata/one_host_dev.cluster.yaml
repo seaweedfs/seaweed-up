@@ -15,11 +15,13 @@ global:
 master_servers:
     - ip: 10.0.0.1
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 9333
       port.grpc: 19333
 volume_servers:
     - ip: 10.0.0.1
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8080
       port.grpc: 18080
       folders:
@@ -29,5 +31,6 @@ volume_servers:
 filer_servers:
     - ip: 10.0.0.1
       port.ssh: 22
+      ip.bind: 0.0.0.0
       port: 8888
       port.grpc: 18888

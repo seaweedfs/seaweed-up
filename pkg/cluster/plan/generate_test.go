@@ -342,6 +342,107 @@ func TestGenerate_hostWithProbeErrorIsSkippedEntirely(t *testing.T) {
 	}
 }
 
+// TestGenerate_stampsIpBindOnInboundRoles pins the
+// ip.bind=DefaultIpBind default. SeaweedFS components default to
+// binding 127.0.0.1 when -ip.bind is unset, which makes them
+// unreachable across the network in any multi-host deploy. Plan
+// stamps "0.0.0.0" on every role that accepts inbound connections
+// (master, volume, filer, s3, sftp, admin) so the rendered
+// cluster.yaml is reachable out of the box.
+func TestGenerate_stampsIpBindOnInboundRoles(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "10.0.0.21", Roles: []string{"volume"}},
+			{IP: "10.0.0.22", Roles: []string{"filer"}},
+			{IP: "10.0.0.31", Roles: []string{"s3"}},
+			{IP: "10.0.0.32", Roles: []string{"sftp"}},
+			{IP: "10.0.0.41", Roles: []string{"admin"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.21:22": {IP: "10.0.0.21", SSHPort: 22, Disks: synthesizeDisks(1, 100)},
+	}
+	spec, _, err := Generate(inv, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	checks := []struct {
+		role string
+		got  string
+	}{
+		{"master", spec.MasterServers[0].IpBind},
+		{"volume", spec.VolumeServers[0].IpBind},
+		{"filer", spec.FilerServers[0].IpBind},
+		{"s3", spec.S3Servers[0].IpBind},
+		{"sftp", spec.SftpServers[0].IpBind},
+		{"admin", spec.AdminServers[0].IpBind},
+	}
+	for _, c := range checks {
+		if c.got != DefaultIpBind {
+			t.Errorf("%s.IpBind = %q, want %q", c.role, c.got, DefaultIpBind)
+		}
+	}
+}
+
+// TestGenerate_stampsIpBindV6OnIPv6Hosts: the per-family bind
+// helper picks "::" for v6-only inventory hosts so SeaweedFS
+// doesn't refuse to bind 0.0.0.0 on a v6-only network. Mixed-family
+// inventories produce a per-host result.
+func TestGenerate_stampsIpBindV6OnIPv6Hosts(t *testing.T) {
+	inv := &inventory.Inventory{
+		Hosts: []inventory.Host{
+			{IP: "10.0.0.11", Roles: []string{"master"}},
+			{IP: "2001:db8::1", Roles: []string{"master"}},
+			{IP: "fd00:abcd::5", Roles: []string{"filer"}},
+		},
+	}
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("inventory.Validate: %v", err)
+	}
+	spec, _, err := Generate(inv, nil, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got := spec.MasterServers[0].IpBind; got != DefaultIpBind {
+		t.Errorf("v4 master.IpBind = %q, want %q", got, DefaultIpBind)
+	}
+	if got := spec.MasterServers[1].IpBind; got != DefaultIpBindV6 {
+		t.Errorf("v6 master.IpBind = %q, want %q", got, DefaultIpBindV6)
+	}
+	if got := spec.FilerServers[0].IpBind; got != DefaultIpBindV6 {
+		t.Errorf("v6 filer.IpBind = %q, want %q", got, DefaultIpBindV6)
+	}
+}
+
+// TestDefaultIpBindFor covers the family-detection helper directly:
+// v4 / v6 / DNS-name / unparseable inputs.
+func TestDefaultIpBindFor(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"10.0.0.11", DefaultIpBind},
+		{"127.0.0.1", DefaultIpBind},
+		{"2001:db8::1", DefaultIpBindV6},
+		{"::1", DefaultIpBindV6},
+		{"fd00:abcd::5", DefaultIpBindV6},
+		// DNS-name and unparseable strings fall back to v4 — we
+		// can't classify the bind family confidently, and v4 is
+		// the safer "definitely fails on v6-only" default.
+		{"db.internal", DefaultIpBind},
+		{"", DefaultIpBind},
+		{"not-an-ip", DefaultIpBind},
+	}
+	for _, tc := range cases {
+		if got := defaultIpBindFor(tc.in); got != tc.want {
+			t.Errorf("defaultIpBindFor(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestGenerate_adminGetsChangeMePlaceholders(t *testing.T) {
 	// admin_servers require admin_user / admin_password. Leaving them
 	// empty starts the admin UI unauthenticated because

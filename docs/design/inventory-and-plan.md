@@ -736,6 +736,18 @@ independently as it earned its keep.
    to predict task coverage. Override per-pool via
    `worker_servers[].jobType: ec,balance` etc. when sharding task
    handling.
+10. **Inbound roles default to a host-family-aware `ip.bind`.**
+    SeaweedFS's `weed master`/`weed volume`/`weed filer`/`weed s3`/
+    `weed sftp`/`weed admin` all bind 127.0.0.1 when `-ip.bind` is
+    unset, which makes them unreachable across the network in any
+    multi-host deploy. Plan picks `0.0.0.0` for v4 hosts and `::`
+    for v6 hosts (so IPv6-only inventories don't refuse to bind);
+    DNS-name hosts that don't parse as either family fall back to
+    the v4 wildcard. Operators on multi-NIC hosts that need to
+    bind a specific interface hand-edit the field, and merge runs
+    preserve the override. Hand-written specs that omit
+    `ip.bind:` keep the upstream 127.0.0.1 default — plan doesn't
+    reach into specs it didn't generate.
 
 ## Open questions
 
