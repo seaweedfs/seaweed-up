@@ -7,7 +7,7 @@ require (
 	github.com/bramvdbogaerde/go-scp v1.6.0
 	github.com/fatih/color v1.19.0
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/pelletier/go-toml/v2 v2.3.0
+	github.com/pelletier/go-toml/v2 v2.3.1
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
