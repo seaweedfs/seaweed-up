@@ -247,6 +247,21 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			})
 		}
 	}
+	// Install security.toml on filer + admin hosts before any filer or
+	// admin process starts, so the filer registers the IAM gRPC service
+	// the Admin UI Users tab calls. Fired whenever filer OR admin is
+	// being deployed (admin-only redeploys still need the file). No-op
+	// when TLS is enabled (cluster cert init already wrote security.toml
+	// with both [grpc.*] and [jwt.filer_signing*]).
+	//
+	// Failure here aborts the deploy: starting filer pods without the
+	// JWT key would silently leave the Admin UI Users tab broken in
+	// exactly the same way the fix is meant to prevent.
+	if m.shouldInstall("filer") || m.shouldInstall("admin") {
+		if err := m.EnsureSecurityToml(specification); err != nil {
+			return err
+		}
+	}
 	if m.shouldInstall("filer") {
 		for index, filerSpec := range specification.FilerServers {
 			eg.Go(func() error {
