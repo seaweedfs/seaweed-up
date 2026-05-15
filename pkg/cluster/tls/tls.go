@@ -168,8 +168,8 @@ func IssueCertFromParsed(ca *ParsedCA, commonName string, sans []string) (certPE
 //
 // jwtFilerWriteKey and jwtFilerReadKey are required regardless of TLS:
 // the filer needs jwt.filer_signing.key to register the IAM gRPC service
-// the Admin UI Users tab calls (seaweedfs#9442); the admin server needs
-// the same key to sign Bearer tokens for that service (seaweedfs#9498).
+// the Admin UI Users tab calls; the admin server needs the same key to
+// sign Bearer tokens for that service.
 //
 // The component argument is recorded as a comment so operators can tell
 // which role a given host was provisioned for.

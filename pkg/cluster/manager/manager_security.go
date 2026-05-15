@@ -15,8 +15,7 @@ import (
 // EnsureSecurityToml writes /etc/seaweed/security.toml with the cluster's
 // jwt.filer_signing keys to every filer + admin host. Required even when
 // TLS is off so the filer registers the IAM gRPC service the Admin UI
-// Users tab calls (seaweedfs#9442); the admin server signs Bearer tokens
-// with the same key (seaweedfs#9498).
+// Users tab calls; the admin server signs Bearer tokens with the same key.
 //
 // When TLS is enabled, cluster cert init's UploadBundle already writes
 // security.toml with both [jwt.filer_signing*] and [grpc.*] sections;

@@ -222,8 +222,7 @@ func TestUploadSecurityTOMLOnly(t *testing.T) {
 
 	// The function must upload exactly one security.toml whose body
 	// carries the JWT key the filer needs to register the IAM gRPC
-	// service. Failing this check is the regression that issue #9506
-	// described.
+	// service the Admin UI Users tab depends on.
 	var tomlPath, tomlBody string
 	for path, body := range op.uploads {
 		if strings.HasSuffix(path, "/security.toml") {
