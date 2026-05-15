@@ -1,16 +1,55 @@
 package tls
 
 import (
+	"bytes"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
+
+// fakeOperator records what UploadSecurityTOMLOnly executed and uploaded
+// without ever opening an SSH session.
+type fakeOperator struct {
+	executed []string
+	uploads  map[string]string
+}
+
+func newFakeOperator() *fakeOperator {
+	return &fakeOperator{uploads: map[string]string{}}
+}
+
+func (f *fakeOperator) Execute(cmd string) error {
+	f.executed = append(f.executed, cmd)
+	return nil
+}
+
+func (f *fakeOperator) Output(cmd string) ([]byte, error) {
+	f.executed = append(f.executed, cmd)
+	return nil, nil
+}
+
+func (f *fakeOperator) Upload(src io.Reader, remotePath, mode string) error {
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(src); err != nil {
+		return err
+	}
+	f.uploads[remotePath] = buf.String()
+	return nil
+}
+
+func (f *fakeOperator) UploadFile(path, remotePath, mode string) error {
+	f.uploads[remotePath] = "file:" + path
+	return nil
+}
 
 func TestGenerateCA(t *testing.T) {
 	caPEM, caKeyPEM, err := GenerateCA()
@@ -172,6 +211,65 @@ func TestLoadOrGenerateFilerSigningKey(t *testing.T) {
 
 	if _, err := LoadOrGenerateFilerSigningKey(cluster, "bogus"); err == nil {
 		t.Errorf("expected error for invalid variant")
+	}
+}
+
+func TestUploadSecurityTOMLOnly(t *testing.T) {
+	op := newFakeOperator()
+	if err := UploadSecurityTOMLOnly(op, "filer", "write-key", "read-key", "root", ""); err != nil {
+		t.Fatalf("UploadSecurityTOMLOnly: %v", err)
+	}
+
+	// The function must upload exactly one security.toml whose body
+	// carries the JWT key the filer needs to register the IAM gRPC
+	// service. Failing this check is the regression that issue #9506
+	// described.
+	var tomlPath, tomlBody string
+	for path, body := range op.uploads {
+		if strings.HasSuffix(path, "/security.toml") {
+			tomlPath = path
+			tomlBody = body
+		}
+	}
+	if tomlPath == "" {
+		t.Fatalf("expected security.toml to be uploaded; uploads=%v", op.uploads)
+	}
+	if !strings.Contains(tomlBody, "[jwt.filer_signing]") {
+		t.Errorf("uploaded security.toml missing [jwt.filer_signing]\n---\n%s", tomlBody)
+	}
+	if !strings.Contains(tomlBody, `key = "write-key"`) {
+		t.Errorf("uploaded security.toml missing write-key\n---\n%s", tomlBody)
+	}
+	if strings.Contains(tomlBody, "[grpc") {
+		t.Errorf("uploaded security.toml unexpectedly has [grpc.*]; that path is mTLS-only\n---\n%s", tomlBody)
+	}
+
+	// The install script must end up moving the temp file into the
+	// canonical /etc/seaweed/security.toml so weed picks it up. The
+	// runInstallScript helper base64-encodes the script and pipes it
+	// through `base64 -d | sh`, so decode the payload before asserting.
+	scriptRe := regexp.MustCompile(`echo (\S+) \| base64 -d \| sh`)
+	var sawInstall, sawCleanup bool
+	for _, cmd := range op.executed {
+		if m := scriptRe.FindStringSubmatch(cmd); m != nil {
+			decoded, err := base64.StdEncoding.DecodeString(m[1])
+			if err != nil {
+				t.Fatalf("decode install script: %v", err)
+			}
+			body := string(decoded)
+			if strings.Contains(body, "install -o root -g root") && strings.Contains(body, DefaultRemoteSecurityTOML) {
+				sawInstall = true
+			}
+		}
+		if strings.HasPrefix(cmd, "rm -rf /tmp/seaweed-up-jwt.") {
+			sawCleanup = true
+		}
+	}
+	if !sawInstall {
+		t.Errorf("expected install of security.toml into %s; commands=%v", DefaultRemoteSecurityTOML, op.executed)
+	}
+	if !sawCleanup {
+		t.Errorf("expected /tmp cleanup; commands=%v", op.executed)
 	}
 }
 
