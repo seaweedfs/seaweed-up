@@ -253,9 +253,13 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	// being deployed (admin-only redeploys still need the file). No-op
 	// when TLS is enabled (cluster cert init already wrote security.toml
 	// with both [grpc.*] and [jwt.filer_signing*]).
+	//
+	// Failure here aborts the deploy: starting filer pods without the
+	// JWT key would silently leave the Admin UI Users tab broken in
+	// exactly the same way the fix is meant to prevent.
 	if m.shouldInstall("filer") || m.shouldInstall("admin") {
 		if err := m.EnsureSecurityToml(specification); err != nil {
-			recordErr(err)
+			return err
 		}
 	}
 	if m.shouldInstall("filer") {

@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"sync"
 
@@ -75,7 +76,10 @@ func (m *Manager) EnsureSecurityToml(specification *spec.Specification) error {
 	}
 	_ = g.Wait()
 	if len(hostErrs) > 0 {
-		return fmt.Errorf("ensure security.toml: %d host(s) failed", len(hostErrs))
+		if len(hostErrs) == 1 {
+			return hostErrs[0]
+		}
+		return fmt.Errorf("ensure security.toml: %d host(s) failed: %w", len(hostErrs), stderrors.Join(hostErrs...))
 	}
 	return nil
 }
