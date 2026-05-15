@@ -7,6 +7,47 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
+// TestDeployCluster_SecurityTomlFailureSkipsFilers locks in the contract
+// from the integration suite's TestDeployErrorAggregation at the unit
+// level: when EnsureSecurityToml fails, DeployCluster must
+//
+//  1. NOT start the filer goroutines (otherwise filer pods boot without
+//     the JWT signing key and silently break the Admin UI Users tab —
+//     the exact failure mode the security.toml install was added to
+//     prevent), and
+//  2. still return the security.toml error to the caller via the
+//     aggregated-error path, so operators see what went wrong.
+//
+// We drive (1) and (2) with Name="" — EnsureSecurityToml's loud
+// pre-SSH guard for a missing cluster name. The filer IP is a
+// non-routable RFC 6890 reserved address so that if branch (1)
+// regressed and the filer goroutine actually ran, the error would
+// mention "deploy filer server <ip>" instead of the JWT message.
+func TestDeployCluster_SecurityTomlFailureSkipsFilers(t *testing.T) {
+	m := NewManager()
+	m.User = "root" // skip sudo password prompt in m.prepare
+	m.ComponentToDeploy = "filer"
+	sp := &spec.Specification{
+		Name: "", // forces EnsureSecurityToml to fail before SSH
+		FilerServers: []*spec.FilerServerSpec{
+			{Ip: "240.0.0.1", Port: 8888, PortSsh: 22},
+		},
+	}
+	err := m.DeployCluster(sp)
+	if err == nil {
+		t.Fatal("expected DeployCluster to fail when EnsureSecurityToml fails, got nil")
+	}
+	if !strings.Contains(err.Error(), "jwt") {
+		t.Errorf("error should surface the EnsureSecurityToml JWT failure, got: %v", err)
+	}
+	// Hard guardrail for the safety goal: the filer goroutine must not
+	// have run. If it had, DeployFilerServer would wrap its SSH failure
+	// as "deploy filer server <ip>:<port>: ...".
+	if strings.Contains(err.Error(), "deploy filer server") {
+		t.Errorf("filer goroutine must not run after EnsureSecurityToml fails, got: %v", err)
+	}
+}
+
 func TestValidateSingleAdminServer_zeroOrOneOK(t *testing.T) {
 	// Zero admins: cluster runs without the admin UI. Allowed.
 	if err := validateSingleAdminServer(&spec.Specification{}); err != nil {

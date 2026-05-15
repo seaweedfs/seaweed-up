@@ -254,15 +254,20 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	// when TLS is enabled (cluster cert init already wrote security.toml
 	// with both [grpc.*] and [jwt.filer_signing*]).
 	//
-	// Failure here aborts the deploy: starting filer pods without the
-	// JWT key would silently leave the Admin UI Users tab broken in
-	// exactly the same way the fix is meant to prevent.
+	// Failure here skips the filer goroutines: starting filer pods
+	// without the JWT key would silently leave the Admin UI Users tab
+	// broken in exactly the same way the fix is meant to prevent. The
+	// error is recorded and aggregated with any volume errgroup
+	// failures already in flight so operators see every host that
+	// went wrong, not just the first.
+	var securityErr error
 	if m.shouldInstall("filer") || m.shouldInstall("admin") {
 		if err := m.EnsureSecurityToml(specification); err != nil {
-			return err
+			securityErr = err
+			recordErr(err)
 		}
 	}
-	if m.shouldInstall("filer") {
+	if m.shouldInstall("filer") && securityErr == nil {
 		for index, filerSpec := range specification.FilerServers {
 			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
