@@ -39,6 +39,39 @@ func LocalClusterDir(clusterName string) (string, error) {
 	return filepath.Join(home, ".seaweed-up", "clusters", clusterName, "certs"), nil
 }
 
+// LoadOrGenerateFilerSigningKey returns the cluster's jwt.filer_signing
+// key, generating and persisting a new one on first use. Persisted next
+// to the CA so cluster commands can rebuild security.toml without
+// rotating the key on every run. The .read variant uses a separate file
+// so callers can rotate one without invalidating the other.
+func LoadOrGenerateFilerSigningKey(clusterName, variant string) (string, error) {
+	if variant != "write" && variant != "read" {
+		return "", fmt.Errorf("filer signing key variant must be \"write\" or \"read\", got %q", variant)
+	}
+	dir, err := LocalClusterDir(clusterName)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create local cert dir: %w", err)
+	}
+	path := filepath.Join(dir, "jwt_filer_signing_"+variant+".key")
+	if existing, err := os.ReadFile(path); err == nil {
+		key := strings.TrimSpace(string(existing))
+		if key != "" {
+			return key, nil
+		}
+	}
+	// 32 random bytes (256-bit) base64-encoded — matches what the
+	// upstream Helm chart produces via randAlphaNum 10 | b64enc but
+	// with more entropy.
+	key := randstr.Base64(32)
+	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
+		return "", fmt.Errorf("persist jwt filer signing key: %w", err)
+	}
+	return key, nil
+}
+
 // LoadOrGenerateCA reads the CA from the cluster's local directory, or
 // generates and persists a new one if none exists yet. Returns the PEM
 // bytes for both the certificate and the private key.
@@ -138,7 +171,10 @@ func PersistHostBundle(clusterName, hostIP string, b *Bundle) error {
 
 // UploadBundle uploads the given bundle to the remote host using the
 // provided operator. security.toml is rendered for the given component
-// role and written to /etc/seaweed/security.toml.
+// role and written to /etc/seaweed/security.toml. The JWT filer signing
+// keys (jwtFilerWriteKey/jwtFilerReadKey) are baked into security.toml
+// regardless of the cert bundle so the filer can register the IAM gRPC
+// service the Admin UI Users tab calls.
 //
 // Because /etc/seaweed is typically owned by root, the bundle files are
 // first uploaded into a temporary directory under /tmp (which the SSH
@@ -150,7 +186,7 @@ func PersistHostBundle(clusterName, hostIP string, b *Bundle) error {
 // sshUser is the SSH login user; when it is "root" we skip the sudo
 // wrapping entirely because the SSH session already runs as root (and
 // the remote box may not even have sudo installed).
-func UploadBundle(op operator.CommandOperator, component string, b *Bundle, sshUser, sudoPass string) error {
+func UploadBundle(op operator.CommandOperator, component string, b *Bundle, jwtFilerWriteKey, jwtFilerReadKey, sshUser, sudoPass string) error {
 	tmpDir := "/tmp/seaweed-up-tls." + randstr.String(6)
 	defer func() { _ = op.Execute("rm -rf " + tmpDir) }()
 
@@ -180,7 +216,7 @@ func UploadBundle(op operator.CommandOperator, component string, b *Bundle, sshU
 		}
 	}
 
-	toml := RenderSecurityTOML(component)
+	toml := RenderSecurityTOML(component, jwtFilerWriteKey, jwtFilerReadKey, true)
 	tomlPath := filepath.Join(tmpDir, "security.toml")
 	if err := op.Upload(bytes.NewReader([]byte(toml)), tomlPath, "0644"); err != nil {
 		return fmt.Errorf("upload security.toml: %w", err)
@@ -298,6 +334,57 @@ func AllHosts(s *spec.Specification) []HostEntry {
 		add(f.Ip, "filer", f.PortSsh)
 	}
 	return out
+}
+
+// FilerAndAdminHosts returns the deduplicated list of filer and admin
+// host IPs. These are the components that need security.toml even when
+// TLS is off so the filer can register the IAM gRPC service the Admin
+// UI Users tab calls.
+func FilerAndAdminHosts(s *spec.Specification) []HostEntry {
+	seen := map[string]bool{}
+	var out []HostEntry
+	add := func(ip, role string, portSSH int) {
+		if ip == "" || seen[ip] {
+			return
+		}
+		seen[ip] = true
+		out = append(out, HostEntry{IP: ip, Role: role, SSHPort: portSSH})
+	}
+	for _, f := range s.FilerServers {
+		add(f.Ip, "filer", f.PortSsh)
+	}
+	for _, a := range s.AdminServers {
+		add(a.Ip, "admin", a.PortSsh)
+	}
+	return out
+}
+
+// UploadSecurityTOMLOnly writes a security.toml that contains only the
+// jwt.filer_signing keys (no [grpc.*] sections) to the remote host. Used
+// on filer and admin hosts when TLS is not enabled, so the filer still
+// registers the IAM gRPC service the Admin UI Users tab calls.
+func UploadSecurityTOMLOnly(op operator.CommandOperator, component, jwtFilerWriteKey, jwtFilerReadKey, sshUser, sudoPass string) error {
+	tmpDir := "/tmp/seaweed-up-jwt." + randstr.String(6)
+	defer func() { _ = op.Execute("rm -rf " + tmpDir) }()
+
+	if err := op.Execute("mkdir -p " + tmpDir); err != nil {
+		return fmt.Errorf("mkdir %s: %w", tmpDir, err)
+	}
+
+	toml := RenderSecurityTOML(component, jwtFilerWriteKey, jwtFilerReadKey, false)
+	tomlPath := filepath.Join(tmpDir, "security.toml")
+	if err := op.Upload(bytes.NewReader([]byte(toml)), tomlPath, "0644"); err != nil {
+		return fmt.Errorf("upload security.toml: %w", err)
+	}
+
+	var script strings.Builder
+	script.WriteString("set -e\n")
+	fmt.Fprintf(&script, "mkdir -p %s\n", filepath.Dir(DefaultRemoteSecurityTOML))
+	fmt.Fprintf(&script, "install -o root -g root -m 0644 %s %s\n", tomlPath, DefaultRemoteSecurityTOML)
+	if err := runInstallScript(op, script.String(), sshUser, sudoPass); err != nil {
+		return fmt.Errorf("install security.toml: %w", err)
+	}
+	return nil
 }
 
 // HostEntry is a host referenced by the spec and the role we will write

@@ -248,6 +248,14 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		}
 	}
 	if m.shouldInstall("filer") {
+		// Install security.toml on filer + admin hosts before the filer
+		// services start, so the filer registers the IAM gRPC service the
+		// Admin UI Users tab calls. No-op when TLS is enabled (cluster
+		// cert init already wrote security.toml with both [grpc.*] and
+		// [jwt.filer_signing*]).
+		if err := m.EnsureSecurityToml(specification); err != nil {
+			recordErr(err)
+		}
 		for index, filerSpec := range specification.FilerServers {
 			eg.Go(func() error {
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {

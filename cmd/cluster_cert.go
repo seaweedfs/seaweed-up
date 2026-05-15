@@ -108,6 +108,14 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 	if err != nil {
 		return fmt.Errorf("load/generate CA: %w", err)
 	}
+	jwtWrite, err := sutls.LoadOrGenerateFilerSigningKey(clusterName, "write")
+	if err != nil {
+		return fmt.Errorf("load/generate filer signing key (write): %w", err)
+	}
+	jwtRead, err := sutls.LoadOrGenerateFilerSigningKey(clusterName, "read")
+	if err != nil {
+		return fmt.Errorf("load/generate filer signing key (read): %w", err)
+	}
 
 	hosts := sutls.AllHosts(clusterSpec)
 	if len(hosts) == 0 {
@@ -163,7 +171,7 @@ func runClusterCertInit(clusterName string, opts *ClusterCertOptions, rotate boo
 
 			address := fmt.Sprintf("%s:%d", h.IP, port)
 			err = operator.ExecuteRemote(address, user, identity, sudoPass, func(op operator.CommandOperator) error {
-				return sutls.UploadBundle(op, h.Role, bundle, user, sudoPass)
+				return sutls.UploadBundle(op, h.Role, bundle, jwtWrite, jwtRead, user, sudoPass)
 			})
 			if err != nil {
 				mu.Lock()
