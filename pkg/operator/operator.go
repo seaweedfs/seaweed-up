@@ -198,7 +198,8 @@ func resolveAuthMethod(privateKey, password string) (ssh.AuthMethod, func() erro
 
 	key, err := ssh.ParsePrivateKey(buffer)
 	if err != nil {
-		if err.Error() != "ssh: this private key is passphrase protected" {
+		var passphraseMissing *ssh.PassphraseMissingError
+		if !errors.As(err, &passphraseMissing) {
 			return nil, noop, errors.Wrapf(err, "unable to parse private key: %s", privateKey)
 		}
 
