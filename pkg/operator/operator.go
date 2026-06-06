@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/user"
+	"strconv"
 	"strings"
 
 	"github.com/mitchellh/go-homedir"
@@ -29,69 +31,107 @@ type CommandOperator interface {
 
 type Callback func(CommandOperator) error
 
+// BastionConfig describes an SSH jump host. When one is installed via
+// SetBastion, every ExecuteRemote connection is dialed *through* the
+// bastion instead of connecting to the target directly — the standard
+// "ssh bastion, then ssh 10.0.0.x" topology for nodes that only have
+// private addresses.
+type BastionConfig struct {
+	Host     string // bastion address, "host" or "host:port"
+	Port     int    // ssh port; 0 means 22 (ignored if Host carries a port)
+	User     string // ssh user; empty means the current OS user
+	Identity string // private key path; empty falls back to the ssh agent
+	Password string // optional password auth
+}
+
+// defaultBastion, when non-nil, routes all ExecuteRemote connections
+// through the configured jump host. It is set once at command start
+// (from global.bastion in cluster.yaml, via SetBastion) before any
+// concurrent fan-out and only read afterwards, so the deploy errgroup
+// shares it safely.
+var defaultBastion *BastionConfig
+
+// SetBastion installs the process-wide jump host. Passing nil, or a
+// config with an empty Host, clears it (direct connections).
+func SetBastion(b *BastionConfig) {
+	if b != nil && b.Host == "" {
+		b = nil
+	}
+	defaultBastion = b
+}
+
 func ExecuteLocal(callback Callback) error {
 	return callback(NewLocalOperator())
 }
 
 func ExecuteRemote(host string, user string, privateKey string, password string, callback Callback) error {
-	var method ssh.AuthMethod
+	method, cleanup, err := resolveAuthMethod(privateKey, password)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cleanup() }()
+
+	return executeRemote(host, user, method, callback)
+}
+
+// resolveAuthMethod builds an ssh.AuthMethod from a password, a private
+// key file, or — when both are empty — the ssh agent. The returned
+// cleanup closes any ssh-agent socket opened while resolving the method;
+// it is never nil and is always safe to call.
+func resolveAuthMethod(privateKey, password string) (ssh.AuthMethod, func() error, error) {
+	noop := func() error { return nil }
 
 	if password != "" {
-		method = ssh.Password(password)
-	} else if privateKey == "" {
+		return ssh.Password(password), noop, nil
+	}
+
+	if privateKey == "" {
 		// #nosec G704
 		sshAgentConn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
-
 		if err != nil {
-			return NewSshAgentError(err)
+			return nil, noop, NewSshAgentError(err)
 		}
-
-		defer sshAgentConn.Close()
 
 		client := agent.NewClient(sshAgentConn)
 		list, err := client.List()
-
 		if err != nil || len(list) == 0 {
-			return NewSshAgentError(err)
+			_ = sshAgentConn.Close()
+			return nil, noop, NewSshAgentError(err)
 		}
 
-		method = ssh.PublicKeysCallback(client.Signers)
-	} else {
-		buffer, err := os.ReadFile(expandPath(privateKey))
-		if err != nil {
-			return errors.Wrapf(err, "unable to parse private key: %s", privateKey)
-		}
-
-		key, err := ssh.ParsePrivateKey(buffer)
-
-		if err != nil {
-			if err.Error() != "ssh: this private key is passphrase protected" {
-				return errors.Wrapf(err, "unable to parse private key: %s", privateKey)
-			}
-
-			sshAgent, closeAgent := privateKeyUsingSSHAgent(privateKey + ".pub")
-			defer func() { _ = closeAgent() }()
-
-			if sshAgent != nil {
-				method = sshAgent
-			} else {
-				fmt.Printf("Enter passphrase for '%s': ", privateKey)
-				STDIN := int(os.Stdin.Fd())
-				bytePassword, _ := term.ReadPassword(STDIN)
-				fmt.Println()
-
-				key, err = ssh.ParsePrivateKeyWithPassphrase(buffer, bytePassword)
-				if err != nil {
-					return errors.Wrapf(err, "parse private key with passphrase failed: %s", privateKey)
-				}
-				method = ssh.PublicKeys(key)
-			}
-		} else {
-			method = ssh.PublicKeys(key)
-		}
+		return ssh.PublicKeysCallback(client.Signers), sshAgentConn.Close, nil
 	}
 
-	return executeRemote(host, user, method, callback)
+	buffer, err := os.ReadFile(expandPath(privateKey))
+	if err != nil {
+		return nil, noop, errors.Wrapf(err, "unable to parse private key: %s", privateKey)
+	}
+
+	key, err := ssh.ParsePrivateKey(buffer)
+	if err != nil {
+		if err.Error() != "ssh: this private key is passphrase protected" {
+			return nil, noop, errors.Wrapf(err, "unable to parse private key: %s", privateKey)
+		}
+
+		sshAgent, closeAgent := privateKeyUsingSSHAgent(privateKey + ".pub")
+		if sshAgent != nil {
+			return sshAgent, closeAgent, nil
+		}
+
+		fmt.Printf("Enter passphrase for '%s': ", privateKey)
+		STDIN := int(os.Stdin.Fd())
+		bytePassword, _ := term.ReadPassword(STDIN)
+		fmt.Println()
+
+		key, err = ssh.ParsePrivateKeyWithPassphrase(buffer, bytePassword)
+		if err != nil {
+			_ = closeAgent()
+			return nil, noop, errors.Wrapf(err, "parse private key with passphrase failed: %s", privateKey)
+		}
+		return ssh.PublicKeys(key), closeAgent, nil
+	}
+
+	return ssh.PublicKeys(key), noop, nil
 }
 
 func privateKeyUsingSSHAgent(publicKeyPath string) (ssh.AuthMethod, func() error) {
@@ -135,6 +175,7 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 			return fmt.Errorf("error splitting host/port: %w", err)
 		}
 	}
+	targetAddr := net.JoinHostPort(host, port)
 
 	config := &ssh.ClientConfig{
 		User: user,
@@ -143,7 +184,7 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	operator, err := NewSSHOperator(net.JoinHostPort(host, port), config)
+	operator, err := dialOperator(targetAddr, config)
 
 	if err != nil {
 		return NewTargetConnectError(err)
@@ -152,6 +193,38 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 	defer operator.Close()
 
 	return callback(operator)
+}
+
+// dialOperator connects to targetAddr, routing through the configured
+// bastion when SetBastion has installed one, and connecting directly
+// otherwise.
+func dialOperator(targetAddr string, config *ssh.ClientConfig) (*SSHOperator, error) {
+	if defaultBastion == nil {
+		return NewSSHOperator(targetAddr, config)
+	}
+	return newSSHOperatorViaBastion(defaultBastion, targetAddr, config)
+}
+
+// bastionAddress returns the bastion's "host:port", honoring an explicit
+// port carried in Host, then BastionConfig.Port, then defaulting to 22.
+func bastionAddress(b *BastionConfig) string {
+	if _, _, err := net.SplitHostPort(b.Host); err == nil {
+		return b.Host
+	}
+	port := b.Port
+	if port == 0 {
+		port = 22
+	}
+	return net.JoinHostPort(b.Host, strconv.Itoa(port))
+}
+
+// currentUserName returns the current OS user's login name, or "" if it
+// cannot be determined.
+func currentUserName() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
 }
 
 func expandPath(path string) string {
