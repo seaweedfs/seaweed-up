@@ -254,19 +254,39 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 		info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
 	}
 	componentInstance := fmt.Sprintf("%s%d", hooks.serviceName, t.index)
-	return operator.ExecuteRemote(hooks.sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
-		var buf bytes.Buffer
-		hooks.writeConfig(&buf)
-		if hooks.prepareRemote != nil {
-			if err := hooks.prepareRemote(op); err != nil {
+	deploy := func() error {
+		return operator.ExecuteRemote(hooks.sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+			var buf bytes.Buffer
+			hooks.writeConfig(&buf)
+			if hooks.prepareRemote != nil {
+				if err := hooks.prepareRemote(op); err != nil {
+					return err
+				}
+			}
+			if err := m.deployComponentInstance(op, hooks.serviceName, componentInstance, &buf); err != nil {
 				return err
 			}
+			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
+		})
+	}
+	// Retry the whole on-node sequence a few times. SCP/SSH multiplexed
+	// through a bastion can drop a channel mid-transfer and surface a
+	// transient EOF (observed once mid-rollout). Every step here is
+	// idempotent — config rewrite, mkdir -p, content-skipping install,
+	// restart — so a fresh attempt (ExecuteRemote re-dials the target, and
+	// the bastion too if its shared connection died) is safe and almost
+	// always clears a transient blip.
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if lastErr = deploy(); lastErr == nil {
+			return nil
 		}
-		if err := m.deployComponentInstance(op, hooks.serviceName, componentInstance, &buf); err != nil {
-			return err
+		if i < attempts-1 {
+			info(fmt.Sprintf("deploy %s attempt %d/%d failed: %v (retrying)", t.describe, i+1, attempts, lastErr))
 		}
-		return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
-	})
+	}
+	return lastErr
 }
 
 // waitForHealthyViaSSH polls probeURL from the node itself (over SSH) until it
