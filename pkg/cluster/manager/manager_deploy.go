@@ -517,6 +517,12 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	for _, workerSpec := range specification.WorkerServers {
 		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
 	}
+	// The monitoring host's SSH port isn't a struct-tag default, so normalize
+	// it here like every other server; otherwise lifecycle commands would dial
+	// it on port 0 when not set explicitly.
+	if specification.Monitoring != nil {
+		specification.Monitoring.PortSsh = utils.NvlInt(specification.Monitoring.PortSsh, m.SshPort, 22)
+	}
 }
 
 func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {

@@ -48,6 +48,37 @@ func TestDeployCluster_SecurityTomlFailureSkipsFilers(t *testing.T) {
 	}
 }
 
+// TestPrepareDefaultsMonitoringSSHPort locks in that prepare normalizes the
+// monitoring host's SSH port. Unlike the other servers it has no struct-tag
+// default, so without this the lifecycle commands (start/stop/restart) would
+// dial the monitoring host on port 0.
+func TestPrepareDefaultsMonitoringSSHPort(t *testing.T) {
+	m := NewManager()
+	m.User = "root" // skip sudo password prompt in m.prepare
+
+	// Unset -> defaults to 22.
+	sp := &spec.Specification{Monitoring: &spec.MonitoringSpec{Host: "10.0.0.1"}}
+	m.prepare(sp)
+	if sp.Monitoring.PortSsh != 22 {
+		t.Errorf("unset monitoring ssh port: got %d, want 22", sp.Monitoring.PortSsh)
+	}
+
+	// Explicit value preserved.
+	sp = &spec.Specification{Monitoring: &spec.MonitoringSpec{Host: "10.0.0.1", PortSsh: 2222}}
+	m.prepare(sp)
+	if sp.Monitoring.PortSsh != 2222 {
+		t.Errorf("explicit monitoring ssh port: got %d, want 2222", sp.Monitoring.PortSsh)
+	}
+
+	// Manager-wide SshPort applies when the host value is unset.
+	m.SshPort = 2200
+	sp = &spec.Specification{Monitoring: &spec.MonitoringSpec{Host: "10.0.0.1"}}
+	m.prepare(sp)
+	if sp.Monitoring.PortSsh != 2200 {
+		t.Errorf("monitoring ssh port from manager SshPort: got %d, want 2200", sp.Monitoring.PortSsh)
+	}
+}
+
 func TestValidateSingleAdminServer_zeroOrOneOK(t *testing.T) {
 	// Zero admins: cluster runs without the admin UI. Allowed.
 	if err := validateSingleAdminServer(&spec.Specification{}); err != nil {
