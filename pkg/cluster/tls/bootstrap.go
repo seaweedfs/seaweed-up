@@ -250,10 +250,10 @@ func UploadBundle(op operator.CommandOperator, component string, b *Bundle, jwtF
 //   - When the SSH user is root, the script is piped straight into `sh`:
 //     the session already has root privileges and the host may not even
 //     have sudo installed.
-//   - When sudoPass is empty, we assume NOPASSWD sudo is configured or
-//     the caller is running as root in another guise, and we execute
-//     without sudo. (The caller should pass a non-empty sudoPass only
-//     when sudo is actually required.)
+//   - When the user is non-root and no sudoPass is supplied, we elevate
+//     non-interactively with `sudo -n` (passwordless/NOPASSWD sudo). The
+//     script writes into root-owned locations (/etc/seaweed, certs), so
+//     running it without sudo would fail with permission denied.
 //   - Otherwise we pipe the password into `sudo -S`. sudoPass is
 //     single-quote-escaped via shellSingleQuote so passwords containing
 //     single quotes cannot break out of the quoted literal.
@@ -262,8 +262,17 @@ func runInstallScript(op operator.CommandOperator, script, sshUser, sudoPass str
 	// safely inside the remote shell command.
 	encoded := base64Encode([]byte(script))
 
-	if sshUser == "root" || sudoPass == "" {
+	if sshUser == "root" {
 		cmd := fmt.Sprintf("echo %s | base64 -d | sh", encoded)
+		return op.Execute(cmd)
+	}
+
+	// Non-root without a sudo password: assume passwordless (NOPASSWD)
+	// sudo and elevate non-interactively. Running the script bare here
+	// was a bug — its `install -o root` / writes under /etc/seaweed fail
+	// with permission denied for a normal login user.
+	if sudoPass == "" {
+		cmd := fmt.Sprintf("echo %s | base64 -d | sudo -n sh", encoded)
 		return op.Execute(cmd)
 	}
 

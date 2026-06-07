@@ -79,6 +79,23 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 				names = append(names, fmt.Sprintf("seaweed_worker%d.service", i))
 			}
 		}
+	case "monitoring":
+		// Monitoring units are not seaweed_* — node_exporter runs on every
+		// cluster host; Prometheus + Grafana on the monitoring host.
+		if s.Monitoring == nil {
+			break
+		}
+		if s.Monitoring.InstallNodeExporter() {
+			for _, h := range monitoringNodeHosts(s) {
+				if h.ip == ip {
+					names = append(names, "node_exporter.service")
+					break
+				}
+			}
+		}
+		if s.Monitoring.Host == ip {
+			names = append(names, "prometheus.service", "grafana.service")
+		}
 	}
 	return names
 }
@@ -88,7 +105,7 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 // "envoy" / "s3" / "sftp" / "admin" / "worker").
 func servicesForHost(s *spec.Specification, ip, component string) []string {
 	var names []string
-	comps := []string{"master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker"}
+	comps := []string{"master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker", "monitoring"}
 	if component != "" {
 		comps = []string{component}
 	}
@@ -153,6 +170,14 @@ func uniqueHosts(s *spec.Specification, component string) []hostEntry {
 		for _, w := range s.WorkerServers {
 			add(w.Ip, w.PortSsh)
 		}
+	}
+	if (component == "" || component == "monitoring") && s.Monitoring != nil {
+		if s.Monitoring.InstallNodeExporter() {
+			for _, h := range monitoringNodeHosts(s) {
+				add(h.ip, h.port)
+			}
+		}
+		add(s.Monitoring.Host, s.Monitoring.PortSsh)
 	}
 
 	return order

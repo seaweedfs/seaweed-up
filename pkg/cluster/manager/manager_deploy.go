@@ -187,6 +187,13 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return fmt.Errorf("resolve dev build: %w", err)
 	}
 
+	// When monitoring is enabled, give master/volume/filer a metrics port
+	// (if not set) before they are deployed, so weed exposes /metrics and
+	// the rendered Prometheus scrape config matches.
+	if specification.Monitoring != nil {
+		spec.AssignMetricsPorts(specification)
+	}
+
 	if m.HostPrep {
 		if err := m.PrepareAllHosts(specification); err != nil {
 			return err
@@ -451,6 +458,12 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			}
 		}
 	}
+
+	if m.shouldInstall("monitoring") && specification.Monitoring != nil {
+		if err := m.DeployMonitoring(specification); err != nil {
+			return fmt.Errorf("deploy monitoring: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -508,6 +521,12 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, workerSpec := range specification.WorkerServers {
 		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
+	}
+	// The monitoring host's SSH port isn't a struct-tag default, so normalize
+	// it here like every other server; otherwise lifecycle commands would dial
+	// it on port 0 when not set explicitly.
+	if specification.Monitoring != nil {
+		specification.Monitoring.PortSsh = utils.NvlInt(specification.Monitoring.PortSsh, m.SshPort, 22)
 	}
 }
 

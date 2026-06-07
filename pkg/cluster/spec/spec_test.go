@@ -61,3 +61,57 @@ func TestValidate_SSHHostKeyCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_Monitoring(t *testing.T) {
+	cases := []struct {
+		name    string
+		mon     *MonitoringSpec
+		wantErr bool
+	}{
+		{"nil ok", nil, false},
+		{"host + password ok", &MonitoringSpec{Host: "10.0.0.1", GrafanaAdminPassword: "s3cret"}, false},
+		{"blank host", &MonitoringSpec{Host: "  ", GrafanaAdminPassword: "s3cret"}, true},
+		{"missing grafana password", &MonitoringSpec{Host: "10.0.0.1"}, true},
+		{"blank grafana password", &MonitoringSpec{Host: "10.0.0.1", GrafanaAdminPassword: "  "}, true},
+		{"bad grafana port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", GrafanaPort: 70000}, true},
+		{"bad prometheus port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", PrometheusPort: -1}, true},
+		{"good retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30d"}, false},
+		{"good compound retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "1y6h"}, false},
+		{"bad retention unit", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30x"}, true},
+		{"bare number retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Specification{MasterServers: masterOnly()}
+			s.Monitoring = tc.mon
+			err := s.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestMonitoringDefaults(t *testing.T) {
+	m := &MonitoringSpec{Host: "10.0.0.1"}
+	if m.EffectiveBind() != "127.0.0.1" {
+		t.Errorf("bind default = %q", m.EffectiveBind())
+	}
+	if m.EffectivePrometheusPort() != 9090 || m.EffectiveGrafanaPort() != 3000 {
+		t.Errorf("port defaults wrong: %d %d", m.EffectivePrometheusPort(), m.EffectiveGrafanaPort())
+	}
+	if m.EffectiveGrafanaAdminUser() != "admin" || m.EffectiveRetention() != "15d" {
+		t.Errorf("defaults wrong: %q %q", m.EffectiveGrafanaAdminUser(), m.EffectiveRetention())
+	}
+	if !m.InstallNodeExporter() {
+		t.Errorf("node_exporter should default true")
+	}
+	no := false
+	m.NodeExporter = &no
+	if m.InstallNodeExporter() {
+		t.Errorf("node_exporter explicit false not honored")
+	}
+}
