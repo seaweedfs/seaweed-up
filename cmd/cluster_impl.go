@@ -768,11 +768,13 @@ func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, ide
 	}
 	return probeClusterVersionWith(clusterSpec, func(ms *spec.MasterServerSpec, scheme, path string) ([]byte, string, error) {
 		sshAddr := net.JoinHostPort(ms.Ip, strconv.Itoa(nonZero(ms.PortSsh, 22)))
-		localURL := fmt.Sprintf("%s://localhost:%d%s", scheme, ms.Port, path)
+		// weed binds to the advertised -ip, so curl the node's own address
+		// (not loopback, which is refused unless it binds 0.0.0.0).
+		probeURL := fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port)), path)
 		// -i includes response headers so parseClusterVersion can fall back
 		// to the Server header; -w writes the HTTP status on its own trailer
 		// line so a non-2xx response is reported as an error.
-		cmd := fmt.Sprintf("curl -sS %s-i -m 5 -w '\\n__STATUS__:%%{http_code}' %s 2>/dev/null", kFlag, shellSingleQuote(localURL))
+		cmd := fmt.Sprintf("curl -sS %s-i -m 5 -w '\\n__STATUS__:%%{http_code}' %s 2>/dev/null", kFlag, shellSingleQuote(probeURL))
 		var out []byte
 		err := operator.ExecuteRemote(sshAddr, user, identityFile, sudoPass, func(op operator.CommandOperator) error {
 			b, e := op.Output(cmd)
@@ -780,11 +782,11 @@ func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, ide
 			return e
 		})
 		if err != nil {
-			return nil, "", fmt.Errorf("probe %s on %s: %w", localURL, sshAddr, err)
+			return nil, "", fmt.Errorf("probe %s on %s: %w", probeURL, sshAddr, err)
 		}
 		status, serverHeader, body := parseCurlResponse(out)
 		if status < 200 || status >= 300 {
-			return nil, "", fmt.Errorf("status %d from %s", status, localURL)
+			return nil, "", fmt.Errorf("status %d from %s", status, probeURL)
 		}
 		return body, serverHeader, nil
 	})

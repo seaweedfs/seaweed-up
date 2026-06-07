@@ -99,11 +99,13 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	var targets []upgradeTarget
 
-	// healthURL targets localhost on the node: the probe runs on the host
-	// itself over SSH (see waitForHealthyViaSSH), so it tunnels through the
-	// bastion like every other operation instead of needing direct HTTP
-	// reachability to the node's (often private) address from the control
-	// machine.
+	// healthURL targets the node's own configured address (Ip:port). The
+	// probe runs on the host itself over SSH (see waitForHealthyViaSSH), so
+	// it tunnels through the bastion like every other operation instead of
+	// needing direct HTTP reachability to the node's (often private) address
+	// from the control machine. We use the configured Ip rather than
+	// localhost because weed binds its HTTP listener to the advertised -ip
+	// (e.g. 10.0.0.1), so loopback is refused on hosts that don't bind 0.0.0.0.
 	//
 	// Volume servers first.
 	for i, v := range specification.VolumeServers {
@@ -113,7 +115,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        v.Ip,
 			portSsh:   v.PortSsh,
-			healthURL: fmt.Sprintf("%s://localhost:%d/status", scheme, v.Port),
+			healthURL: fmt.Sprintf("%s://%s/status", scheme, hostPort),
 			describe:  fmt.Sprintf("volume%d %s", i, hostPort),
 		})
 	}
@@ -125,7 +127,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        f.Ip,
 			portSsh:   f.PortSsh,
-			healthURL: fmt.Sprintf("%s://localhost:%d/", scheme, f.Port),
+			healthURL: fmt.Sprintf("%s://%s/", scheme, hostPort),
 			describe:  fmt.Sprintf("filer%d %s", i, hostPort),
 		})
 	}
@@ -137,7 +139,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        ms.Ip,
 			portSsh:   ms.PortSsh,
-			healthURL: fmt.Sprintf("%s://localhost:%d/cluster/status", scheme, ms.Port),
+			healthURL: fmt.Sprintf("%s://%s/cluster/status", scheme, hostPort),
 			describe:  fmt.Sprintf("master%d %s", i, hostPort),
 		})
 	}
@@ -258,7 +260,7 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 	})
 }
 
-// waitForHealthyViaSSH polls localURL from the node itself (over SSH) until it
+// waitForHealthyViaSSH polls probeURL from the node itself (over SSH) until it
 // returns 2xx or the timeout elapses. Running the probe on the node — rather
 // than issuing an HTTP request from the control machine — means it tunnels
 // through the bastion exactly like every other operation, so it works even
@@ -273,8 +275,8 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 // clusters; callers must opt in explicitly via --insecure-skip-tls-verify.
 //
 // TODO: use cluster CA once tls bootstrap PR lands.
-func (m *Manager) waitForHealthyViaSSH(sshAddr, localURL string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
-	if localURL == "" {
+func (m *Manager) waitForHealthyViaSSH(sshAddr, probeURL string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
+	if probeURL == "" {
 		return nil
 	}
 	secs := int(timeout.Seconds())
@@ -306,7 +308,7 @@ exit 1`
 	script = strings.ReplaceAll(script, "__SECS__", strconv.Itoa(secs))
 	script = strings.ReplaceAll(script, "__IV__", strconv.Itoa(iv))
 	script = strings.ReplaceAll(script, "__K__", kFlag)
-	script = strings.ReplaceAll(script, "__URL__", shellSingleQuote(localURL))
+	script = strings.ReplaceAll(script, "__URL__", shellSingleQuote(probeURL))
 
 	var out []byte
 	err := operator.ExecuteRemote(sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
@@ -315,7 +317,7 @@ exit 1`
 		return e
 	})
 	if err != nil {
-		return fmt.Errorf("probe %s on %s: %w (%s)", localURL, sshAddr, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("probe %s on %s: %w (%s)", probeURL, sshAddr, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
