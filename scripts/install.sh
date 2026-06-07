@@ -128,9 +128,10 @@ download_and_install() {
     info "Verifying dev build ${WANT_ID}"
     md5Value=`cat "$TMP_DIR/devbuild.tar.gz.md5" | awk '{print $1}'`
     ( cd "$TMP_DIR" && echo "${md5Value}  devbuild.tar.gz" | md5sum -c )
-    # The dev tarball holds a single binary (weed for the regular build,
-    # weed-large-disk for the large-disk build); install it as ${BINARY}.
-    devBin=`tar tzf "$TMP_DIR/devbuild.tar.gz" | head -1`
+    # The dev tarball holds the weed binary (weed or weed-large-disk); select
+    # it by name so directory entries / LICENSE files don't get picked instead.
+    devBin=`tar tzf "$TMP_DIR/devbuild.tar.gz" | grep -E '(^|/)weed(-large-disk)?$' | head -1`
+    if [ -z "$devBin" ]; then fatal "no weed binary found in dev tarball"; fi
     $SUDO tar xzf "$TMP_DIR/devbuild.tar.gz" -C "$TMP_DIR"
     $SUDO install -m 0755 "$TMP_DIR/${devBin}" "${BIN_DIR}/${BINARY}"
     echo "${WANT_ID}" | $SUDO tee "$MARKER" >/dev/null
