@@ -52,7 +52,7 @@ seaweed-up cluster deploy -f cluster.yaml --component=worker
 ```
 
 Supported `--component` values:
-`master`, `volume`, `filer`, `s3`, `sftp`, `envoy`, `admin`, `worker`.
+`master`, `volume`, `filer`, `s3`, `sftp`, `envoy`, `admin`, `worker`, `monitoring`.
 
 ## Bastion / jump host
 
@@ -125,8 +125,12 @@ With `bind: 127.0.0.1` (the default) Grafana isn't exposed publicly — reach
 it over a tunnel:
 
 ```bash
-ssh -L 3000:<monitoring-host> chris@<bastion>   # then open http://localhost:3000
+ssh -L 3000:localhost:3000 chris@<monitoring-host>   # then open http://localhost:3000
 ```
+
+(Grafana binds to `127.0.0.1` on the monitoring host, so the tunnel must
+terminate there; add `-J chris@<bastion>` if the host is only reachable
+through a jump host.)
 
 Monitoring participates in the lifecycle commands too:
 

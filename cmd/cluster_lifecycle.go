@@ -81,7 +81,7 @@ func newClusterRestartCmd() *cobra.Command {
 
 func addLifecycleFlags(cmd *cobra.Command, opts *ClusterLifecycleOptions) {
 	cmd.Flags().StringVarP(&opts.ConfigFile, "file", "f", "", "cluster configuration file (required)")
-	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to target [master|volume|filer|envoy|s3|sftp|admin|worker]")
+	cmd.Flags().StringVarP(&opts.Component, "component", "c", "", "specific component to target [master|volume|filer|envoy|s3|sftp|admin|worker|monitoring]")
 	cmd.Flags().StringVarP(&opts.User, "user", "u", "", "SSH user (default: current user)")
 	cmd.Flags().IntVarP(&opts.SSHPort, "port", "p", 22, "SSH port")
 	cmd.Flags().StringVarP(&opts.IdentityFile, "identity", "i", "", "SSH identity file")
