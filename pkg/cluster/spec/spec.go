@@ -86,7 +86,7 @@ type (
 		GrafanaAdminPassword string `yaml:"grafana_admin_password,omitempty"`
 		Retention            string `yaml:"retention,omitempty"`
 		// NodeExporter controls whether node_exporter is installed on
-		// every cluster host. Pointer so an unset value defaults to true.
+		// every master/volume/filer host (pointer so unset defaults to true).
 		NodeExporter *bool `yaml:"node_exporter,omitempty"`
 	}
 )

@@ -99,7 +99,7 @@ The policy applies to both the direct node connections and the bastion hop.
 ## Monitoring (Prometheus + Grafana)
 
 Declare a `monitoring:` block and `cluster deploy` will stand up the full
-observability stack as part of the cluster: node_exporter on every host,
+observability stack as part of the cluster: node_exporter on every master/volume/filer host,
 Prometheus and Grafana on the monitoring host, the SeaweedFS metrics ports
 auto-enabled on master/volume/filer, and the bundled SeaweedFS dashboard
 pre-loaded against a provisioned Prometheus datasource.
