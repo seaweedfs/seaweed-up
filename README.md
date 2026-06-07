@@ -96,6 +96,48 @@ global:
 
 The policy applies to both the direct node connections and the bastion hop.
 
+## Monitoring (Prometheus + Grafana)
+
+Declare a `monitoring:` block and `cluster deploy` will stand up the full
+observability stack as part of the cluster: node_exporter on every host,
+Prometheus and Grafana on the monitoring host, the SeaweedFS metrics ports
+auto-enabled on master/volume/filer, and the bundled SeaweedFS dashboard
+pre-loaded against a provisioned Prometheus datasource.
+
+```yaml
+monitoring:
+  host: 10.0.0.1               # runs Prometheus + Grafana
+  bind: 127.0.0.1             # localhost by default — reach Grafana via SSH tunnel
+  grafana_admin_user: admin
+  grafana_admin_password: CHANGE_ME
+  # prometheus_port: 9090     # optional
+  # grafana_port: 3000        # optional
+  # retention: 15d            # optional Prometheus retention
+  # node_exporter: true       # optional (default true)
+```
+
+```bash
+seaweed-up cluster deploy -f cluster.yaml                 # whole cluster + monitoring
+seaweed-up cluster deploy -f cluster.yaml --component=monitoring   # just the stack
+```
+
+With `bind: 127.0.0.1` (the default) Grafana isn't exposed publicly — reach
+it over a tunnel:
+
+```bash
+ssh -L 3000:<monitoring-host> chris@<bastion>   # then open http://localhost:3000
+```
+
+Monitoring participates in the lifecycle commands too:
+
+```bash
+seaweed-up cluster restart -f cluster.yaml --component=monitoring
+```
+
+The lower-level building blocks remain available if you run your own
+Prometheus/Grafana: `cluster prometheus-config`, `cluster node-exporter
+install`, and `cluster dashboard install`.
+
 ## Lifecycle
 
 Start, stop, or restart every service in the cluster, or scope the operation

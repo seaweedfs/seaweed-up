@@ -182,6 +182,13 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 	m.prepare(specification)
 
+	// When monitoring is enabled, give master/volume/filer a metrics port
+	// (if not set) before they are deployed, so weed exposes /metrics and
+	// the rendered Prometheus scrape config matches.
+	if specification.Monitoring != nil {
+		assignMetricsPorts(specification)
+	}
+
 	if m.HostPrep {
 		if err := m.PrepareAllHosts(specification); err != nil {
 			return err
@@ -444,6 +451,12 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			if err := m.DeployEnvoyServer(specification.FilerServers, envoySpec, index); err != nil {
 				return fmt.Errorf("deploy to envoy server %s:%d :%v", envoySpec.Ip, envoySpec.PortSsh, err)
 			}
+		}
+	}
+
+	if m.shouldInstall("monitoring") && specification.Monitoring != nil {
+		if err := m.DeployMonitoring(specification); err != nil {
+			return fmt.Errorf("deploy monitoring: %w", err)
 		}
 	}
 	return nil
