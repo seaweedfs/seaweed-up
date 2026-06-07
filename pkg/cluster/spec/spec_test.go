@@ -34,3 +34,30 @@ func TestValidate_Bastion(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_SSHHostKeyCheck(t *testing.T) {
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"", false},
+		{"ignore", false},
+		{"accept-new", false},
+		{"strict", false},
+		{"STRICT", true},
+		{"tofu", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.val, func(t *testing.T) {
+			s := &Specification{MasterServers: masterOnly()}
+			s.GlobalOptions.SSHHostKeyCheck = tc.val
+			err := s.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for %q, got nil", tc.val)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error for %q, got %v", tc.val, err)
+			}
+		})
+	}
+}

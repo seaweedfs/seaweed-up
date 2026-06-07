@@ -16,6 +16,12 @@ type (
 		VolumeSizeLimitMB int          `yaml:"volumeSizeLimitMB" default:"5000"`
 		Replication       string       `yaml:"replication" default:"000"`
 		Bastion           *BastionSpec `yaml:"bastion,omitempty"`
+		// SSHHostKeyCheck controls verification of remote SSH host keys
+		// for every connection (direct and through the bastion). One of:
+		//   ""/"ignore"  - no verification (default; backward compatible)
+		//   "accept-new" - learn unknown hosts (TOFU), reject changed keys
+		//   "strict"     - host must already be in ~/.ssh/known_hosts
+		SSHHostKeyCheck string `yaml:"ssh_host_key_check,omitempty"`
 	}
 
 	// BastionSpec configures an SSH jump host that seaweed-up tunnels
@@ -81,6 +87,15 @@ func (s *Specification) Validate() error {
 		if b.Port < 0 || b.Port > 65535 {
 			return fmt.Errorf("global.bastion.port %d is out of range (0-65535)", b.Port)
 		}
+	}
+
+	// Keep these values in sync with operator.ValidHostKeyPolicy; checked
+	// inline here to avoid the spec package importing operator.
+	switch s.GlobalOptions.SSHHostKeyCheck {
+	case "", "ignore", "accept-new", "strict":
+	default:
+		return fmt.Errorf("global.ssh_host_key_check %q is invalid (want ignore, accept-new, or strict)",
+			s.GlobalOptions.SSHHostKeyCheck)
 	}
 
 	return nil
