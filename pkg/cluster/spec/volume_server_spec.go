@@ -62,4 +62,5 @@ func (vs *VolumeServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	// each -dir entry. Used to keep indexes on a small fast disk while
 	// data lives on bulk HDDs.
 	addToBuffer(buf, "dir.idx", vs.IdxFolder)
+	addToBufferInt(buf, "metricsPort", vs.MetricsPort, 0)
 }

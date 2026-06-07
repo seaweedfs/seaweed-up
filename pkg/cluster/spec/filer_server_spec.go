@@ -46,4 +46,5 @@ func (f *FilerServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBufferInt(buf, "s3.port", f.S3Port, 8333)
 	addToBufferBool(buf, "webdav", f.Webdav, false)
 	addToBufferInt(buf, "webdav.port", f.WebdavPort, 7333)
+	addToBufferInt(buf, "metricsPort", f.MetricsPort, 0)
 }
