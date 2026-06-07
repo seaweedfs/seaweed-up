@@ -285,8 +285,11 @@ func TestUploadSecurityTOMLOnly_PasswordlessSudo(t *testing.T) {
 		if strings.Contains(cmd, "base64 -d | sudo -n sh") {
 			sawSudo = true
 		}
-		// must NOT run the script bare (no sudo) for a non-root user
-		if strings.Contains(cmd, "base64 -d | sh") {
+		// Must NOT run the script bare (no sudo) for a non-root user. Use
+		// HasSuffix so this matches only the bare `… | base64 -d | sh`
+		// form and not the legitimate `… | base64 -d | sudo -n sh`, which
+		// ends in `sudo -n sh`.
+		if strings.HasSuffix(cmd, "base64 -d | sh") {
 			t.Errorf("install script ran without sudo for a non-root user: %q", cmd)
 		}
 	}
