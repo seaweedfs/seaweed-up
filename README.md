@@ -12,8 +12,9 @@ go install
 
 ## Cluster topology
 
-A typical SeaweedFS deployment has three layers. `seaweed-up` knows how to
-deploy and operate all of them from a single YAML file.
+A typical SeaweedFS deployment has three layers, plus an optional monitoring
+stack. `seaweed-up` knows how to deploy and operate all of them from a single
+YAML file.
 
 | Layer           | Components                | Role                                       |
 |-----------------|---------------------------|--------------------------------------------|
@@ -24,9 +25,11 @@ deploy and operate all of them from a single YAML file.
 |                 | `sftp_servers`, `envoy_servers` | Optional additional frontends        |
 | Backend ops     | `admin_servers`           | Coordinate balancing, EC, vacuum (run 1)   |
 |                 | `worker_servers`          | Execute admin-scheduled tasks (run a few)  |
+| Observability   | `monitoring`              | node_exporter + Prometheus + Grafana       |
 
-The admin server and workers are **not on the data path** — restarting them
-does not interrupt reads or writes.
+The admin server, workers, and monitoring stack are **not on the data path** —
+restarting them does not interrupt reads or writes. Monitoring is optional; see
+[Monitoring](#monitoring-prometheus--grafana) below.
 
 ## Configuration examples
 
