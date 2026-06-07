@@ -76,6 +76,26 @@ as seen *from the bastion*. The `--user` / `--identity` flags still apply
 to the nodes themselves; the `bastion:` block holds the jump host's own
 credentials. Omit the block for direct connections.
 
+## SSH host-key verification
+
+By default seaweed-up does not verify SSH host keys. To enforce a real
+trust boundary (against a man-in-the-middle on the path to the bastion or
+the nodes), set `global.ssh_host_key_check`:
+
+```yaml
+global:
+  ssh_host_key_check: accept-new   # ignore (default) | accept-new | strict
+```
+
+- `ignore` (default) — no verification; preserves historical behavior.
+- `accept-new` — trust-on-first-use: unknown hosts are learned and
+  appended to `~/.ssh/known_hosts`, but a host whose key has *changed* is
+  rejected. Good for first deploys.
+- `strict` — every host (bastion and nodes) must already be in
+  `~/.ssh/known_hosts`; anything else is refused.
+
+The policy applies to both the direct node connections and the bastion hop.
+
 ## Lifecycle
 
 Start, stop, or restart every service in the cluster, or scope the operation

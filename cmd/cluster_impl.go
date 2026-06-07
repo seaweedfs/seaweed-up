@@ -1239,16 +1239,17 @@ func resolveSpec(args []string, cfgFile string) (*spec.Specification, error) {
 	return sp, nil
 }
 
-// applyBastionFromSpec installs (or clears) the process-wide SSH jump
-// host from a spec's global.bastion, so every subsequent ExecuteRemote —
-// deploy, preflight, lifecycle, upgrade, prepare — tunnels through it.
-// Called from every spec-resolution path (both -f file loads and
-// state-store loads) so bastion routing is uniform however the spec was
-// obtained.
+// applyBastionFromSpec installs (or clears) the process-wide SSH settings
+// — jump host (global.bastion) and host-key verification policy
+// (global.ssh_host_key_check) — from a spec, so every subsequent
+// ExecuteRemote (deploy, preflight, lifecycle, upgrade, prepare) honors
+// them. Called from every spec-resolution path (both -f file loads and
+// state-store loads) so behavior is uniform however the spec was obtained.
 func applyBastionFromSpec(s *spec.Specification) {
 	if s == nil {
 		return
 	}
+	operator.SetHostKeyPolicy(s.GlobalOptions.SSHHostKeyCheck)
 	if b := s.GlobalOptions.Bastion; b != nil && b.Host != "" {
 		operator.SetBastion(&operator.BastionConfig{
 			Host:     b.Host,

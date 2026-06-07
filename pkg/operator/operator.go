@@ -110,10 +110,16 @@ func sharedBastionClient(b *BastionConfig) (*ssh.Client, error) {
 		return nil, fmt.Errorf("bastion %s auth: %w", addr, err)
 	}
 
+	hostKey, err := hostKeyCallback()
+	if err != nil {
+		_ = cleanup()
+		return nil, fmt.Errorf("bastion %s host key verification: %w", addr, err)
+	}
+
 	conn, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{method},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKey,
 	})
 	if err != nil {
 		_ = cleanup()
@@ -270,12 +276,16 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 	}
 	targetAddr := net.JoinHostPort(host, port)
 
+	hostKey, err := hostKeyCallback()
+	if err != nil {
+		return fmt.Errorf("ssh host key verification: %w", err)
+	}
 	config := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
 			authMethod,
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKey,
 	}
 	operator, err := dialOperator(targetAddr, config)
 
