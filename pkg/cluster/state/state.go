@@ -99,9 +99,14 @@ func (s *Store) Save(name string, sp *spec.Specification, meta Meta) error {
 
 	dir := s.clusterDir(name)
 	// 0700: the persisted topology can reference hosts and (pre-redaction)
-	// credentials, so keep the state tree owner-only.
+	// credentials, so keep the state tree owner-only. Chmod as well as
+	// MkdirAll because MkdirAll leaves an existing dir's mode untouched —
+	// older installs may have created it 0755.
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create cluster dir %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("secure cluster dir %s: %w", dir, err)
 	}
 
 	// Persist a redacted copy: secrets in the spec (admin/bastion

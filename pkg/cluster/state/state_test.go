@@ -176,7 +176,12 @@ func TestSaveRedactsSecretsAndPerms(t *testing.T) {
 	sp.GlobalOptions.Bastion = &spec.BastionSpec{Host: "203.0.113.10", User: "chris", Password: "BASTION_SECRET"}
 	sp.AdminServers = []*spec.AdminServerSpec{{Ip: "10.0.0.1", AdminUser: "admin", AdminPassword: "ADMIN_SECRET"}}
 	sp.FilerServers[0].Config = map[string]interface{}{
-		"type": "postgres", "hostname": "10.0.0.9", "password": "FILER_DB_SECRET",
+		"type": "postgres", "hostname": "10.0.0.9",
+		"password": "FILER_DB_SECRET", "db_password": "FILER_DB_SECRET2",
+	}
+	// global per-role default config map (ServerConfigs) can also hold secrets
+	sp.ServerConfigs.MasterServer = map[string]interface{}{
+		"jwt_signing_key": "GLOBAL_JWT_SECRET",
 	}
 	// nested secret, like s3.json identities -> credentials -> secretKey
 	sp.S3Servers = []*spec.S3ServerSpec{{Ip: "10.0.0.1", S3Config: map[string]interface{}{
@@ -203,7 +208,7 @@ func TestSaveRedactsSecretsAndPerms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read topology: %v", err)
 	}
-	for _, secret := range []string{"BASTION_SECRET", "ADMIN_SECRET", "FILER_DB_SECRET", "S3_SECRET"} {
+	for _, secret := range []string{"BASTION_SECRET", "ADMIN_SECRET", "FILER_DB_SECRET", "FILER_DB_SECRET2", "GLOBAL_JWT_SECRET", "S3_SECRET"} {
 		if strings.Contains(string(raw), secret) {
 			t.Errorf("persisted topology leaked secret %q:\n%s", secret, raw)
 		}

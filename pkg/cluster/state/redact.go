@@ -37,6 +37,10 @@ func redactedSpec(sp *spec.Specification) (*spec.Specification, error) {
 	if clone.GlobalOptions.Bastion != nil {
 		clone.GlobalOptions.Bastion.Password = ""
 	}
+	// Global per-role default config maps can also carry secrets.
+	redactMap(clone.ServerConfigs.MasterServer)
+	redactMap(clone.ServerConfigs.VolumeServer)
+	redactMap(clone.ServerConfigs.FilerServer)
 	for _, a := range clone.AdminServers {
 		if a != nil {
 			a.AdminPassword = ""
@@ -101,10 +105,21 @@ func redactWalk(v interface{}) {
 }
 
 // isSecretKey reports whether a config key name denotes a credential.
+// Matching is by substring so prefixed/suffixed variants are caught too
+// (db_password, access_token, client_secret, secretKey, ...).
 func isSecretKey(k string) bool {
-	switch strings.ToLower(strings.TrimSpace(k)) {
-	case "password", "passwd", "secret", "secret_key", "secretkey",
-		"secretaccesskey", "access_key_secret", "token", "jwt_signing_key":
+	k = strings.ToLower(strings.TrimSpace(k))
+	for _, s := range []string{"password", "passwd", "passphrase", "secret", "token", "apikey", "api_key"} {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	// "key" alone is too broad — accessKey / publicKey / hostKey are
+	// identifiers or paths, not secrets. Only redact a key when it is
+	// qualified as a private/crypto/signing key (private_key,
+	// signing_key, encryption_key, ...).
+	if strings.Contains(k, "key") &&
+		(strings.Contains(k, "private") || strings.Contains(k, "crypt") || strings.Contains(k, "sign")) {
 		return true
 	}
 	return false
