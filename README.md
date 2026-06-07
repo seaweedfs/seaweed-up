@@ -143,6 +143,13 @@ The lower-level building blocks remain available if you run your own
 Prometheus/Grafana: `cluster prometheus-config`, `cluster node-exporter
 install`, and `cluster dashboard install`.
 
+Metrics ports are assigned automatically when monitoring is enabled: each
+master/volume/filer gets one (unique per host, starting at `9324`), `weed`
+is started with `-metricsPort` so it serves `/metrics`, and the scrape config
+points at the same ports. To pin a specific port — e.g. for fixed firewall
+rules — set `metrics_port:` on a `master_servers` / `volume_servers` /
+`filer_servers` entry; explicit values are kept as-is.
+
 ## Lifecycle
 
 Start, stop, or restart every service in the cluster, or scope the operation
