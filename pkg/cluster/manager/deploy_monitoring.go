@@ -3,7 +3,6 @@ package manager
 import (
 	"bytes"
 	"fmt"
-	"sync"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/observability"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -69,29 +68,21 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 		hosts := monitoringNodeHosts(s)
 		var eg errgroup.Group
 		eg.SetLimit(8)
-		var (
-			mu   sync.Mutex
-			errs []error
-		)
 		for _, h := range hosts {
 			h := h
 			eg.Go(func() error {
 				info(fmt.Sprintf("Installing node_exporter on %s...", h.ip))
 				addr := fmt.Sprintf("%s:%d", h.ip, h.port)
-				err := operator.ExecuteRemote(addr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+				if err := operator.ExecuteRemote(addr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 					return observability.InstallNodeExporter(op, m.User, m.sudoPass)
-				})
-				if err != nil {
-					mu.Lock()
-					errs = append(errs, fmt.Errorf("node_exporter on %s: %w", h.ip, err))
-					mu.Unlock()
+				}); err != nil {
+					return fmt.Errorf("node_exporter on %s: %w", h.ip, err)
 				}
 				return nil
 			})
 		}
-		_ = eg.Wait()
-		if len(errs) > 0 {
-			return errs[0]
+		if err := eg.Wait(); err != nil {
+			return err
 		}
 		info(fmt.Sprintf("node_exporter installed on %d host(s)", len(hosts)))
 	}
