@@ -32,8 +32,8 @@ func TestAdminServerSpec_WriteToBuffer_DataDirDefault(t *testing.T) {
 	a := &AdminServerSpec{Ip: "10.0.0.5", Port: 23646}
 	var buf bytes.Buffer
 	a.WriteToBuffer([]string{"10.0.0.1:9333"}, &buf)
-	if got := buf.String(); !bytes.Contains([]byte(got), []byte("dataDir=.\n")) {
-		t.Fatalf("expected dataDir=. default, got: %q", got)
+	if !bytes.Contains(buf.Bytes(), []byte("dataDir=.\n")) {
+		t.Fatalf("expected dataDir=. default, got: %q", buf.String())
 	}
 }
 
