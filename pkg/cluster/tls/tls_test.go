@@ -272,6 +272,29 @@ func TestUploadSecurityTOMLOnly(t *testing.T) {
 	}
 }
 
+// TestUploadSecurityTOMLOnly_PasswordlessSudo verifies the non-root,
+// no-password path elevates with `sudo -n` rather than running the
+// install script bare (which would fail writing into /etc/seaweed).
+func TestUploadSecurityTOMLOnly_PasswordlessSudo(t *testing.T) {
+	op := newFakeOperator()
+	if err := UploadSecurityTOMLOnly(op, "filer", "write-key", "read-key", "chris", ""); err != nil {
+		t.Fatalf("UploadSecurityTOMLOnly: %v", err)
+	}
+	var sawSudo bool
+	for _, cmd := range op.executed {
+		if strings.Contains(cmd, "base64 -d | sudo -n sh") {
+			sawSudo = true
+		}
+		// must NOT run the script bare (no sudo) for a non-root user
+		if strings.Contains(cmd, "base64 -d | sh") {
+			t.Errorf("install script ran without sudo for a non-root user: %q", cmd)
+		}
+	}
+	if !sawSudo {
+		t.Errorf("expected the install script to run via `sudo -n sh`; commands=%v", op.executed)
+	}
+}
+
 func TestFilerAndAdminHosts(t *testing.T) {
 	s := &spec.Specification{
 		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1"}},
