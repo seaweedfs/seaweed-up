@@ -69,10 +69,12 @@ func TestValidate_Monitoring(t *testing.T) {
 		wantErr bool
 	}{
 		{"nil ok", nil, false},
-		{"host only ok", &MonitoringSpec{Host: "10.0.0.1"}, false},
-		{"blank host", &MonitoringSpec{Host: "  "}, true},
-		{"bad grafana port", &MonitoringSpec{Host: "h", GrafanaPort: 70000}, true},
-		{"bad prometheus port", &MonitoringSpec{Host: "h", PrometheusPort: -1}, true},
+		{"host + password ok", &MonitoringSpec{Host: "10.0.0.1", GrafanaAdminPassword: "s3cret"}, false},
+		{"blank host", &MonitoringSpec{Host: "  ", GrafanaAdminPassword: "s3cret"}, true},
+		{"missing grafana password", &MonitoringSpec{Host: "10.0.0.1"}, true},
+		{"blank grafana password", &MonitoringSpec{Host: "10.0.0.1", GrafanaAdminPassword: "  "}, true},
+		{"bad grafana port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", GrafanaPort: 70000}, true},
+		{"bad prometheus port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", PrometheusPort: -1}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

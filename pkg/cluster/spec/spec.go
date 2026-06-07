@@ -181,6 +181,11 @@ func (s *Specification) Validate() error {
 		if strings.TrimSpace(mon.Host) == "" {
 			return fmt.Errorf("monitoring.host is required when monitoring is configured")
 		}
+		// An empty Grafana admin password is a real security risk and leaves
+		// grafana.ini with a blank credential; require it explicitly.
+		if strings.TrimSpace(mon.GrafanaAdminPassword) == "" {
+			return fmt.Errorf("monitoring.grafana_admin_password is required when monitoring is configured")
+		}
 		for label, p := range map[string]int{
 			"monitoring.port.ssh":        mon.PortSsh,
 			"monitoring.prometheus_port": mon.PrometheusPort,
