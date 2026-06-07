@@ -36,7 +36,8 @@ Two example specs live under `examples/`:
   useful for local smoke tests.
 - [`examples/typical.yaml`](examples/typical.yaml) — production-shaped
   topology with 3 masters, 3 volume servers, 3 filers (PostgreSQL metadata),
-  2 S3 gateways, 1 admin, and 2 workers.
+  2 S3 gateways, 1 admin, 2 workers, and a co-located Prometheus + Grafana
+  monitoring stack.
 
 ## Deploy
 
