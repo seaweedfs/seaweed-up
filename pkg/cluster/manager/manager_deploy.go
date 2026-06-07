@@ -186,7 +186,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	// (if not set) before they are deployed, so weed exposes /metrics and
 	// the rendered Prometheus scrape config matches.
 	if specification.Monitoring != nil {
-		assignMetricsPorts(specification)
+		spec.AssignMetricsPorts(specification)
 	}
 
 	if m.HostPrep {

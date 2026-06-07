@@ -23,14 +23,6 @@ const NodeExporterVersion = "1.8.2"
 // NodeExporterPort is the TCP port node_exporter listens on.
 const NodeExporterPort = 9100
 
-// Default metrics ports for SeaweedFS components when the spec does
-// not explicitly set one.
-const (
-	DefaultMasterMetricsPort = 9324
-	DefaultVolumeMetricsPort = 9325
-	DefaultFilerMetricsPort  = 9326
-)
-
 // dashboardJSON is the bundled Grafana dashboard shipped with
 // seaweed-up. It is exposed for tests and callers that need to push it
 // to Grafana.
@@ -109,6 +101,9 @@ func RenderPromConfig(s *spec.Specification) string {
 	if s == nil {
 		return ""
 	}
+	// Normalize metrics ports through the same assigner the deploy path uses,
+	// so the scrape targets always match the ports weed is started with.
+	spec.AssignMetricsPorts(s)
 
 	name := s.Name
 	if name == "" {
@@ -137,27 +132,15 @@ func RenderPromConfig(s *spec.Specification) string {
 	hosts := map[string]struct{}{}
 
 	for _, m := range s.MasterServers {
-		port := m.MetricsPort
-		if port == 0 {
-			port = DefaultMasterMetricsPort
-		}
-		masters = append(masters, fmt.Sprintf("%s:%d", m.Ip, port))
+		masters = append(masters, fmt.Sprintf("%s:%d", m.Ip, m.MetricsPort))
 		hosts[m.Ip] = struct{}{}
 	}
 	for _, v := range s.VolumeServers {
-		port := v.MetricsPort
-		if port == 0 {
-			port = DefaultVolumeMetricsPort
-		}
-		volumes = append(volumes, fmt.Sprintf("%s:%d", v.Ip, port))
+		volumes = append(volumes, fmt.Sprintf("%s:%d", v.Ip, v.MetricsPort))
 		hosts[v.Ip] = struct{}{}
 	}
 	for _, f := range s.FilerServers {
-		port := f.MetricsPort
-		if port == 0 {
-			port = DefaultFilerMetricsPort
-		}
-		filers = append(filers, fmt.Sprintf("%s:%d", f.Ip, port))
+		filers = append(filers, fmt.Sprintf("%s:%d", f.Ip, f.MetricsPort))
 		hosts[f.Ip] = struct{}{}
 	}
 
