@@ -66,6 +66,52 @@ func newTestMasterSpec(t *testing.T, servers ...*httptest.Server) *spec.Specific
 	return s
 }
 
+func TestParseCurlResponse(t *testing.T) {
+	cases := []struct {
+		name       string
+		raw        string
+		wantStatus int
+		wantServer string
+		wantBody   string
+	}{
+		{
+			name:       "simple 200 with server header",
+			raw:        "HTTP/1.1 200 OK\r\nServer: SeaweedFS/3.85\r\nContent-Type: application/json\r\n\r\n{\"Version\":\"30GB 3.85 abc\"}\n__STATUS__:200",
+			wantStatus: 200,
+			wantServer: "SeaweedFS/3.85",
+			wantBody:   "{\"Version\":\"30GB 3.85 abc\"}",
+		},
+		{
+			name:       "100-continue preface then 200",
+			raw:        "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nServer: SeaweedFS/3.85\r\n\r\n{}\n__STATUS__:200",
+			wantStatus: 200,
+			wantServer: "SeaweedFS/3.85",
+			wantBody:   "{}",
+		},
+		{
+			name:       "non-2xx status from trailer",
+			raw:        "HTTP/1.1 404 Not Found\r\nServer: SeaweedFS/3.85\r\n\r\nnot found\n__STATUS__:404",
+			wantStatus: 404,
+			wantServer: "SeaweedFS/3.85",
+			wantBody:   "not found",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, server, body := parseCurlResponse([]byte(tc.raw))
+			if status != tc.wantStatus {
+				t.Errorf("status = %d, want %d", status, tc.wantStatus)
+			}
+			if server != tc.wantServer {
+				t.Errorf("server = %q, want %q", server, tc.wantServer)
+			}
+			if strings.TrimSpace(string(body)) != tc.wantBody {
+				t.Errorf("body = %q, want %q", strings.TrimSpace(string(body)), tc.wantBody)
+			}
+		})
+	}
+}
+
 func TestProbeCurrentClusterVersion_CanonicalDirStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/dir/status" {

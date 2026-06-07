@@ -111,6 +111,31 @@ install_dependencies() {
 }
 
 download_and_install() {
+{{if .DevAssetURL}}
+  # Rolling "dev" build path. The version string ("dev") never changes, so
+  # idempotency keys on the build datestamp ({{.DevBuildID}}) recorded in a
+  # marker file: a moving dev tag yields a new datestamp and re-installs.
+  WANT_ID="{{.DevBuildID}}"
+  MARKER="${BIN_DIR}/.weed-dev-buildid"
+  curID=""
+  [ -f "$MARKER" ] && curID=$(cat "$MARKER" 2>/dev/null)
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$curID" = "$WANT_ID" ]; then
+    info "Seaweed dev build ${WANT_ID} already installed, skipping"
+  else
+    info "Downloading dev build ${WANT_ID}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/devbuild.tar.gz" -sfL "{{.DevAssetURL}}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/devbuild.tar.gz.md5" -sfL "{{.DevMd5URL}}"
+    info "Verifying dev build ${WANT_ID}"
+    md5Value=`cat "$TMP_DIR/devbuild.tar.gz.md5" | awk '{print $1}'`
+    ( cd "$TMP_DIR" && echo "${md5Value}  devbuild.tar.gz" | md5sum -c )
+    # The dev tarball holds a single binary (weed for the regular build,
+    # weed-large-disk for the large-disk build); install it as ${BINARY}.
+    devBin=`tar tzf "$TMP_DIR/devbuild.tar.gz" | head -1`
+    $SUDO tar xzf "$TMP_DIR/devbuild.tar.gz" -C "$TMP_DIR"
+    $SUDO install -m 0755 "$TMP_DIR/${devBin}" "${BIN_DIR}/${BINARY}"
+    echo "${WANT_ID}" | $SUDO tee "$MARKER" >/dev/null
+  fi
+{{else}}
   # Enterprise weed builds self-report as "<tag>-enterprise" while the
   # release is tagged as plain "<tag>", so strip any "-enterprise" suffix
   # before comparing against the target version — otherwise every deploy
@@ -162,6 +187,7 @@ download_and_install() {
     info "Unpacking ${SEAWEED_VERSION} ${assetFileName}"
     $SUDO tar xvf "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" --directory $BIN_DIR
   fi
+{{end}}
 }
 
 create_user_and_config() {

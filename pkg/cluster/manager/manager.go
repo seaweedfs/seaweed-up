@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
@@ -111,8 +112,8 @@ type Manager struct {
 	// Without this we'd have to back-derive from the aggregated mount
 	// count, which overstates the count for per-host shape.
 	volumeServerCountByTarget map[string]int
-	HostPrep         bool
-	ForceRestart     bool
+	HostPrep                  bool
+	ForceRestart              bool
 	// Enterprise, when true, pulls SeaweedFS release binaries from the
 	// public enterprise release repo (github.com/seaweedfs/artifactory)
 	// instead of the standard OSS repo (github.com/seaweedfs/seaweedfs).
@@ -130,6 +131,9 @@ type Manager struct {
 	sudoPass   string
 	confDir    string
 	dataDir    string
+	// devAsset holds the resolved rolling "dev" build (set by
+	// resolveDevAsset when Version == "dev"); nil for normal versions.
+	devAsset *config.DevAsset
 
 	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
 	// PrepareAllHosts calls PrepareHostAddress directly.
