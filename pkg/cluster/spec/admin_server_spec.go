@@ -65,14 +65,9 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	}
 	addToBuffer(buf, "master", strings.Join(mastersToUse, ","))
 
-	// dataDir backs the admin's maintenance task store. Without it the admin
-	// logs "no data directory specified, cannot save task state" and its
-	// scheduler cannot persist EC balance/rebuild task state — the tasks then
-	// repeat every cycle without ever converging, churning EC shards (this
-	// corrupted shard placement on a live cluster: shards moved to a
-	// destination without their .ecx index, leaving them unloadable). Default
-	// to "." which resolves to the systemd WorkingDirectory (the instance data
-	// dir), mirroring how the master defaults mdir to ".".
+	// Default to "." (the systemd WorkingDirectory) when unset, like the
+	// master's mdir. Without a dataDir the admin can't persist maintenance
+	// task state and its EC balance/rebuild tasks churn shards.
 	dataDir := a.DataDir
 	if dataDir == "" {
 		dataDir = "."
