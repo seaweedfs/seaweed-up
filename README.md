@@ -54,6 +54,28 @@ seaweed-up cluster deploy -f cluster.yaml --component=worker
 Supported `--component` values:
 `master`, `volume`, `filer`, `s3`, `sftp`, `envoy`, `admin`, `worker`.
 
+## Bastion / jump host
+
+When the cluster nodes only have private addresses reachable through a
+public jump host (the classic `ssh bastion` then `ssh 10.0.0.x` pattern),
+declare the bastion under `global.bastion`. Every connection — deploy,
+preflight, lifecycle, upgrade, prepare — is tunnelled through it, so you
+can run `seaweed-up` from your laptop:
+
+```yaml
+global:
+  bastion:
+    host: 203.0.113.10      # public jump host; "host" or "host:port"
+    user: chris             # optional, defaults to the current OS user
+    identity: ~/.ssh/id_rsa # optional, falls back to the ssh agent
+    port: 22                # optional, defaults to 22
+```
+
+The `master_servers` / `volume_servers` IPs are then the private addresses
+as seen *from the bastion*. The `--user` / `--identity` flags still apply
+to the nodes themselves; the `bastion:` block holds the jump host's own
+credentials. Omit the block for direct connections.
+
 ## Lifecycle
 
 Start, stop, or restart every service in the cluster, or scope the operation

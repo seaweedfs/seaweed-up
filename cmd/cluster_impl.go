@@ -118,18 +118,18 @@ type ClusterListOptions struct {
 
 func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOptions) error {
 	color.Green("Deploying SeaweedFS cluster...")
-	
+
 	// Load cluster specification
 	clusterSpec, err := loadClusterSpec(opts.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("failed to load cluster configuration: %w", err)
 	}
-	
+
 	// Set cluster name from args if provided
 	if len(args) > 0 {
 		clusterSpec.Name = args[0]
 	}
-	
+
 	// Create cluster manager
 	mgr := manager.NewManager()
 	mgr.SshPort = opts.SSHPort
@@ -189,7 +189,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	} else {
 		mgr.User = opts.User
 	}
-	
+
 	// Default identity file to ~/.ssh/id_rsa if not specified
 	if opts.IdentityFile == "" {
 		home, err := utils.UserHome()
@@ -200,7 +200,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	} else {
 		mgr.IdentityFile = opts.IdentityFile
 	}
-	
+
 	// Run preflight checks first if requested
 	if opts.Check {
 		color.Cyan("Running preflight checks...")
@@ -298,7 +298,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	color.Cyan("Next steps:")
 	fmt.Println("  - Check cluster status: seaweed-up cluster status", clusterSpec.Name)
 	fmt.Println("  - View logs: seaweed-up cluster logs", clusterSpec.Name)
-	
+
 	return nil
 }
 
@@ -754,17 +754,17 @@ func newUpgradeHTTPTransport(insecureSkipTLSVerify bool, clusterName string) *ht
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {
 	color.Green("Scaling out cluster: %s", clusterName)
-	
+
 	if opts.AddVolume > 0 {
 		fmt.Printf("Adding %d volume servers\n", opts.AddVolume)
 	}
 	if opts.AddFiler > 0 {
 		fmt.Printf("Adding %d filer servers\n", opts.AddFiler)
 	}
-	
+
 	// TODO: Implement scale out logic
 	fmt.Println("Scale out functionality not yet implemented")
-	
+
 	return nil
 }
 
@@ -1231,7 +1231,35 @@ func resolveSpec(args []string, cfgFile string) (*spec.Specification, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load cluster %q: %w", name, err)
 	}
+	// State-store loads bypass loadClusterSpec, so install the bastion
+	// here too — otherwise name-based commands (e.g. `cluster upgrade
+	// <name>` without -f) would ignore global.bastion and try to reach
+	// private nodes directly.
+	applyBastionFromSpec(sp)
 	return sp, nil
+}
+
+// applyBastionFromSpec installs (or clears) the process-wide SSH jump
+// host from a spec's global.bastion, so every subsequent ExecuteRemote —
+// deploy, preflight, lifecycle, upgrade, prepare — tunnels through it.
+// Called from every spec-resolution path (both -f file loads and
+// state-store loads) so bastion routing is uniform however the spec was
+// obtained.
+func applyBastionFromSpec(s *spec.Specification) {
+	if s == nil {
+		return
+	}
+	if b := s.GlobalOptions.Bastion; b != nil && b.Host != "" {
+		operator.SetBastion(&operator.BastionConfig{
+			Host:     b.Host,
+			Port:     b.Port,
+			User:     b.User,
+			Identity: b.Identity,
+			Password: b.Password,
+		})
+		return
+	}
+	operator.SetBastion(nil)
 }
 
 func loadClusterSpec(configFile string) (*spec.Specification, error) {
@@ -1254,11 +1282,16 @@ func loadClusterSpec(configFile string) (*spec.Specification, error) {
 		return nil, fmt.Errorf("invalid cluster specification: %w", err)
 	}
 
+	// Install (or clear) the SSH jump host declared in global.bastion so
+	// every subsequent ExecuteRemote tunnels through it. resolveSpec's
+	// state-store branch calls the same helper for name-based commands.
+	applyBastionFromSpec(clusterSpec)
+
 	return clusterSpec, nil
 }
 
 // shellSingleQuote safely wraps s for use as a single-quoted shell argument.
-// Any embedded single quote is escaped as '\'' (close-quote, literal quote,
+// Any embedded single quote is escaped as '\” (close-quote, literal quote,
 // reopen-quote). Duplicated from pkg/cluster/manager/manager_lifecycle.go to
 // avoid introducing an import cycle between cmd and manager.
 func shellSingleQuote(s string) string {

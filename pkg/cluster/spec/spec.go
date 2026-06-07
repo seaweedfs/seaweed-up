@@ -1,17 +1,38 @@
 package spec
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type (
 	// GlobalOptions represents the global options for all groups in topology
 	// specification in topology.yaml
 	GlobalOptions struct {
-		TLSEnabled        bool   `yaml:"enable_tls,omitempty"`
-		ConfigDir         string `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
-		DataDir           string `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
-		OS                string `yaml:"os,omitempty" default:"linux"`
-		VolumeSizeLimitMB int    `yaml:"volumeSizeLimitMB" default:"5000"`
-		Replication       string `yaml:"replication" default:"000"`
+		TLSEnabled        bool         `yaml:"enable_tls,omitempty"`
+		ConfigDir         string       `yaml:"dir.conf,omitempty" default:"/etc/seaweed"`
+		DataDir           string       `yaml:"dir.data,omitempty" default:"/opt/seaweed"`
+		OS                string       `yaml:"os,omitempty" default:"linux"`
+		VolumeSizeLimitMB int          `yaml:"volumeSizeLimitMB" default:"5000"`
+		Replication       string       `yaml:"replication" default:"000"`
+		Bastion           *BastionSpec `yaml:"bastion,omitempty"`
+	}
+
+	// BastionSpec configures an SSH jump host that seaweed-up tunnels
+	// every node connection through. Use it when the cluster nodes live
+	// on a private network reachable only via a public bastion (the
+	// `ssh bastion` then `ssh 10.0.0.x` pattern). All fields except host
+	// are optional: user defaults to the current OS user, port to 22,
+	// and auth falls back to the ssh agent when identity and password
+	// are both unset. Prefer identity/agent auth: like the other
+	// credentials in this spec (e.g. admin_password, filer DB password),
+	// Password is persisted in plaintext when the cluster state is saved.
+	BastionSpec struct {
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port,omitempty"`
+		User     string `yaml:"user,omitempty"`
+		Identity string `yaml:"identity,omitempty"`
+		Password string `yaml:"password,omitempty"`
 	}
 
 	ServerConfigs struct {
@@ -21,9 +42,9 @@ type (
 	}
 
 	Specification struct {
-		Name          string              `yaml:"cluster_name,omitempty"`
-		GlobalOptions GlobalOptions       `yaml:"global,omitempty" validate:"global:editable"`
-		ServerConfigs ServerConfigs       `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
+		Name          string        `yaml:"cluster_name,omitempty"`
+		GlobalOptions GlobalOptions `yaml:"global,omitempty" validate:"global:editable"`
+		ServerConfigs ServerConfigs `yaml:"server_configs,omitempty" validate:"server_configs:ignore"`
 		// master_servers is required (Validate refuses a spec without
 		// one); everything else is optional. omitempty on the optional
 		// sections keeps generated cluster.yaml files tidy — no
@@ -48,6 +69,19 @@ func (s *Specification) Validate() error {
 
 	// Name is optional but validated if provided
 	// The Name can be set from command line args if not in config
+
+	// A configured bastion must at least name a host, and (if given) a
+	// sane port — otherwise the misconfiguration only surfaces later as
+	// an opaque SSH dial error. Port 0 is allowed: it means "unset", and
+	// the operator defaults it to 22.
+	if b := s.GlobalOptions.Bastion; b != nil {
+		if strings.TrimSpace(b.Host) == "" {
+			return fmt.Errorf("global.bastion.host is required when a bastion is configured")
+		}
+		if b.Port < 0 || b.Port > 65535 {
+			return fmt.Errorf("global.bastion.port %d is out of range (0-65535)", b.Port)
+		}
+	}
 
 	return nil
 }
