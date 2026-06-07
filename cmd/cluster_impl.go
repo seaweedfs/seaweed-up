@@ -565,7 +565,17 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 	// Probe the currently-running cluster version so that rollback has a target
 	// to restore to. If probing fails we proceed with previousVersion="" and
 	// rollback will be disabled for this run.
-	if current, err := probeCurrentClusterVersion(clusterSpec, opts.InsecureSkipTLSVerify); err != nil {
+	//
+	// Behind a bastion the master's address is usually unreachable from the
+	// control machine, so probe over SSH (curl on the node itself) which rides
+	// the jump-host tunnel; otherwise issue a direct HTTP request.
+	probeVersion := func() (string, error) {
+		if b := clusterSpec.GlobalOptions.Bastion; b != nil && b.Host != "" {
+			return probeCurrentClusterVersionViaSSH(clusterSpec, mgr.User, mgr.IdentityFile, "", opts.InsecureSkipTLSVerify)
+		}
+		return probeCurrentClusterVersion(clusterSpec, opts.InsecureSkipTLSVerify)
+	}
+	if current, err := probeVersion(); err != nil {
 		color.Yellow("WARN: Could not determine current cluster version (%v); rollback will be disabled.", err)
 		mgr.Version = ""
 	} else if current == "" {
@@ -633,22 +643,47 @@ type dirStatusPayload struct {
 	Version string `json:"Version"`
 }
 
-// probeCurrentClusterVersion asks the master hosts for their running version.
-// It tries /dir/status first and falls back to /cluster/status, preferring a
-// typed JSON Version field and then falling back to the Server response header.
-//
-// The parser is strict: it only accepts tokens that match a Seaweed-specific
-// version pattern. An IP-like substring ("172.28.0.10") will never be returned.
-// If a master responds 2xx but no version could be extracted, probing
-// continues with the remaining masters; "" + nil is returned only when all
-// masters responded successfully without a recognizable version.
-//
-// When the cluster is TLS-enabled, the default http.Client uses the system
-// cert pool. Pass insecureSkipTLSVerify=true to disable certificate
-// verification (for self-signed dev clusters).
-//
-// TODO: use cluster CA once tls bootstrap PR lands.
-func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLSVerify bool) (string, error) {
+// versionFetcher returns the response body and Server header for one master
+// endpoint (scheme://.../path). Implementations differ only in transport: the
+// HTTP fetcher issues a direct request from the control machine, while the SSH
+// fetcher runs curl on the master node so the probe tunnels through the bastion.
+// A non-2xx response or transport failure is reported as an error.
+type versionFetcher func(ms *spec.MasterServerSpec, scheme, path string) (body []byte, serverHeader string, err error)
+
+// parseClusterVersion extracts a SeaweedFS version from a master's status
+// response, preferring the typed JSON Version field, then a generic lowercase
+// "version" key, then the Server response header. Returns "" when nothing
+// recognizable is present. The extractor is strict: an IP-like substring
+// ("172.28.0.10") will never be returned.
+func parseClusterVersion(body []byte, serverHeader string) string {
+	// Prefer the typed JSON Version field.
+	var typed dirStatusPayload
+	if jsonErr := json.Unmarshal(body, &typed); jsonErr == nil && typed.Version != "" {
+		if v := extractSeaweedVersion(typed.Version); v != "" {
+			return v
+		}
+	}
+	// Generic map lookup covers responses that use lowercase "version".
+	var payload map[string]interface{}
+	if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
+		for _, key := range []string{"Version", "version"} {
+			if raw, ok := payload[key].(string); ok && raw != "" {
+				if v := extractSeaweedVersion(raw); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	// Fall back to the Server response header.
+	return extractSeaweedVersion(serverHeader)
+}
+
+// probeClusterVersionWith asks the master hosts for their running version using
+// the supplied fetcher. It tries /dir/status first and falls back to
+// /cluster/status. If a master responds but no version could be extracted,
+// probing continues with the remaining masters; "" + nil is returned only when
+// all masters responded successfully without a recognizable version.
+func probeClusterVersionWith(clusterSpec *spec.Specification, fetch versionFetcher) (string, error) {
 	if len(clusterSpec.MasterServers) == 0 {
 		return "", fmt.Errorf("no master servers in spec")
 	}
@@ -656,62 +691,19 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 	if clusterSpec.GlobalOptions.TLSEnabled {
 		scheme = "https"
 	}
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify, clusterSpec.Name),
-	}
 	var lastErr error
 	sawHealthyMasterWithoutVersion := false
 	for _, ms := range clusterSpec.MasterServers {
 		for _, path := range []string{"/dir/status", "/cluster/status"} {
-			addr := net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port))
-			url := fmt.Sprintf("%s://%s%s", scheme, addr, path)
-			req, err := http.NewRequest(http.MethodGet, url, nil)
+			body, serverHeader, err := fetch(ms, scheme, path)
 			if err != nil {
 				lastErr = err
 				continue
 			}
-			resp, err := client.Do(req)
-			if err != nil {
-				lastErr = err
-				continue
-			}
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				lastErr = fmt.Errorf("status %d from %s", resp.StatusCode, url)
-				_ = resp.Body.Close()
-				continue
-			}
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			serverHeader := resp.Header.Get("Server")
-			_ = resp.Body.Close()
-			if readErr != nil {
-				lastErr = fmt.Errorf("read body from %s: %w", url, readErr)
-				continue
-			}
-			// Prefer the typed JSON Version field.
-			var typed dirStatusPayload
-			if jsonErr := json.Unmarshal(body, &typed); jsonErr == nil && typed.Version != "" {
-				if v := extractSeaweedVersion(typed.Version); v != "" {
-					return v, nil
-				}
-			}
-			// Generic map lookup covers responses that use lowercase "version".
-			var payload map[string]interface{}
-			if jsonErr := json.Unmarshal(body, &payload); jsonErr == nil {
-				for _, key := range []string{"Version", "version"} {
-					if raw, ok := payload[key].(string); ok && raw != "" {
-						if v := extractSeaweedVersion(raw); v != "" {
-							return v, nil
-						}
-					}
-				}
-			}
-			// Fall back to the Server response header.
-			if v := extractSeaweedVersion(serverHeader); v != "" {
+			if v := parseClusterVersion(body, serverHeader); v != "" {
 				return v, nil
 			}
-			// Nothing matched on this endpoint. Remember that this master
-			// responded 2xx but didn't yield a recognizable version, and
+			// The master responded but didn't yield a recognizable version;
 			// keep probing other masters/endpoints.
 			sawHealthyMasterWithoutVersion = true
 		}
@@ -726,6 +718,114 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 		lastErr = fmt.Errorf("no master responded")
 	}
 	return "", lastErr
+}
+
+// probeCurrentClusterVersion asks the master hosts for their running version
+// over a direct HTTP(S) request from the control machine.
+//
+// When the cluster is TLS-enabled, the default http.Client uses the system
+// cert pool. Pass insecureSkipTLSVerify=true to disable certificate
+// verification (for self-signed dev clusters).
+//
+// TODO: use cluster CA once tls bootstrap PR lands.
+func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLSVerify bool) (string, error) {
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: newUpgradeHTTPTransport(insecureSkipTLSVerify, clusterSpec.Name),
+	}
+	return probeClusterVersionWith(clusterSpec, func(ms *spec.MasterServerSpec, scheme, path string) ([]byte, string, error) {
+		addr := net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port))
+		url := fmt.Sprintf("%s://%s%s", scheme, addr, path)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, "", err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, "", fmt.Errorf("status %d from %s", resp.StatusCode, url)
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if readErr != nil {
+			return nil, "", fmt.Errorf("read body from %s: %w", url, readErr)
+		}
+		return body, resp.Header.Get("Server"), nil
+	})
+}
+
+// probeCurrentClusterVersionViaSSH is the bastion-friendly counterpart of
+// probeCurrentClusterVersion: instead of reaching the master's (often private)
+// address directly, it SSHes to each master and runs curl against
+// localhost:<master port>, so the probe rides the same jump-host tunnel as the
+// rest of the upgrade. Used whenever a bastion is configured.
+func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, identityFile, sudoPass string, insecureSkipTLSVerify bool) (string, error) {
+	kFlag := ""
+	if insecureSkipTLSVerify {
+		kFlag = "-k "
+	}
+	return probeClusterVersionWith(clusterSpec, func(ms *spec.MasterServerSpec, scheme, path string) ([]byte, string, error) {
+		sshAddr := net.JoinHostPort(ms.Ip, strconv.Itoa(nonZero(ms.PortSsh, 22)))
+		localURL := fmt.Sprintf("%s://localhost:%d%s", scheme, ms.Port, path)
+		// -i includes response headers so parseClusterVersion can fall back
+		// to the Server header; -w writes the HTTP status on its own trailer
+		// line so a non-2xx response is reported as an error.
+		cmd := fmt.Sprintf("curl -sS %s-i -m 5 -w '\\n__STATUS__:%%{http_code}' %s 2>/dev/null", kFlag, shellSingleQuote(localURL))
+		var out []byte
+		err := operator.ExecuteRemote(sshAddr, user, identityFile, sudoPass, func(op operator.CommandOperator) error {
+			b, e := op.Output(cmd)
+			out = b
+			return e
+		})
+		if err != nil {
+			return nil, "", fmt.Errorf("probe %s on %s: %w", localURL, sshAddr, err)
+		}
+		status, serverHeader, body := parseCurlResponse(out)
+		if status < 200 || status >= 300 {
+			return nil, "", fmt.Errorf("status %d from %s", status, localURL)
+		}
+		return body, serverHeader, nil
+	})
+}
+
+// parseCurlResponse splits `curl -i` output into the final response's status
+// code, Server header, and body. curl may print preface header blocks (a
+// 100-Continue or a redirect), so each leading "HTTP/..." block is consumed in
+// turn and the last one wins. The trailing "__STATUS__:<code>" sentinel written
+// by curl's -w is the authoritative status (curl's -i status line may be the
+// 100-Continue preface) and is stripped from the returned body.
+func parseCurlResponse(raw []byte) (status int, serverHeader string, body []byte) {
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	if i := strings.LastIndex(text, "\n__STATUS__:"); i >= 0 {
+		status, _ = strconv.Atoi(strings.TrimSpace(text[i+len("\n__STATUS__:"):]))
+		text = text[:i]
+	}
+	for strings.HasPrefix(text, "HTTP/") {
+		idx := strings.Index(text, "\n\n")
+		if idx < 0 {
+			if sv := serverHeaderFrom(text); sv != "" {
+				serverHeader = sv
+			}
+			return status, serverHeader, nil
+		}
+		if sv := serverHeaderFrom(text[:idx]); sv != "" {
+			serverHeader = sv
+		}
+		text = text[idx+2:]
+	}
+	return status, serverHeader, []byte(text)
+}
+
+// serverHeaderFrom returns the Server header value from a header block, or "".
+func serverHeaderFrom(block string) string {
+	for _, line := range strings.Split(block, "\n") {
+		if i := strings.Index(line, ":"); i > 0 && strings.EqualFold(strings.TrimSpace(line[:i]), "Server") {
+			return strings.TrimSpace(line[i+1:])
+		}
+	}
+	return ""
 }
 
 // newUpgradeHTTPTransport builds an http.Transport for upgrade probes.

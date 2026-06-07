@@ -2,12 +2,10 @@ package manager
 
 import (
 	"bytes"
-	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -101,6 +99,12 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	var targets []upgradeTarget
 
+	// healthURL targets localhost on the node: the probe runs on the host
+	// itself over SSH (see waitForHealthyViaSSH), so it tunnels through the
+	// bastion like every other operation instead of needing direct HTTP
+	// reachability to the node's (often private) address from the control
+	// machine.
+	//
 	// Volume servers first.
 	for i, v := range specification.VolumeServers {
 		hostPort := net.JoinHostPort(v.Ip, strconv.Itoa(v.Port))
@@ -109,7 +113,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        v.Ip,
 			portSsh:   v.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s/status", scheme, hostPort),
+			healthURL: fmt.Sprintf("%s://localhost:%d/status", scheme, v.Port),
 			describe:  fmt.Sprintf("volume%d %s", i, hostPort),
 		})
 	}
@@ -121,7 +125,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        f.Ip,
 			portSsh:   f.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s/", scheme, hostPort),
+			healthURL: fmt.Sprintf("%s://localhost:%d/", scheme, f.Port),
 			describe:  fmt.Sprintf("filer%d %s", i, hostPort),
 		})
 	}
@@ -133,7 +137,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			index:     i,
 			ip:        ms.Ip,
 			portSsh:   ms.PortSsh,
-			healthURL: fmt.Sprintf("%s://%s/cluster/status", scheme, hostPort),
+			healthURL: fmt.Sprintf("%s://localhost:%d/cluster/status", scheme, ms.Port),
 			describe:  fmt.Sprintf("master%d %s", i, hostPort),
 		})
 	}
@@ -181,7 +185,8 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			return rollbackHost(t, hostPrev, fmt.Errorf("upgrade %s: %w", t.describe, err))
 		}
 
-		if err := waitForHealthy(t.healthURL, opts.HealthTimeout, opts.HealthInterval, opts.InsecureSkipTLSVerify); err != nil {
+		sshAddr := net.JoinHostPort(t.ip, strconv.Itoa(t.portSsh))
+		if err := m.waitForHealthyViaSSH(sshAddr, t.healthURL, opts.HealthTimeout, opts.HealthInterval, opts.InsecureSkipTLSVerify); err != nil {
 			info(fmt.Sprintf("Health check failed for %s: %v", t.describe, err))
 			return rollbackHost(t, hostPrev, fmt.Errorf("health check failed for %s: %w", t.describe, err))
 		}
@@ -253,44 +258,64 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 	})
 }
 
-// waitForHealthy polls an HTTP(S) URL until it returns 2xx or the timeout
-// elapses. This is intentionally minimal — a more thorough probe would parse
-// the body.
+// waitForHealthyViaSSH polls localURL from the node itself (over SSH) until it
+// returns 2xx or the timeout elapses. Running the probe on the node — rather
+// than issuing an HTTP request from the control machine — means it tunnels
+// through the bastion exactly like every other operation, so it works even
+// when the node's (often private) service address is unreachable from the
+// laptop running the upgrade.
 //
-// By default TLS connections verify against the system cert pool. Pass
-// insecureSkipTLSVerify=true to disable verification (for self-signed dev
-// clusters); callers must opt in explicitly via --insecure-skip-tls-verify.
+// The poll loop runs inside a single SSH session (one shell loop) rather than
+// one SSH round-trip per attempt, so a slow-starting service doesn't cost a
+// handshake per second.
+//
+// Pass insecureSkipTLSVerify=true to add curl's -k for self-signed dev
+// clusters; callers must opt in explicitly via --insecure-skip-tls-verify.
 //
 // TODO: use cluster CA once tls bootstrap PR lands.
-func waitForHealthy(url string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
-	if url == "" {
+func (m *Manager) waitForHealthyViaSSH(sshAddr, localURL string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
+	if localURL == "" {
 		return nil
 	}
-	tlsConfig := &tls.Config{}
+	secs := int(timeout.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	iv := int(interval.Seconds())
+	if iv < 1 {
+		iv = 1
+	}
+	kFlag := ""
 	if insecureSkipTLSVerify {
-		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
+		kFlag = "-k "
 	}
-	transport := &http.Transport{TLSClientConfig: tlsConfig}
-	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err == nil {
-			// Drain and close so the connection can be reused.
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return nil
-			}
-			lastErr = fmt.Errorf("status %d from %s", resp.StatusCode, url)
-		} else {
-			lastErr = err
-		}
-		time.Sleep(interval)
+	// POSIX-sh poll loop: curl the endpoint until it answers 2xx or the
+	// deadline passes. `2??` matches any 2xx status; curl errors (e.g.
+	// connection refused while the unit is still starting) are swallowed to
+	// "000" so the loop keeps trying.
+	script := `end=$(( $(date +%s) + __SECS__ ))
+last=000
+while [ "$(date +%s)" -lt "$end" ]; do
+  code=$(curl -sS __K__-o /dev/null -m 5 -w '%{http_code}' __URL__ 2>/dev/null || echo 000)
+  case "$code" in 2??) echo HEALTHY; exit 0;; esac
+  last=$code
+  sleep __IV__
+done
+echo "UNHEALTHY last=$last"
+exit 1`
+	script = strings.ReplaceAll(script, "__SECS__", strconv.Itoa(secs))
+	script = strings.ReplaceAll(script, "__IV__", strconv.Itoa(iv))
+	script = strings.ReplaceAll(script, "__K__", kFlag)
+	script = strings.ReplaceAll(script, "__URL__", shellSingleQuote(localURL))
+
+	var out []byte
+	err := operator.ExecuteRemote(sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+		b, e := op.Output(script)
+		out = b
+		return e
+	})
+	if err != nil {
+		return fmt.Errorf("probe %s on %s: %w (%s)", localURL, sshAddr, err, strings.TrimSpace(string(out)))
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("timed out waiting for %s", url)
-	}
-	return lastErr
+	return nil
 }
