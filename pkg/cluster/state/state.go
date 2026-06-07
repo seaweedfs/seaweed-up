@@ -98,16 +98,35 @@ func (s *Store) Save(name string, sp *spec.Specification, meta Meta) error {
 	}
 
 	dir := s.clusterDir(name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0700: the persisted topology can reference hosts and (pre-redaction)
+	// credentials, so keep the state tree owner-only. Chmod as well as
+	// MkdirAll because MkdirAll leaves an existing dir's mode untouched —
+	// older installs may have created it 0755.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create cluster dir %s: %w", dir, err)
+	}
+	// gosec G302 wants <=0600, but this is a directory: it needs the
+	// owner execute bit (0700) to be traversable; 0600 would make it
+	// unusable. (MkdirAll's G301 is already excluded in CI; chmod's G302
+	// is not, hence the inline suppression.)
+	if err := os.Chmod(dir, 0o700); err != nil { // #nosec G302 -- directory needs the 0700 traverse bit
+		return fmt.Errorf("secure cluster dir %s: %w", dir, err)
+	}
+
+	// Persist a redacted copy: secrets in the spec (admin/bastion
+	// passwords, filer DB and s3.json credentials) must not be written to
+	// disk in plaintext. The caller's sp is left intact.
+	redacted, err := redactedSpec(sp)
+	if err != nil {
+		return fmt.Errorf("redact topology secrets: %w", err)
 	}
 
 	topoPath := filepath.Join(dir, "topology.yaml")
-	topoBytes, err := yaml.Marshal(sp)
+	topoBytes, err := yaml.Marshal(redacted)
 	if err != nil {
 		return fmt.Errorf("marshal topology: %w", err)
 	}
-	if err := writeFileAtomic(topoPath, topoBytes, 0o644); err != nil {
+	if err := writeFileAtomic(topoPath, topoBytes, 0o600); err != nil {
 		return fmt.Errorf("write topology: %w", err)
 	}
 
@@ -116,7 +135,7 @@ func (s *Store) Save(name string, sp *spec.Specification, meta Meta) error {
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
-	if err := writeFileAtomic(statePath, stateBytes, 0o644); err != nil {
+	if err := writeFileAtomic(statePath, stateBytes, 0o600); err != nil {
 		return fmt.Errorf("write state: %w", err)
 	}
 	return nil
