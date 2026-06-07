@@ -45,53 +45,40 @@ func DashboardJSON() []byte {
 	return out
 }
 
-// InstallNodeExporter installs a pinned node_exporter release on the
-// host reachable through op and registers it as a systemd service
-// listening on :9100.
-func InstallNodeExporter(op operator.CommandOperator) error {
+// NodeExporterInstallScript renders the shell script that installs and
+// starts node_exporter. Pure, for unit tests.
+func NodeExporterInstallScript(goArch string) string {
+	tarball := fmt.Sprintf("node_exporter-%s.linux-%s.tar.gz", NodeExporterVersion, goArch)
+	dir := fmt.Sprintf("node_exporter-%s.linux-%s", NodeExporterVersion, goArch)
+	url := fmt.Sprintf("https://github.com/prometheus/node_exporter/releases/download/v%s/%s",
+		NodeExporterVersion, tarball)
+	return strings.Join([]string{
+		"set -e",
+		"cd /tmp",
+		fmt.Sprintf("if [ ! -x /usr/local/bin/node_exporter ]; then curl -fsSL -o %s %q && tar -xzf %s && install -m0755 %s/node_exporter /usr/local/bin/node_exporter && rm -rf %s %s; fi",
+			tarball, url, tarball, dir, tarball, dir),
+		"id node_exporter >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter",
+		writeFileCmd("/etc/systemd/system/node_exporter.service", nodeExporterUnit(), "0644"),
+		"systemctl daemon-reload",
+		"systemctl enable node_exporter.service >/dev/null 2>&1",
+		"systemctl restart node_exporter.service",
+	}, "\n")
+}
+
+// InstallNodeExporter installs a pinned node_exporter release on the host
+// reachable through op and registers it as a systemd service listening on
+// :9100. It elevates via sudo for non-root SSH users (previously it ran
+// the privileged steps bare, which failed for a normal login user).
+func InstallNodeExporter(op operator.CommandOperator, sshUser, sudoPass string) error {
 	if op == nil {
 		return fmt.Errorf("observability: nil CommandOperator")
 	}
-
-	arch, err := op.Output("uname -m")
+	goArch, err := remoteGoArch(op)
 	if err != nil {
-		return fmt.Errorf("detect arch: %w", err)
+		return err
 	}
-	goArch := "amd64"
-	switch strings.TrimSpace(string(arch)) {
-	case "aarch64", "arm64":
-		goArch = "arm64"
-	case "armv7l", "armv6l":
-		goArch = "armv7"
-	}
-
-	tarball := fmt.Sprintf("node_exporter-%s.linux-%s.tar.gz", NodeExporterVersion, goArch)
-	url := fmt.Sprintf("https://github.com/prometheus/node_exporter/releases/download/v%s/%s",
-		NodeExporterVersion, tarball)
-
-	script := strings.Join([]string{
-		"set -e",
-		"cd /tmp",
-		fmt.Sprintf("curl -fsSL -o %s %q", tarball, url),
-		fmt.Sprintf("tar -xzf %s", tarball),
-		fmt.Sprintf("install -m 0755 node_exporter-%s.linux-%s/node_exporter /usr/local/bin/node_exporter",
-			NodeExporterVersion, goArch),
-		fmt.Sprintf("rm -rf %s node_exporter-%s.linux-%s", tarball, NodeExporterVersion, goArch),
-		"id node_exporter >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter",
-	}, " && ")
-
-	if err := op.Execute(script); err != nil {
-		return fmt.Errorf("install node_exporter binary: %w", err)
-	}
-
-	unit := nodeExporterUnit()
-	if err := op.Upload(strings.NewReader(unit),
-		"/etc/systemd/system/node_exporter.service", "0644"); err != nil {
-		return fmt.Errorf("upload systemd unit: %w", err)
-	}
-
-	if err := op.Execute("systemctl daemon-reload && systemctl enable node_exporter.service && systemctl restart node_exporter.service"); err != nil {
-		return fmt.Errorf("enable node_exporter service: %w", err)
+	if err := runScript(op, sshUser, sudoPass, NodeExporterInstallScript(goArch)); err != nil {
+		return fmt.Errorf("install node_exporter: %w", err)
 	}
 	return nil
 }

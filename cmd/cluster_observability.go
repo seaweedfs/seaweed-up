@@ -206,7 +206,7 @@ func runNodeExporterInstall(cmd *cobra.Command, s *spec.Specification, opts *Obs
 			mu.Unlock()
 			addr := fmt.Sprintf("%s:%d", h.IP, h.SSHPort)
 			err := operator.ExecuteRemote(addr, opts.User, opts.IdentityFile, "", func(op operator.CommandOperator) error {
-				return observability.InstallNodeExporter(op)
+				return observability.InstallNodeExporter(op, opts.User, "")
 			})
 			if err != nil {
 				mu.Lock()
