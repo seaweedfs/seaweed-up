@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -64,8 +65,93 @@ type (
 		AdminServers  []*AdminServerSpec  `yaml:"admin_servers,omitempty"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers,omitempty"`
 		WorkerServers []*WorkerServerSpec `yaml:"worker_servers,omitempty"`
+		// Monitoring, when set, makes seaweed-up deploy a Prometheus +
+		// Grafana stack (and node_exporter on every host) as part of the
+		// cluster, with the bundled SeaweedFS dashboard pre-loaded.
+		Monitoring *MonitoringSpec `yaml:"monitoring,omitempty"`
+	}
+
+	// MonitoringSpec configures the bundled observability stack. Only Host
+	// is required; everything else has a sensible default (see the
+	// Effective* helpers). By default Prometheus and Grafana bind to
+	// 127.0.0.1 on the monitoring host, so reach Grafana over an SSH
+	// tunnel; set bind: 0.0.0.0 to expose them (mind the same cleartext /
+	// firewall caveats as any public service).
+	MonitoringSpec struct {
+		Host                 string `yaml:"host"`
+		PortSsh              int    `yaml:"port.ssh,omitempty"`
+		Bind                 string `yaml:"bind,omitempty"`
+		PrometheusPort       int    `yaml:"prometheus_port,omitempty"`
+		GrafanaPort          int    `yaml:"grafana_port,omitempty"`
+		GrafanaAdminUser     string `yaml:"grafana_admin_user,omitempty"`
+		GrafanaAdminPassword string `yaml:"grafana_admin_password,omitempty"`
+		Retention            string `yaml:"retention,omitempty"`
+		// NodeExporter controls whether node_exporter is installed on
+		// every master/volume/filer host (pointer so unset defaults to true).
+		NodeExporter *bool `yaml:"node_exporter,omitempty"`
 	}
 )
+
+// Default ports / values for the monitoring stack.
+const (
+	DefaultPrometheusPort   = 9090
+	DefaultGrafanaPort      = 3000
+	DefaultMonitoringBind   = "127.0.0.1"
+	DefaultGrafanaAdminUser = "admin"
+	DefaultPromRetention    = "15d"
+)
+
+// EffectiveBind returns the configured bind address or the default.
+func (m *MonitoringSpec) EffectiveBind() string {
+	if strings.TrimSpace(m.Bind) == "" {
+		return DefaultMonitoringBind
+	}
+	return m.Bind
+}
+
+// EffectivePrometheusPort returns the configured Prometheus port or the default.
+func (m *MonitoringSpec) EffectivePrometheusPort() int {
+	if m.PrometheusPort == 0 {
+		return DefaultPrometheusPort
+	}
+	return m.PrometheusPort
+}
+
+// EffectiveGrafanaPort returns the configured Grafana port or the default.
+func (m *MonitoringSpec) EffectiveGrafanaPort() int {
+	if m.GrafanaPort == 0 {
+		return DefaultGrafanaPort
+	}
+	return m.GrafanaPort
+}
+
+// EffectiveGrafanaAdminUser returns the configured admin user or the default.
+func (m *MonitoringSpec) EffectiveGrafanaAdminUser() string {
+	if strings.TrimSpace(m.GrafanaAdminUser) == "" {
+		return DefaultGrafanaAdminUser
+	}
+	return m.GrafanaAdminUser
+}
+
+// EffectiveRetention returns the configured Prometheus retention or the default.
+func (m *MonitoringSpec) EffectiveRetention() string {
+	if strings.TrimSpace(m.Retention) == "" {
+		return DefaultPromRetention
+	}
+	return m.Retention
+}
+
+// InstallNodeExporter reports whether node_exporter should be installed
+// on every host (default true when unset).
+func (m *MonitoringSpec) InstallNodeExporter() bool {
+	return m.NodeExporter == nil || *m.NodeExporter
+}
+
+// promDurationRe matches a Prometheus duration as accepted by
+// --storage.tsdb.retention.time (model.ParseDuration): number+unit tokens in
+// descending unit order (y, w, d, h, m, s, ms). Mirrors Prometheus's own regex
+// so a bad monitoring.retention is caught here, not at Prometheus startup.
+var promDurationRe = regexp.MustCompile(`^(?:[0-9]+y)?(?:[0-9]+w)?(?:[0-9]+d)?(?:[0-9]+h)?(?:[0-9]+m)?(?:[0-9]+s)?(?:[0-9]+ms)?$`)
 
 // Validate validates the Specification and returns an error if invalid
 func (s *Specification) Validate() error {
@@ -96,6 +182,29 @@ func (s *Specification) Validate() error {
 	default:
 		return fmt.Errorf("global.ssh_host_key_check %q is invalid (want ignore, accept-new, or strict)",
 			s.GlobalOptions.SSHHostKeyCheck)
+	}
+
+	if mon := s.Monitoring; mon != nil {
+		if strings.TrimSpace(mon.Host) == "" {
+			return fmt.Errorf("monitoring.host is required when monitoring is configured")
+		}
+		// An empty Grafana admin password is a real security risk and leaves
+		// grafana.ini with a blank credential; require it explicitly.
+		if strings.TrimSpace(mon.GrafanaAdminPassword) == "" {
+			return fmt.Errorf("monitoring.grafana_admin_password is required when monitoring is configured")
+		}
+		for label, p := range map[string]int{
+			"monitoring.port.ssh":        mon.PortSsh,
+			"monitoring.prometheus_port": mon.PrometheusPort,
+			"monitoring.grafana_port":    mon.GrafanaPort,
+		} {
+			if p < 0 || p > 65535 {
+				return fmt.Errorf("%s %d is out of range (0-65535)", label, p)
+			}
+		}
+		if r := strings.TrimSpace(mon.Retention); r != "" && !promDurationRe.MatchString(r) {
+			return fmt.Errorf("monitoring.retention %q is not a valid Prometheus duration (e.g. 15d, 6h, 1y)", mon.Retention)
+		}
 	}
 
 	return nil

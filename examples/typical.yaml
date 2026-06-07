@@ -110,3 +110,22 @@ worker_servers:
     admin: 10.0.0.61:23646
   - ip: 10.0.0.72
     admin: 10.0.0.61:23646
+
+# Observability -------------------------------------------------------------
+#
+# Declaring this block makes `cluster deploy` stand up the full stack:
+# node_exporter on every master/volume/filer host, plus Prometheus and
+# Grafana on the monitoring host, with the bundled SeaweedFS dashboard
+# pre-loaded. Here it is co-located on the admin host (off the data path);
+# use a dedicated host for a busier cluster. Grafana binds to localhost by
+# default — reach it over an SSH tunnel (see the README).
+
+monitoring:
+  host: 10.0.0.61
+  bind: 127.0.0.1
+  grafana_admin_user: admin
+  grafana_admin_password: CHANGE_ME
+  # prometheus_port: 9090     # optional
+  # grafana_port: 3000        # optional
+  # retention: 15d            # optional Prometheus retention
+  # node_exporter: true       # optional (default true)

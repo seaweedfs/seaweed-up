@@ -31,8 +31,8 @@ func newClusterPrometheusConfigCmd() *cobra.Command {
 		Use:   "prometheus-config [cluster-name]",
 		Short: "Print a Prometheus scrape_configs snippet for the cluster",
 		Long: `Render a Prometheus scrape_configs YAML snippet covering all SeaweedFS
-components (masters, volumes, filers) and node_exporter for every host in
-the cluster specification.`,
+components (masters, volumes, filers) and node_exporter on every host
+running one of them.`,
 		Example: `  seaweed-up cluster prometheus-config -f production.yaml
   seaweed-up cluster prometheus-config prod-cluster -f production.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -118,9 +118,9 @@ func newClusterNodeExporterInstallCmd() *cobra.Command {
 	opts := &ObservabilityOptions{SSHPort: 22}
 	cmd := &cobra.Command{
 		Use:   "install [cluster-name]",
-		Short: "Install node_exporter on every host in the cluster",
+		Short: "Install node_exporter on every master/volume/filer host",
 		Long: fmt.Sprintf(`Install the pinned node_exporter release (v%s) on every unique
-host referenced by the cluster specification and expose it on :%d as a
+host running a master, volume, or filer and expose it on :%d as a
 systemd service.`, observability.NodeExporterVersion, observability.NodeExporterPort),
 		Example: `  seaweed-up cluster node-exporter install -f production.yaml
   seaweed-up cluster node-exporter install prod-cluster -f production.yaml`,
@@ -206,7 +206,7 @@ func runNodeExporterInstall(cmd *cobra.Command, s *spec.Specification, opts *Obs
 			mu.Unlock()
 			addr := fmt.Sprintf("%s:%d", h.IP, h.SSHPort)
 			err := operator.ExecuteRemote(addr, opts.User, opts.IdentityFile, "", func(op operator.CommandOperator) error {
-				return observability.InstallNodeExporter(op)
+				return observability.InstallNodeExporter(op, opts.User, "")
 			})
 			if err != nil {
 				mu.Lock()

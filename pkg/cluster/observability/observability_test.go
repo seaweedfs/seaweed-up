@@ -63,7 +63,7 @@ func TestRenderPromConfigGolden(t *testing.T) {
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "10.0.0.3:9325"
+          - "10.0.0.3:9324"
         labels:
           cluster: "golden"
   - job_name: "golden-filer"
@@ -93,6 +93,22 @@ func TestRenderPromConfigGolden(t *testing.T) {
 func TestRenderPromConfigNilReturnsEmpty(t *testing.T) {
 	if RenderPromConfig(nil) != "" {
 		t.Error("expected empty string for nil spec")
+	}
+}
+
+// Two volumes co-located on one host must scrape on distinct ports — the
+// reconciled per-host-unique assignment, not a single per-component default.
+// This is the standalone-render path (no prior deploy-time assignment).
+func TestRenderPromConfigCoLocatedDistinctPorts(t *testing.T) {
+	s := &spec.Specification{
+		VolumeServers: []*spec.VolumeServerSpec{
+			{Ip: "10.0.0.9", Port: 8080},
+			{Ip: "10.0.0.9", Port: 8081},
+		},
+	}
+	got := RenderPromConfig(s)
+	if !strings.Contains(got, "10.0.0.9:9324") || !strings.Contains(got, "10.0.0.9:9325") {
+		t.Errorf("expected co-located volumes on distinct ports 9324 and 9325:\n%s", got)
 	}
 }
 
