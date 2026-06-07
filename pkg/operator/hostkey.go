@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -8,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/mitchellh/go-homedir"
-	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -98,7 +98,7 @@ func knownHostsVerifier(acceptNew bool) (ssh.HostKeyCallback, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return nil, fmt.Errorf("create ssh dir: %w", err)
 		}
-		f, err := os.OpenFile(path, os.O_CREATE, 0o600)
+		f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("create known_hosts: %w", err)
 		}
@@ -122,18 +122,39 @@ func knownHostsVerifier(acceptNew bool) (ssh.HostKeyCallback, error) {
 		// — learn it. A non-empty Want means the presented key differs
 		// from a recorded one (possible MITM); accept-new must still
 		// reject that.
-		var keyErr *knownhosts.KeyError
-		if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
-			return appendKnownHost(path, hostname, remote, key)
+		if isUnknownHost(err) {
+			return learnHost(path, hostname, remote, key)
 		}
 		return err
 	}, nil
 }
 
-// appendKnownHost records a newly-seen host key in the known_hosts file.
-func appendKnownHost(path, hostname string, remote net.Addr, key ssh.PublicKey) error {
+// isUnknownHost reports whether err is a knownhosts "host not found"
+// error (as opposed to a key mismatch, which carries a non-empty Want).
+func isUnknownHost(err error) bool {
+	var keyErr *knownhosts.KeyError
+	return errors.As(err, &keyErr) && len(keyErr.Want) == 0
+}
+
+// learnHost records a newly-seen host key in known_hosts. It re-checks
+// the file while holding knownHostsWriteMu to close the TOCTOU window
+// between the verifier snapshot and the append: if a concurrent handshake
+// recorded the same key first it is a no-op, and if a *different* key was
+// recorded in the meantime the mismatch is returned (rejected) rather
+// than appended.
+func learnHost(path, hostname string, remote net.Addr, key ssh.PublicKey) error {
 	knownHostsWriteMu.Lock()
 	defer knownHostsWriteMu.Unlock()
+
+	// Re-verify against the current file under the lock.
+	if verify, err := knownhosts.New(path); err == nil {
+		switch verr := verify(hostname, remote, key); {
+		case verr == nil:
+			return nil // another goroutine already learned this exact key
+		case !isUnknownHost(verr):
+			return verr // a different key was recorded first -> reject
+		}
+	}
 
 	addrs := []string{knownhosts.Normalize(hostname)}
 	// Record the remote IP too, but only when it is meaningful. Bastion

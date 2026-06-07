@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -84,6 +85,45 @@ func TestKnownHostsVerifier_AcceptNew(t *testing.T) {
 	// A CHANGED key for a known host must be rejected even under accept-new.
 	if err := cb2("10.0.0.2:22", remote, testHostKey(t)); err == nil {
 		t.Fatal("a changed host key must be rejected under accept-new")
+	}
+}
+
+// TestKnownHostsVerifier_AcceptNew_ConcurrentSameHost locks down the
+// TOCTOU fix: when many first-time handshakes to the SAME host race with
+// DIFFERENT keys, exactly one key must be trusted and the rest rejected.
+func TestKnownHostsVerifier_AcceptNew_ConcurrentSameHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	old := knownHostsFile
+	knownHostsFile = path
+	t.Cleanup(func() { knownHostsFile = old })
+
+	cb, err := knownHostsVerifier(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	remote := &net.TCPAddr{IP: net.ParseIP("10.0.0.9"), Port: 22}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	success := 0
+	for i := 0; i < n; i++ {
+		key := testHostKey(t) // distinct key per goroutine
+		wg.Add(1)
+		go func(k ssh.PublicKey) {
+			defer wg.Done()
+			if cb("10.0.0.9:22", remote, k) == nil {
+				mu.Lock()
+				success++
+				mu.Unlock()
+			}
+		}(key)
+	}
+	wg.Wait()
+
+	if success != 1 {
+		t.Fatalf("expected exactly 1 trusted key for the same host under a race, got %d", success)
 	}
 }
 
