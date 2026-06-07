@@ -152,8 +152,17 @@ func info(message string) {
 
 func (m *Manager) sudo(op operator.CommandOperator, cmd string) error {
 	info("[execute] " + cmd)
-	if m.sudoPass == "" {
+	// Already root: run the command directly (the box may not even have
+	// sudo installed).
+	if m.User == "root" {
 		return op.Execute(cmd)
+	}
+	// Non-root without a sudo password: assume passwordless (NOPASSWD)
+	// sudo and elevate non-interactively. Running bare here was a bug —
+	// privileged commands (mkdir under /, writes to /etc/seaweed, ...)
+	// would fail with permission denied for a normal login user.
+	if m.sudoPass == "" {
+		return op.Execute("sudo -n " + cmd)
 	}
 	defer fmt.Println()
 	return op.Execute(fmt.Sprintf("echo %s | sudo -S %s", shellSingleQuote(m.sudoPass), cmd))
