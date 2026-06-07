@@ -221,7 +221,7 @@ providers:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false
 `
-	unit := fmt.Sprintf(`[Unit]
+	unit := `[Unit]
 Description=Grafana
 After=network-online.target
 Wants=network-online.target
@@ -235,7 +235,7 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`)
+`
 
 	return strings.Join([]string{
 		"set -e",
