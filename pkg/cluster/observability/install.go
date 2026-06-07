@@ -82,7 +82,9 @@ func runScript(op operator.CommandOperator, sshUser, sudoPass, script string) er
 	case sudoPass == "":
 		cmd = fmt.Sprintf("echo %s | base64 -d | sudo -n sh", enc)
 	default:
-		cmd = fmt.Sprintf("(echo %s; echo %s | base64 -d) | sudo -S -p '' sh", shellQuote(sudoPass), enc)
+		// printf (not echo) emits the password so one starting with '-'
+		// isn't swallowed as an echo flag.
+		cmd = fmt.Sprintf("(printf '%%s\\n' %s; echo %s | base64 -d) | sudo -S -p '' sh", shellQuote(sudoPass), enc)
 	}
 	return op.Execute(cmd)
 }
