@@ -553,6 +553,7 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		fmt.Printf("  Masters: %d\n", len(clusterSpec.MasterServers))
 		fmt.Printf("  Volumes: %d\n", len(clusterSpec.VolumeServers))
 		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
+		fmt.Printf("  S3:      %d\n", len(clusterSpec.S3Servers))
 		fmt.Printf("  Admins:  %d\n", len(clusterSpec.AdminServers))
 		fmt.Printf("  Workers: %d\n", len(clusterSpec.WorkerServers))
 		fmt.Printf("  Rollback on failure: %v\n", opts.RollbackOnFailure)
