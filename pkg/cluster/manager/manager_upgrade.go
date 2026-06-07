@@ -166,6 +166,15 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		info(fmt.Sprintf("Rolling back %s to version %q", t.describe, prev))
 		m.Version = prev
+		// Clear any resolved dev asset so the rollback installs the concrete
+		// previous version through the versioned path. Without this, m.devAsset
+		// (set when we resolved the dev build at the top of UpgradeCluster)
+		// would still drive install.sh down the dev path and "roll back" to the
+		// very build we're backing out of. prev is the probed pre-upgrade
+		// release and never "dev", so this is effectively a clear.
+		if err := m.resolveDevAsset(prev); err != nil {
+			return fmt.Errorf("%s failed (%v); resolving rollback target %q: %w", t.describe, cause, prev, err)
+		}
 		if rbErr := m.upgradeOneHost(specification, masters, t); rbErr != nil {
 			return fmt.Errorf("%s failed (%v); rollback to %q also failed: %w", t.describe, cause, prev, rbErr)
 		}
