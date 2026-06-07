@@ -96,12 +96,18 @@ func TestGrafanaInstallScript(t *testing.T) {
 	})
 	for _, want := range []string{
 		"grafana-" + GrafanaVersion + ".linux-amd64",
+		// The tarball extracts to grafana-<version> (no leading "v"); the mv
+		// must target that exact dir or the install fails.
+		"mv grafana-" + GrafanaVersion + " /opt/grafana",
 		"/var/lib/grafana/dashboards/seaweedfs.json",
 		"systemctl restart grafana.service",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("grafana script missing %q", want)
 		}
+	}
+	if strings.Contains(s, "grafana-v") {
+		t.Errorf("grafana script must not reference a v-prefixed dir: %s", s)
 	}
 	files := decodedFiles(s)
 	for _, want := range []string{

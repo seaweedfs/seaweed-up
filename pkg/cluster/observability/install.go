@@ -180,7 +180,9 @@ func GrafanaInstallScript(goArch string, dashboard []byte, opts GrafanaOptions) 
 	if promURL == "" {
 		promURL = "http://127.0.0.1:9090"
 	}
-	dir := fmt.Sprintf("grafana-v%s", GrafanaVersion)
+	// The official Grafana release tarball extracts to grafana-<version>
+	// (no leading "v"), e.g. grafana-11.6.6.
+	dir := fmt.Sprintf("grafana-%s", GrafanaVersion)
 	url := fmt.Sprintf("https://dl.grafana.com/oss/release/grafana-%s.linux-%s.tar.gz",
 		GrafanaVersion, goArch)
 
