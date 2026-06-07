@@ -25,10 +25,20 @@ func decodedFiles(script string) string {
 }
 
 // recordOp records executed commands without opening any SSH session.
-type recordOp struct{ executed []string }
+type recordOp struct {
+	executed []string
+	// archOut overrides the `uname -m` reply; defaults to x86_64 when empty.
+	archOut string
+}
 
-func (r *recordOp) Execute(cmd string) error               { r.executed = append(r.executed, cmd); return nil }
-func (r *recordOp) Output(cmd string) ([]byte, error)      { r.executed = append(r.executed, cmd); return []byte("x86_64\n"), nil }
+func (r *recordOp) Execute(cmd string) error { r.executed = append(r.executed, cmd); return nil }
+func (r *recordOp) Output(cmd string) ([]byte, error) {
+	r.executed = append(r.executed, cmd)
+	if r.archOut != "" {
+		return []byte(r.archOut), nil
+	}
+	return []byte("x86_64\n"), nil
+}
 func (r *recordOp) Upload(io.Reader, string, string) error { return nil }
 func (r *recordOp) UploadFile(string, string, string) error {
 	return nil
@@ -120,6 +130,27 @@ func TestGrafanaInstallScript(t *testing.T) {
 	} {
 		if !strings.Contains(files, want) {
 			t.Errorf("grafana embedded files missing %q", want)
+		}
+	}
+}
+
+func TestRemoteGoArch(t *testing.T) {
+	cases := map[string]string{
+		"x86_64\n":  "amd64",
+		"aarch64\n": "arm64",
+		"arm64\n":   "arm64",
+		"armv7l\n":  "armv7",
+		"armv6l\n":  "armv7",
+		"i686\n":    "amd64", // unknown -> amd64 fallback
+	}
+	for in, want := range cases {
+		op := &recordOp{archOut: in}
+		got, err := remoteGoArch(op)
+		if err != nil {
+			t.Fatalf("remoteGoArch(%q): %v", in, err)
+		}
+		if got != want {
+			t.Errorf("remoteGoArch(%q) = %q, want %q", strings.TrimSpace(in), got, want)
 		}
 	}
 }

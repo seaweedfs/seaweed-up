@@ -277,6 +277,10 @@ func remoteGoArch(op operator.CommandOperator) (string, error) {
 	switch strings.TrimSpace(string(arch)) {
 	case "aarch64", "arm64":
 		return "arm64", nil
+	case "armv7l", "armv6l":
+		// node_exporter, Prometheus and Grafana all publish linux-armv7
+		// tarballs; map 32-bit ARM there rather than mislabelling amd64.
+		return "armv7", nil
 	default:
 		return "amd64", nil
 	}
