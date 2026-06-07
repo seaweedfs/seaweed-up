@@ -563,13 +563,9 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		}
 	}
 
-	// Probe the currently-running cluster version so that rollback has a target
-	// to restore to. If probing fails we proceed with previousVersion="" and
-	// rollback will be disabled for this run.
-	//
-	// Behind a bastion the master's address is usually unreachable from the
-	// control machine, so probe over SSH (curl on the node itself) which rides
-	// the jump-host tunnel; otherwise issue a direct HTTP request.
+	// Probe the running version so rollback has a target; failure just disables
+	// rollback. Behind a bastion, probe over SSH (the node's address isn't
+	// reachable from here); otherwise issue a direct HTTP request.
 	probeVersion := func() (string, error) {
 		if b := clusterSpec.GlobalOptions.Bastion; b != nil && b.Host != "" {
 			return probeCurrentClusterVersionViaSSH(clusterSpec, mgr.User, mgr.IdentityFile, "", opts.InsecureSkipTLSVerify)
@@ -758,10 +754,8 @@ func probeCurrentClusterVersion(clusterSpec *spec.Specification, insecureSkipTLS
 }
 
 // probeCurrentClusterVersionViaSSH is the bastion-friendly counterpart of
-// probeCurrentClusterVersion: instead of reaching the master's (often private)
-// address directly, it SSHes to each master and runs curl against
-// localhost:<master port>, so the probe rides the same jump-host tunnel as the
-// rest of the upgrade. Used whenever a bastion is configured.
+// probeCurrentClusterVersion: it SSHes to each master and curls the master's
+// advertised address from the node, so the probe rides the jump-host tunnel.
 func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, identityFile, sudoPass string, insecureSkipTLSVerify bool) (string, error) {
 	kFlag := ""
 	if insecureSkipTLSVerify {
@@ -769,12 +763,9 @@ func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, ide
 	}
 	return probeClusterVersionWith(clusterSpec, func(ms *spec.MasterServerSpec, scheme, path string) ([]byte, string, error) {
 		sshAddr := net.JoinHostPort(ms.Ip, strconv.Itoa(nonZero(ms.PortSsh, 22)))
-		// weed binds to the advertised -ip, so curl the node's own address
-		// (not loopback, which is refused unless it binds 0.0.0.0).
+		// Advertised Ip:port, not loopback — weed binds to its -ip.
 		probeURL := fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(ms.Ip, strconv.Itoa(ms.Port)), path)
-		// -i includes response headers so parseClusterVersion can fall back
-		// to the Server header; -w writes the HTTP status on its own trailer
-		// line so a non-2xx response is reported as an error.
+		// -i for headers (Server-header fallback); -w trailer carries the status.
 		cmd := fmt.Sprintf("curl -sS %s-i -m 5 -w '\\n__STATUS__:%%{http_code}' %s 2>/dev/null", kFlag, shellSingleQuote(probeURL))
 		var out []byte
 		err := operator.ExecuteRemote(sshAddr, user, identityFile, sudoPass, func(op operator.CommandOperator) error {
@@ -793,12 +784,9 @@ func probeCurrentClusterVersionViaSSH(clusterSpec *spec.Specification, user, ide
 	})
 }
 
-// parseCurlResponse splits `curl -i` output into the final response's status
-// code, Server header, and body. curl may print preface header blocks (a
-// 100-Continue or a redirect), so each leading "HTTP/..." block is consumed in
-// turn and the last one wins. The trailing "__STATUS__:<code>" sentinel written
-// by curl's -w is the authoritative status (curl's -i status line may be the
-// 100-Continue preface) and is stripped from the returned body.
+// parseCurlResponse splits `curl -i` output into status, Server header, and
+// body. Leading "HTTP/..." header blocks (e.g. a 100-Continue preface) are
+// stripped, and the "__STATUS__:<code>" trailer from -w is the authoritative status.
 func parseCurlResponse(raw []byte) (status int, serverHeader string, body []byte) {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if i := strings.LastIndex(text, "\n__STATUS__:"); i >= 0 {

@@ -35,15 +35,12 @@ type upgradeTarget struct {
 	index     int
 	ip        string
 	portSsh   int
-	// healthURL is the HTTP endpoint used for the post-upgrade health probe.
-	// When empty, the post-upgrade gate falls back to a `systemctl is-active`
-	// check on the unit (for components with no HTTP listener, e.g. workers).
+	// healthURL is the post-upgrade HTTP probe; empty falls back to a
+	// `systemctl is-active` gate (components with no HTTP listener, e.g. workers).
 	healthURL string
-	// healthCodes is the shell case-glob of HTTP status codes accepted as
-	// healthy (e.g. "2??", "2??|3??"). Empty means the default "2??".
+	// healthCodes is the case-glob of accepted HTTP statuses; "" means "2??".
 	healthCodes string
-	// describe is a human-readable identifier for logs/errors.
-	describe string
+	describe    string
 }
 
 // componentHooks bundles the per-component knobs used by upgradeOneHost so
@@ -62,10 +59,8 @@ type componentHooks struct {
 	// (e.g. creating volume -dir paths) before deployComponentInstance runs.
 	// May be nil.
 	prepareRemote func(op operator.CommandOperator) error
-	// extras, when non-nil, returns the component-specific extra config files
-	// (e.g. s3.json) to upload alongside the rendered options. It is called
-	// fresh on every deploy attempt because each extra carries a single-use
-	// Reader the retry loop would otherwise exhaust. May be nil.
+	// extras returns component-specific config files (e.g. s3.json) to upload.
+	// Called fresh per attempt since each extra holds a single-use Reader. May be nil.
 	extras func() ([]extraConfigFile, error)
 }
 
@@ -144,12 +139,8 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		info(fmt.Sprintf("Rolling back %s to version %q", t.describe, prev))
 		m.Version = prev
-		// Clear any resolved dev asset so the rollback installs the concrete
-		// previous version through the versioned path. Without this, m.devAsset
-		// (set when we resolved the dev build at the top of UpgradeCluster)
-		// would still drive install.sh down the dev path and "roll back" to the
-		// very build we're backing out of. prev is the probed pre-upgrade
-		// release and never "dev", so this is effectively a clear.
+		// Re-resolve against prev (never "dev") to clear m.devAsset, else the
+		// rollback would reinstall the dev build via install.sh's dev path.
 		if err := m.resolveDevAsset(prev); err != nil {
 			return fmt.Errorf("%s failed (%v); resolving rollback target %q: %w", t.describe, cause, prev, err)
 		}
@@ -196,19 +187,15 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 	return nil
 }
 
-// buildUpgradeTargets returns the ordered list of instances a rolling upgrade
-// touches: volume -> filer -> master (storage core, masters next-to-last to
-// preserve quorum) -> s3 -> admin -> worker (clients/gateways, after the core
-// they depend on; workers last since they connect to the admin).
+// buildUpgradeTargets lists the instances a rolling upgrade touches, in
+// dependency order: volume -> filer -> master (masters next-to-last for quorum)
+// -> s3 -> admin -> worker (workers last; they connect to the admin).
 //
-// Every health probe runs on the node itself over SSH (see
-// waitForHealthyViaSSH), so healthURL targets the node's own advertised Ip:port
-// — weed binds its HTTP listener to the advertised -ip (e.g. 10.0.0.1), so
-// loopback would be refused on hosts that don't bind 0.0.0.0. Per-component
-// liveness differs: volume/filer/master answer 2xx on their status endpoints;
-// the admin root 307-redirects to /login (accept 2xx|3xx); the S3 API answers
-// 403 unauthenticated but /status is 2xx; workers expose no HTTP listener, so
-// healthURL is left empty and the caller falls back to `systemctl is-active`.
+// healthURL is the node's advertised Ip:port (not loopback) because the probe
+// runs on the node over SSH and weed binds to the advertised -ip. Liveness
+// codes differ per component: admin root 307-redirects (2xx|3xx), s3's API 403s
+// so we probe /status (2xx), and workers have no HTTP port (empty URL -> the
+// caller's systemctl is-active gate).
 func buildUpgradeTargets(specification *spec.Specification, scheme string) []upgradeTarget {
 	var targets []upgradeTarget
 	for i, v := range specification.VolumeServers {
@@ -373,13 +360,9 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
 		})
 	}
-	// Retry the whole on-node sequence a few times. SCP/SSH multiplexed
-	// through a bastion can drop a channel mid-transfer and surface a
-	// transient EOF (observed once mid-rollout). Every step here is
-	// idempotent — config rewrite, mkdir -p, content-skipping install,
-	// restart — so a fresh attempt (ExecuteRemote re-dials the target, and
-	// the bastion too if its shared connection died) is safe and almost
-	// always clears a transient blip.
+	// Retry on transient SSH/SCP errors (a bastion can drop a multiplexed
+	// channel mid-transfer). Every step is idempotent and ExecuteRemote
+	// re-dials, so a fresh attempt is safe.
 	const attempts = 3
 	var lastErr error
 	for i := 0; i < attempts; i++ {
@@ -393,20 +376,10 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 	return lastErr
 }
 
-// waitForHealthyViaSSH polls probeURL from the node itself (over SSH) until it
-// returns an accepted status (codes, e.g. "2??" or "2??|3??") or the timeout
-// elapses. Running the probe on the node — rather than issuing an HTTP request
-// from the control machine — means it tunnels through the bastion exactly like
-// every other operation, so it works even when the node's (often private)
-// service address is unreachable from the laptop running the upgrade.
-//
-// The poll loop runs inside a single SSH session (one shell loop) rather than
-// one SSH round-trip per attempt, so a slow-starting service doesn't cost a
-// handshake per second.
-//
-// Pass insecureSkipTLSVerify=true to add curl's -k for self-signed dev
-// clusters; callers must opt in explicitly via --insecure-skip-tls-verify.
-//
+// waitForHealthyViaSSH curls probeURL from the node itself (over SSH, so it
+// tunnels through the bastion to the node's private address) until it returns a
+// status matching codes ("2??", "2??|3??", …) or the timeout elapses. The poll
+// loop runs in a single SSH session. insecureSkipTLSVerify adds curl -k.
 // TODO: use cluster CA once tls bootstrap PR lands.
 func (m *Manager) waitForHealthyViaSSH(sshAddr, probeURL, codes string, timeout, interval time.Duration, insecureSkipTLSVerify bool) error {
 	if probeURL == "" {
@@ -427,10 +400,7 @@ func (m *Manager) waitForHealthyViaSSH(sshAddr, probeURL, codes string, timeout,
 	if insecureSkipTLSVerify {
 		kFlag = "-k "
 	}
-	// POSIX-sh poll loop: curl the endpoint until it answers an accepted
-	// status or the deadline passes. `codes` is a case-glob alternation (e.g.
-	// "2??" or "2??|3??"); curl errors (e.g. connection refused while the unit
-	// is still starting) are swallowed to "000" so the loop keeps trying.
+	// curl errors (e.g. connection-refused while starting) collapse to "000".
 	script := `end=$(( $(date +%s) + __SECS__ ))
 last=000
 while [ "$(date +%s)" -lt "$end" ]; do
@@ -459,11 +429,9 @@ exit 1`
 	return nil
 }
 
-// waitForServiceActiveViaSSH polls `systemctl is-active <unit>` on the node
-// until it reports "active" or the timeout elapses. It is the post-upgrade gate
-// for components that expose no HTTP listener (workers): there's nothing to
-// curl, so the best available liveness signal is that systemd kept the unit up
-// (a crash-looping unit reports activating/failed and never settles on active).
+// waitForServiceActiveViaSSH polls `systemctl is-active <unit>` until "active"
+// or timeout. It's the gate for components with no HTTP listener (workers);
+// a crash-looping unit never settles on active.
 func (m *Manager) waitForServiceActiveViaSSH(sshAddr, unit string, timeout, interval time.Duration) error {
 	secs := int(timeout.Seconds())
 	if secs < 1 {
