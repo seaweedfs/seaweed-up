@@ -79,6 +79,14 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 	m.prepare(specification)
 
+	// When upgrading to the rolling "dev" tag, resolve it to the newest
+	// concrete dated build now (keyed on targetVersion, not m.Version which
+	// still holds the probed current version for rollback). The resolved
+	// asset + its build id drive the download and content-based skip check.
+	if err := m.resolveDevAsset(targetVersion); err != nil {
+		return fmt.Errorf("resolve dev build: %w", err)
+	}
+
 	// Snapshot the currently-deployed version. runClusterUpgrade is expected to
 	// populate m.Version with the cluster's current (pre-upgrade) version by
 	// probing a master host. If it could not probe, m.Version will be empty and

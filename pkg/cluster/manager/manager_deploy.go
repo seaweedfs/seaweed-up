@@ -182,6 +182,11 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	}
 	m.prepare(specification)
 
+	// Resolve the rolling "dev" build to a concrete dated asset, if asked.
+	if err := m.resolveDevAsset(m.Version); err != nil {
+		return fmt.Errorf("resolve dev build: %w", err)
+	}
+
 	if m.HostPrep {
 		if err := m.PrepareAllHosts(specification); err != nil {
 			return err
@@ -553,6 +558,17 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		"ReleaseRepo":       releaseRepo,
 		"AssetPrefix":       assetPrefix,
 		"FullSuffix":        fullSuffix,
+		// Rolling "dev" build fields. Empty unless m.Version == "dev" and
+		// the asset was resolved; install.sh takes its dev code path only
+		// when DevAssetURL is non-empty.
+		"DevAssetURL": "",
+		"DevMd5URL":   "",
+		"DevBuildID":  "",
+	}
+	if m.devAsset != nil {
+		data["DevAssetURL"] = m.devAsset.DownloadURL
+		data["DevMd5URL"] = m.devAsset.Md5URL
+		data["DevBuildID"] = m.devAsset.BuildID
 	}
 
 	// Configure proxy if specified
