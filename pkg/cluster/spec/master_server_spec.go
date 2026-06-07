@@ -29,7 +29,7 @@ func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.B
 	addToBufferInt(buf, "port.grpc", masterSpec.PortGrpc, 10000+masterSpec.Port)
 	addToBufferInt(buf, "volumeSizeLimitMB", masterSpec.VolumeSizeLimitMB, 30000)
 	addToBuffer(buf, "defaultReplication", masterSpec.DefaultReplication)
-
+	addToBufferInt(buf, "metricsPort", masterSpec.MetricsPort, 0)
 }
 
 func addToBuffer(buf *bytes.Buffer, name, value string) {
