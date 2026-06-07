@@ -75,6 +75,10 @@ func TestValidate_Monitoring(t *testing.T) {
 		{"blank grafana password", &MonitoringSpec{Host: "10.0.0.1", GrafanaAdminPassword: "  "}, true},
 		{"bad grafana port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", GrafanaPort: 70000}, true},
 		{"bad prometheus port", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", PrometheusPort: -1}, true},
+		{"good retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30d"}, false},
+		{"good compound retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "1y6h"}, false},
+		{"bad retention unit", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30x"}, true},
+		{"bare number retention", &MonitoringSpec{Host: "h", GrafanaAdminPassword: "s3cret", Retention: "30"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

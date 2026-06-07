@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -146,6 +147,12 @@ func (m *MonitoringSpec) InstallNodeExporter() bool {
 	return m.NodeExporter == nil || *m.NodeExporter
 }
 
+// promDurationRe matches a Prometheus duration as accepted by
+// --storage.tsdb.retention.time (model.ParseDuration): number+unit tokens in
+// descending unit order (y, w, d, h, m, s, ms). Mirrors Prometheus's own regex
+// so a bad monitoring.retention is caught here, not at Prometheus startup.
+var promDurationRe = regexp.MustCompile(`^(?:[0-9]+y)?(?:[0-9]+w)?(?:[0-9]+d)?(?:[0-9]+h)?(?:[0-9]+m)?(?:[0-9]+s)?(?:[0-9]+ms)?$`)
+
 // Validate validates the Specification and returns an error if invalid
 func (s *Specification) Validate() error {
 	if len(s.MasterServers) == 0 {
@@ -194,6 +201,9 @@ func (s *Specification) Validate() error {
 			if p < 0 || p > 65535 {
 				return fmt.Errorf("%s %d is out of range (0-65535)", label, p)
 			}
+		}
+		if r := strings.TrimSpace(mon.Retention); r != "" && !promDurationRe.MatchString(r) {
+			return fmt.Errorf("monitoring.retention %q is not a valid Prometheus duration (e.g. 15d, 6h, 1y)", mon.Retention)
 		}
 	}
 
