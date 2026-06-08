@@ -23,6 +23,10 @@ type (
 		//   "accept-new" - learn unknown hosts (TOFU), reject changed keys
 		//   "strict"     - host must already be in ~/.ssh/known_hosts
 		SSHHostKeyCheck string `yaml:"ssh_host_key_check,omitempty"`
+		// S3Config is a shared s3.json (IAM identities) inherited by every
+		// s3_servers entry that doesn't set its own — so the secret-bearing
+		// identity block lives in one place instead of being repeated per gateway.
+		S3Config map[string]interface{} `yaml:"s3_config,omitempty"`
 	}
 
 	// BastionSpec configures an SSH jump host that seaweed-up tunnels
