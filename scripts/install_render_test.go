@@ -60,7 +60,7 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	})
 	for _, want := range []string{
 		"BINARY=weed-volume",
-		"weed-volume-${OS}-${SUFFIX}.tar.gz",                         // versioned per-arch asset
+		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",             // versioned per-arch release asset
 		".weed-volume-version",                                       // version marker
 		"ExecStart=${BIN_DIR}/${BINARY} -options=",                   // no `weed volume` subcommand / go globals
 	} {

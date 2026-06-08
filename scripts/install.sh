@@ -122,7 +122,9 @@ download_and_install() {
     info "weed-volume ${SEAWEED_VERSION} already installed, skipping"
   else
     OS="linux"
-    RUST_ASSET="weed-volume-${OS}-${SUFFIX}.tar.gz"
+    # Matches the rust release asset (rust_binaries_release.yml): the
+    # large-disk variant tarball holds a binary named weed-volume-large-disk.
+    RUST_ASSET="weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz"
     RUST_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${RUST_ASSET}"
     info "Downloading weed-volume ${SEAWEED_VERSION} (${RUST_ASSET})"
     curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"
@@ -130,7 +132,7 @@ download_and_install() {
     info "Verifying weed-volume ${SEAWEED_VERSION}"
     md5Value=`cat "$TMP_DIR/${RUST_ASSET}.md5" | awk '{print $1}'`
     ( cd "$TMP_DIR" && echo "${md5Value}  ${RUST_ASSET}" | md5sum -c )
-    rustBin=`tar tzf "$TMP_DIR/${RUST_ASSET}" | grep -E '(^|/)weed-volume$' | head -1`
+    rustBin=`tar tzf "$TMP_DIR/${RUST_ASSET}" | grep -E '(^|/)weed-volume(-large-disk)?$' | head -1`
     if [ -z "$rustBin" ]; then fatal "no weed-volume binary in ${RUST_ASSET}"; fi
     $SUDO tar xzf "$TMP_DIR/${RUST_ASSET}" -C "$TMP_DIR"
     $SUDO install -m 0755 "$TMP_DIR/${rustBin}" "${BIN_DIR}/${BINARY}"
