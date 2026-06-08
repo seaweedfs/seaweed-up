@@ -26,4 +26,13 @@ func TestSpecification_Validate_VolumeEngine(t *testing.T) {
 	if err := base("rusty").Validate(); err == nil {
 		t.Error("engine \"rusty\" should be rejected")
 	}
+
+	// A null volume_servers list item must be rejected, not panic.
+	nullEntry := &Specification{
+		MasterServers: []*MasterServerSpec{{Ip: "10.0.0.1"}},
+		VolumeServers: []*VolumeServerSpec{nil},
+	}
+	if err := nullEntry.Validate(); err == nil {
+		t.Error("a null volume_servers entry should be rejected")
+	}
 }
