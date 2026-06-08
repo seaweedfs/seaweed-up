@@ -535,6 +535,14 @@ func (m *Manager) prepare(specification *spec.Specification) {
 }
 
 func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {
+	return m.deployComponentBinary(op, component, componentInstance, "", cliOptions, extras...)
+}
+
+// deployComponentBinary is deployComponentInstance with an explicit volume
+// engine ("" / "go" / "weed" → Go weed; "rust" / "weed-volume" → the Rust
+// weed-volume binary). Only the volume deploy/upgrade paths pass a non-empty
+// engine; every other component installs the Go weed binary as before.
+func (m *Manager) deployComponentBinary(op operator.CommandOperator, component string, componentInstance string, engine string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {
 	info("Deploying " + componentInstance + "...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
@@ -566,9 +574,19 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 		fullSuffix = ""
 	}
 
+	// Rust volume servers install the standalone weed-volume binary; every
+	// other component (and Go volume servers) install weed.
+	rustVolume := engine == "rust" || engine == "weed-volume"
+	binary := "weed"
+	if rustVolume {
+		binary = "weed-volume"
+	}
+
 	data := map[string]interface{}{
 		"Component":         component,
 		"ComponentInstance": componentInstance,
+		"Binary":            binary,
+		"RustVolume":        rustVolume,
 		"ConfigDir":         m.confDir,
 		"DataDir":           m.dataDir,
 		"TmpDir":            dir,

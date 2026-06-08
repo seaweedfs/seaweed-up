@@ -67,6 +67,9 @@ type componentHooks struct {
 	// fresh on every deploy attempt because each extra carries a single-use
 	// Reader the retry loop would otherwise exhaust. May be nil.
 	extras func() ([]extraConfigFile, error)
+	// engine selects the volume binary ("" Go weed, "rust" weed-volume);
+	// empty for non-volume components.
+	engine string
 }
 
 // UpgradeCluster performs a rolling upgrade of the cluster to targetVersion.
@@ -276,6 +279,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			stop:          func() error { return m.StopVolumeServer(vs, t.index) },
 			writeConfig:   func(buf *bytes.Buffer) { vs.WriteToBuffer(masters, buf) },
 			prepareRemote: func(op operator.CommandOperator) error { return m.ensureVolumeFolders(op, vs) },
+			engine:        vs.Engine,
 		}
 	case "filer":
 		fs := specification.FilerServers[t.index]
@@ -367,7 +371,7 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 					return err
 				}
 			}
-			if err := m.deployComponentInstance(op, hooks.serviceName, componentInstance, &buf, extras...); err != nil {
+			if err := m.deployComponentBinary(op, hooks.serviceName, componentInstance, hooks.engine, &buf, extras...); err != nil {
 				return err
 			}
 			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))

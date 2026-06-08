@@ -123,6 +123,25 @@ global:
   ssh_host_key_check: accept-new   # ignore (default) | accept-new | strict
 ```
 
+## Rust volume server
+
+A volume server can run the standalone Rust `weed-volume` binary instead of
+the Go `weed volume`. Both register with the same masters, read the same
+options file, and share the on-disk format, so they coexist in one cluster —
+set `engine` per volume server:
+
+```yaml
+volume_servers:
+  - ip: 10.0.0.21          # Go weed volume (default)
+  - ip: 10.0.0.22
+    engine: rust           # standalone weed-volume binary
+```
+
+`engine` accepts `go`/`weed` (default) or `rust`/`weed-volume`. For the `rust`
+engine, seaweed-up downloads `weed-volume-linux-<arch>.tar.gz` (plus `.md5`)
+from the release for `--version`, so publish that asset alongside the `weed`
+tarballs.
+
 - `ignore` (default) — no verification; preserves historical behavior.
 - `accept-new` — trust-on-first-use: unknown hosts are learned and
   appended to `~/.ssh/known_hosts`, but a host whose key has *changed* is
