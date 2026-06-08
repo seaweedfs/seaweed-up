@@ -188,6 +188,15 @@ func (s *Specification) Validate() error {
 			s.GlobalOptions.SSHHostKeyCheck)
 	}
 
+	for i, v := range s.VolumeServers {
+		if v == nil {
+			return fmt.Errorf("volume_servers[%d] is null (yaml null list item?)", i)
+		}
+		if !ValidVolumeEngine(v.Engine) {
+			return fmt.Errorf("volume_servers[%d].engine %q is invalid (want go or rust)", i, v.Engine)
+		}
+	}
+
 	if mon := s.Monitoring; mon != nil {
 		if strings.TrimSpace(mon.Host) == "" {
 			return fmt.Errorf("monitoring.host is required when monitoring is configured")

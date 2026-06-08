@@ -92,7 +92,7 @@ func (m *Manager) DeployVolumeServer(masters []string, volumeServerSpec *spec.Vo
 			return err
 		}
 
-		return m.deployComponentInstance(op, component, componentInstance, &buf)
+		return m.deployComponentBinary(op, component, componentInstance, volumeServerSpec.Engine, &buf)
 
 	})
 }

@@ -41,7 +41,7 @@ setup_env() {
   SEAWEED_COMPONENT_INSTANCE_SERVICE_FILE=/etc/systemd/system/seaweed_${COMPONENT_INSTANCE}.service
 
   BIN_DIR=/usr/local/bin
-  BINARY=weed
+  BINARY={{.Binary}}
 
   PRE_INSTALL_HASHES=$(get_installed_hashes)
 
@@ -111,7 +111,36 @@ install_dependencies() {
 }
 
 download_and_install() {
-{{if .DevAssetURL}}
+{{if .RustVolume}}
+  # Rust volume server: install the standalone weed-volume binary from the
+  # release. Idempotency keys on a marker storing the installed version, since
+  # weed-volume's --version scheme differs from the SeaweedFS release tag.
+  MARKER="${BIN_DIR}/.weed-volume-version"
+  curID=""
+  [ -f "$MARKER" ] && curID=$(cat "$MARKER" 2>/dev/null)
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$curID" = "${SEAWEED_VERSION}" ]; then
+    info "weed-volume ${SEAWEED_VERSION} already installed, skipping"
+  else
+    OS="linux"
+    # Matches the rust release asset: the large-disk variant tarball holds a
+    # binary named weed-volume-large-disk. OSS publishes weed-volume_... from
+    # seaweedfs/seaweedfs; enterprise publishes weed-volume-enterprise_... from
+    # seaweedfs/artifactory (ReleaseOwner/ReleaseRepo already select the repo).
+    RUST_ASSET="weed-volume{{if .Enterprise}}-enterprise{{end}}_large_disk_${OS}_${SUFFIX}.tar.gz"
+    RUST_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${RUST_ASSET}"
+    info "Downloading weed-volume ${SEAWEED_VERSION} (${RUST_ASSET})"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"
+    curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}.md5" -sfL "${RUST_URL}.md5"
+    info "Verifying weed-volume ${SEAWEED_VERSION}"
+    md5Value=`cat "$TMP_DIR/${RUST_ASSET}.md5" | awk '{print $1}'`
+    ( cd "$TMP_DIR" && echo "${md5Value}  ${RUST_ASSET}" | md5sum -c )
+    rustBin=`tar tzf "$TMP_DIR/${RUST_ASSET}" | grep -E '(^|/)weed-volume(-large-disk)?$' | head -1`
+    if [ -z "$rustBin" ]; then fatal "no weed-volume binary in ${RUST_ASSET}"; fi
+    $SUDO tar xzf "$TMP_DIR/${RUST_ASSET}" -C "$TMP_DIR"
+    $SUDO install -m 0755 "$TMP_DIR/${rustBin}" "${BIN_DIR}/${BINARY}"
+    echo "${SEAWEED_VERSION}" | $SUDO tee "$MARKER" >/dev/null
+  fi
+{{else}}{{if .DevAssetURL}}
   # Rolling "dev" build path. The version string ("dev") never changes, so
   # idempotency keys on the build datestamp ({{.DevBuildID}}) recorded in a
   # marker file: a moving dev tag yields a new datestamp and re-installs.
@@ -187,7 +216,7 @@ download_and_install() {
     info "Unpacking ${SEAWEED_VERSION} ${assetFileName}"
     $SUDO tar xvf "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" --directory $BIN_DIR
   fi
-{{end}}
+{{end}}{{end}}
 }
 
 create_user_and_config() {
@@ -214,7 +243,7 @@ StartLimitIntervalSec=10
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
-ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options
+{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process
 KillSignal=SIGINT

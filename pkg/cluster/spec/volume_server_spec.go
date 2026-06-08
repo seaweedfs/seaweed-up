@@ -31,7 +31,27 @@ type VolumeServerSpec struct {
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`
+	// Engine selects the volume implementation: "" / "go" / "weed" run the Go
+	// `weed volume`; "rust" / "weed-volume" run the standalone Rust
+	// `weed-volume` binary. Both register with the same masters and read the
+	// same options file, so they can coexist in one cluster.
+	Engine string `yaml:"engine,omitempty"`
 }
+
+// IsRust reports whether this volume server runs the Rust weed-volume binary.
+func (vs *VolumeServerSpec) IsRust() bool {
+	return vs.Engine == "rust" || vs.Engine == "weed-volume"
+}
+
+// ValidVolumeEngine reports whether engine is an accepted value.
+func ValidVolumeEngine(engine string) bool {
+	switch engine {
+	case "", "go", "weed", "rust", "weed-volume":
+		return true
+	}
+	return false
+}
+
 type FolderSpec struct {
 	Folder   string `yaml:"folder"`
 	DiskType string `yaml:"disk" default:"hdd"`
