@@ -122,9 +122,11 @@ download_and_install() {
     info "weed-volume ${SEAWEED_VERSION} already installed, skipping"
   else
     OS="linux"
-    # Matches the rust release asset (rust_binaries_release.yml): the
-    # large-disk variant tarball holds a binary named weed-volume-large-disk.
-    RUST_ASSET="weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz"
+    # Matches the rust release asset: the large-disk variant tarball holds a
+    # binary named weed-volume-large-disk. OSS publishes weed-volume_... from
+    # seaweedfs/seaweedfs; enterprise publishes weed-volume-enterprise_... from
+    # seaweedfs/artifactory (ReleaseOwner/ReleaseRepo already select the repo).
+    RUST_ASSET="weed-volume{{if .Enterprise}}-enterprise{{end}}_large_disk_${OS}_${SUFFIX}.tar.gz"
     RUST_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${RUST_ASSET}"
     info "Downloading weed-volume ${SEAWEED_VERSION} (${RUST_ASSET})"
     curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"

@@ -140,7 +140,9 @@ volume_servers:
 `engine` accepts `go`/`weed` (default) or `rust`/`weed-volume`. For the `rust`
 engine, seaweed-up downloads `weed-volume_large_disk_linux_<arch>.tar.gz` (plus
 `.md5`) from the release for `--version` — the asset published by SeaweedFS's
-`rust_binaries_release.yml`.
+`rust_binaries_release.yml`. With `--enterprise` it pulls
+`weed-volume-enterprise_large_disk_linux_<arch>.tar.gz` from the artifactory
+release instead, so the rust engine works for both editions.
 
 - `ignore` (default) — no verification; preserves historical behavior.
 - `accept-new` — trust-on-first-use: unknown hosts are learned and

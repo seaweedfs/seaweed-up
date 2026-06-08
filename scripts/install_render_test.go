@@ -16,7 +16,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"Version": "4.31", "ProxyConfig": "", "ReleaseOwner": "seaweedfs",
 		"ReleaseRepo": "seaweedfs", "AssetPrefix": "", "FullSuffix": "_full",
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
-		"Binary": "weed", "RustVolume": false,
+		"Binary": "weed", "RustVolume": false, "Enterprise": false,
 	}
 	for k, v := range data {
 		base[k] = v
@@ -74,6 +74,23 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	}
 	if strings.Contains(out, "-logdir=") || strings.Contains(out, "${COMPONENT} -options=") {
 		t.Errorf("rust ExecStart should not use go-style flags / subcommand")
+	}
+}
+
+func TestInstallScript_RustVolumeEnterprisePath(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "volume", "ComponentInstance": "volume0",
+		"Binary": "weed-volume", "RustVolume": true, "Enterprise": true,
+		"ReleaseOwner": "seaweedfs", "ReleaseRepo": "artifactory", "Version": "4.31",
+	})
+	if !strings.Contains(out, "weed-volume-enterprise_large_disk_${OS}_${SUFFIX}.tar.gz") {
+		t.Errorf("enterprise rust path should download the weed-volume-enterprise_ asset")
+	}
+	if !strings.Contains(out, "seaweedfs/artifactory/releases") {
+		t.Errorf("enterprise rust path should pull from the artifactory repo")
+	}
+	if strings.Contains(out, "weed-volume_large_disk_") {
+		t.Errorf("enterprise rust path should not use the OSS asset name")
 	}
 }
 

@@ -599,6 +599,7 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		"ReleaseRepo":       releaseRepo,
 		"AssetPrefix":       assetPrefix,
 		"FullSuffix":        fullSuffix,
+		"Enterprise":        m.Enterprise,
 		// Rolling "dev" build fields. Empty unless m.Version == "dev" and
 		// the asset was resolved; install.sh takes its dev code path only
 		// when DevAssetURL is non-empty.
