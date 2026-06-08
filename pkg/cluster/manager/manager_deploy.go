@@ -500,6 +500,10 @@ func (m *Manager) prepare(specification *spec.Specification) {
 		if s3Spec.Filer == "" {
 			s3Spec.Filer = defaultFiler
 		}
+		// Inherit the shared global.s3_config when this gateway has none.
+		if len(s3Spec.S3Config) == 0 {
+			s3Spec.S3Config = specification.GlobalOptions.S3Config
+		}
 		if s3Spec.Port == 0 {
 			s3Spec.Port = 8333
 		}

@@ -42,6 +42,38 @@ Two example specs live under `examples/`:
   2 S3 gateways, 1 admin, 2 workers, and a co-located Prometheus + Grafana
   monitoring stack.
 
+## Shared config defaults
+
+Cluster-wide values are written once and inherited by each entry, so you
+don't repeat them per server:
+
+- **`global.s3_config`** — the s3.json (IAM identities) every `s3_servers`
+  entry uses. Define it once under `global`; the secret lives in one place.
+- **`s3_servers[].filer`** — defaults to the first `filer_servers` entry.
+- **`worker_servers[].admin`** — defaults to the first `admin_servers` entry.
+
+So a multi-gateway / multi-worker spec is just a list of IPs:
+
+```yaml
+global:
+  s3_config:
+    identities:
+      - name: app
+        credentials: [{ accessKey: APP_KEY, secretKey: CHANGE_ME }]
+        actions: [Read, Write, List, Tagging]
+
+s3_servers:        # filer + s3_config inherited
+  - { ip: 10.0.0.51 }
+  - { ip: 10.0.0.52 }
+
+worker_servers:    # admin inherited from admin_servers[0]
+  - { ip: 10.0.0.71 }
+  - { ip: 10.0.0.72 }
+```
+
+Set any of these per entry to override the default (e.g. point a gateway at
+a co-located filer, or a worker at a different admin).
+
 ## Deploy
 
 ```bash

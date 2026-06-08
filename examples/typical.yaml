@@ -14,6 +14,19 @@ global:
   dir.data: "/opt/seaweed"
   volumeSizeLimitMB: 30000
   replication: "010"
+  # Shared s3.json (IAM identities) for every s3_servers entry — defined once
+  # here, not per gateway. A per-entry s3_config overrides it.
+  s3_config:
+    identities:
+      - name: app
+        credentials:
+          - accessKey: APP_ACCESS_KEY
+            secretKey: CHANGE_ME
+        actions:
+          - Read
+          - Write
+          - List
+          - Tagging
 
 # Storage layer -------------------------------------------------------------
 
@@ -85,13 +98,11 @@ filer_servers:
       database: seaweedfs
       sslmode: disable
 
+# filer defaults to the first filer_servers entry; s3_config is inherited
+# from global.s3_config. Set either per-entry to override.
 s3_servers:
   - ip: 10.0.0.51
-    port: 8333
-    filer: 10.0.0.31:8888
   - ip: 10.0.0.52
-    port: 8333
-    filer: 10.0.0.32:8888
 
 # Backend operations --------------------------------------------------------
 #
@@ -105,11 +116,11 @@ admin_servers:
     admin_user: admin
     admin_password: CHANGE_ME
 
+# admin defaults to the first admin_servers entry; set `admin:` per-entry
+# only to point a worker at a different admin.
 worker_servers:
   - ip: 10.0.0.71
-    admin: 10.0.0.61:23646
   - ip: 10.0.0.72
-    admin: 10.0.0.61:23646
 
 # Observability -------------------------------------------------------------
 #
