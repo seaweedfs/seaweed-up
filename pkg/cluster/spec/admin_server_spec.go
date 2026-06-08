@@ -65,7 +65,14 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	}
 	addToBuffer(buf, "master", strings.Join(mastersToUse, ","))
 
-	addToBuffer(buf, "dataDir", a.DataDir)
+	// Default to "." (the systemd WorkingDirectory) when unset, like the
+	// master's mdir. Without a dataDir the admin can't persist maintenance
+	// task state and its EC balance/rebuild tasks churn shards.
+	dataDir := a.DataDir
+	if dataDir == "" {
+		dataDir = "."
+	}
+	addToBuffer(buf, "dataDir", dataDir)
 	addToBuffer(buf, "adminUser", a.AdminUser)
 	addToBuffer(buf, "adminPassword", a.AdminPassword)
 
