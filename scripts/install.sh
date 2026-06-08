@@ -129,8 +129,8 @@ download_and_install() {
     RUST_ASSET="weed-volume{{if .Enterprise}}-enterprise{{end}}_large_disk_${OS}_${SUFFIX}.tar.gz"
     RUST_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${RUST_ASSET}"
     info "Downloading weed-volume ${SEAWEED_VERSION} (${RUST_ASSET})"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/${RUST_ASSET}.md5" -sfL "${RUST_URL}.md5"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}.md5" -sfL "${RUST_URL}.md5"
     info "Verifying weed-volume ${SEAWEED_VERSION}"
     md5Value=`cat "$TMP_DIR/${RUST_ASSET}.md5" | awk '{print $1}'`
     ( cd "$TMP_DIR" && echo "${md5Value}  ${RUST_ASSET}" | md5sum -c )
@@ -152,8 +152,8 @@ download_and_install() {
     info "Seaweed dev build ${WANT_ID} already installed, skipping"
   else
     info "Downloading dev build ${WANT_ID}"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/devbuild.tar.gz" -sfL "{{.DevAssetURL}}"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/devbuild.tar.gz.md5" -sfL "{{.DevMd5URL}}"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/devbuild.tar.gz" -sfL "{{.DevAssetURL}}"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/devbuild.tar.gz.md5" -sfL "{{.DevMd5URL}}"
     info "Verifying dev build ${WANT_ID}"
     md5Value=`cat "$TMP_DIR/devbuild.tar.gz.md5" | awk '{print $1}'`
     ( cd "$TMP_DIR" && echo "${md5Value}  devbuild.tar.gz" | md5sum -c )
@@ -197,7 +197,7 @@ download_and_install() {
     if [ -n "$FULL_SUFFIX" ]; then
       fullAsset="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
       fullURL="https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${fullAsset}"
-      if ! curl {{.ProxyConfig}} -sfIL -o /dev/null "$fullURL"; then
+      if ! curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -sfIL -o /dev/null "$fullURL"; then
         info "${fullAsset} is not published for ${SUFFIX}; falling back to non-full variant"
         FULL_SUFFIX=""
       fi
@@ -205,10 +205,10 @@ download_and_install() {
     assetFileName="${ASSET_PREFIX}${OS}_${SUFFIX}${FULL_SUFFIX}${LARGE_SUFFIX}.tar.gz"
 
     info "Downloading ${SEAWEED_VERSION} ${assetFileName}"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}"
 
     info "Downloading ${SEAWEED_VERSION} ${assetFileName} md5"
-    curl {{.ProxyConfig}} -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5" -sfL "https://github.com/${RELEASE_OWNER}/${RELEASE_REPO}/releases/download/${SEAWEED_VERSION}/${assetFileName}.md5"
     info "Verifying downloaded ${SEAWEED_VERSION} ${assetFileName}"
     md5Value=`cat $TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}.md5`
     echo "${md5Value}  seaweed_${SEAWEED_VERSION}_${assetFileName}" | md5sum -c
