@@ -71,7 +71,7 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 		for _, h := range hosts {
 			h := h
 			eg.Go(func() error {
-				info(fmt.Sprintf("Installing node_exporter on %s...", h.ip))
+				m.info(fmt.Sprintf("Installing node_exporter on %s...", h.ip))
 				addr := fmt.Sprintf("%s:%d", h.ip, h.port)
 				if err := operator.ExecuteRemote(addr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 					return observability.InstallNodeExporter(op, m.User, m.sudoPass)
@@ -84,7 +84,7 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 		if err := eg.Wait(); err != nil {
 			return err
 		}
-		info(fmt.Sprintf("node_exporter installed on %d host(s)", len(hosts)))
+		m.info(fmt.Sprintf("node_exporter installed on %d host(s)", len(hosts)))
 	}
 
 	monAddr := fmt.Sprintf("%s:%d", mon.Host, utils.NvlInt(mon.PortSsh, m.SshPort, 22))
@@ -93,7 +93,7 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 	promCfg.WriteString("global:\n  scrape_interval: 15s\n  evaluation_interval: 15s\n\n")
 	promCfg.WriteString(observability.RenderPromConfig(s))
 
-	info("Installing Prometheus on " + mon.Host)
+	m.info("Installing Prometheus on " + mon.Host)
 	if err := operator.ExecuteRemote(monAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 		return observability.InstallPrometheus(op, m.User, m.sudoPass, observability.PrometheusOptions{
 			ConfigYAML: promCfg.String(),
@@ -105,7 +105,7 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 		return fmt.Errorf("install prometheus on %s: %w", mon.Host, err)
 	}
 
-	info("Installing Grafana on " + mon.Host)
+	m.info("Installing Grafana on " + mon.Host)
 	if err := operator.ExecuteRemote(monAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
 		return observability.InstallGrafana(op, m.User, m.sudoPass, observability.GrafanaOptions{
 			Bind:          mon.EffectiveBind(),
@@ -119,7 +119,7 @@ func (m *Manager) DeployMonitoring(s *spec.Specification) error {
 		return fmt.Errorf("install grafana on %s: %w", mon.Host, err)
 	}
 
-	info(fmt.Sprintf("Monitoring deployed: Grafana on %s:%d (bind %s), Prometheus :%d",
+	m.info(fmt.Sprintf("Monitoring deployed: Grafana on %s:%d (bind %s), Prometheus :%d",
 		mon.Host, mon.EffectiveGrafanaPort(), mon.EffectiveBind(), mon.EffectivePrometheusPort()))
 	return nil
 }

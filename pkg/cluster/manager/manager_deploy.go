@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
@@ -185,6 +186,63 @@ func computeVolumeTargetDemand(volumes []*spec.VolumeServerSpec) (mountpoints, s
 	return mountpoints, servers
 }
 
+// buildDeployTasks pre-registers one progress line per component instance that
+// will be deployed (honoring the --component filter), in deploy order, so the
+// full cluster shows up immediately as Pending. The task ids match the
+// "<component><index>" instance names deployComponentBinary keys on.
+func (m *Manager) buildDeployTasks(rep progress.Reporter, s *spec.Specification) map[string]*progress.Task {
+	tasks := map[string]*progress.Task{}
+	add := func(comp string, i int, ip string) {
+		id := fmt.Sprintf("%s%d", comp, i)
+		tasks[id] = rep.AddTask(id, fmt.Sprintf("%-10s %s", id, ip))
+	}
+	if m.shouldInstall("master") {
+		for i, x := range s.MasterServers {
+			add("master", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("volume") {
+		for i, x := range s.VolumeServers {
+			add("volume", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("filer") {
+		for i, x := range s.FilerServers {
+			add("filer", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("s3") {
+		for i, x := range s.S3Servers {
+			add("s3", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("sftp") {
+		for i, x := range s.SftpServers {
+			add("sftp", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("admin") {
+		for i, x := range s.AdminServers {
+			add("admin", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("worker") {
+		for i, x := range s.WorkerServers {
+			add("worker", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("envoy") {
+		for i, x := range s.EnvoyServers {
+			add("envoy", i, x.Ip)
+		}
+	}
+	if m.shouldInstall("monitoring") && s.Monitoring != nil {
+		tasks["monitoring"] = rep.AddTask("monitoring", fmt.Sprintf("%-10s %s", "monitoring", s.Monitoring.Host))
+	}
+	m.registerTasks(tasks)
+	return tasks
+}
+
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateSingleAdminServer(specification); err != nil {
 		return err
@@ -223,12 +281,30 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		masters = append(masters, fmt.Sprintf("%s:%d", masterSpec.Ip, masterSpec.Port))
 	}
 
+	// Bring up the live console: one line per component instance, shown as
+	// Pending until each is started. In live mode, route all other streamed
+	// command output (host prep ran already; security.toml, monitoring, etc.)
+	// through the reporter so it scrolls above the block instead of corrupting
+	// the in-place display.
+	rep := m.reporter()
+	tasks := m.buildDeployTasks(rep, specification)
+	rep.Start()
+	defer rep.Stop()
+	if rep.Live() {
+		lw := progress.NewLogWriter(rep)
+		operator.SetDefaultOutput(lw, lw)
+		defer operator.SetDefaultOutput(nil, nil)
+	}
+
 	if m.shouldInstall("master") {
 		for index, masterSpec := range specification.MasterServers {
+			task := tasks[fmt.Sprintf("master%d", index)]
+			task.Start()
 			if err := m.DeployMasterServer(masters, masterSpec, index); err != nil {
-				fmt.Printf("error is %v\n", err)
+				task.Fail(err)
 				return fmt.Errorf("deploy to master server %s:%d :%v", masterSpec.Ip, masterSpec.PortSsh, err)
 			}
+			task.Done()
 		}
 	}
 
@@ -250,7 +326,6 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	recordErr := func(err error) {
 		errMu.Lock()
 		defer errMu.Unlock()
-		fmt.Printf("[ERROR] %v\n", err)
 		deployErrors = append(deployErrors, err)
 	}
 
@@ -269,9 +344,14 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 
 		for index, volumeSpec := range specification.VolumeServers {
 			eg.Go(func() error {
+				task := tasks[fmt.Sprintf("volume%d", index)]
+				task.Start()
 				if err := m.DeployVolumeServer(masters, volumeSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy volume server %s:%d: %w", volumeSpec.Ip, volumeSpec.PortSsh, err)
+					task.Fail(wrapped)
 					recordErr(wrapped)
+				} else {
+					task.Done()
 				}
 				return nil
 			})
@@ -294,15 +374,21 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if m.shouldInstall("filer") || m.shouldInstall("admin") {
 		if err := m.EnsureSecurityToml(specification); err != nil {
 			securityErr = err
+			rep.LogError(err)
 			recordErr(err)
 		}
 	}
 	if m.shouldInstall("filer") && securityErr == nil {
 		for index, filerSpec := range specification.FilerServers {
 			eg.Go(func() error {
+				task := tasks[fmt.Sprintf("filer%d", index)]
+				task.Start()
 				if err := m.DeployFilerServer(masters, filerSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy filer server %s:%d: %w", filerSpec.Ip, filerSpec.PortSsh, err)
+					task.Fail(wrapped)
 					recordErr(wrapped)
+				} else {
+					task.Done()
 				}
 				return nil
 			})
@@ -334,14 +420,18 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		recordS3Err := func(err error) {
 			s3ErrMu.Lock()
 			defer s3ErrMu.Unlock()
-			fmt.Printf("[ERROR] %v\n", err)
 			s3Errors = append(s3Errors, err)
 		}
 		for index, s3Spec := range specification.S3Servers {
 			s3eg.Go(func() error {
+				task := tasks[fmt.Sprintf("s3%d", index)]
+				task.Start()
 				if err := m.DeployS3Server(s3Spec, index); err != nil {
 					wrapped := fmt.Errorf("deploy s3 server %s:%d: %w", s3Spec.Ip, s3Spec.PortSsh, err)
+					task.Fail(wrapped)
 					recordS3Err(wrapped)
+				} else {
+					task.Done()
 				}
 				return nil
 			})
@@ -360,9 +450,13 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			return err
 		}
 		for index, sftpSpec := range specification.SftpServers {
+			task := tasks[fmt.Sprintf("sftp%d", index)]
+			task.Start()
 			if err := m.DeploySftpServer(masters, sftpSpec, index); err != nil {
+				task.Fail(err)
 				return fmt.Errorf("deploy to sftp server %s:%d :%v", sftpSpec.Ip, sftpSpec.PortSsh, err)
 			}
+			task.Done()
 		}
 	}
 
@@ -381,14 +475,18 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		recordAdminErr := func(err error) {
 			adminErrMu.Lock()
 			defer adminErrMu.Unlock()
-			fmt.Printf("[ERROR] %v\n", err)
 			adminErrors = append(adminErrors, err)
 		}
 		for index, adminSpec := range specification.AdminServers {
 			adminEg.Go(func() error {
+				task := tasks[fmt.Sprintf("admin%d", index)]
+				task.Start()
 				if err := m.DeployAdminServer(masters, adminSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy admin server %s:%d: %w", adminSpec.Ip, adminSpec.PortSsh, err)
+					task.Fail(wrapped)
 					recordAdminErr(wrapped)
+				} else {
+					task.Done()
 				}
 				return nil
 			})
@@ -425,14 +523,18 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		recordWorkerErr := func(err error) {
 			workerErrMu.Lock()
 			defer workerErrMu.Unlock()
-			fmt.Printf("[ERROR] %v\n", err)
 			workerErrors = append(workerErrors, err)
 		}
 		for index, workerSpec := range specification.WorkerServers {
 			workerEg.Go(func() error {
+				task := tasks[fmt.Sprintf("worker%d", index)]
+				task.Start()
 				if err := m.DeployWorkerServer(defaultAdmins, workerSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy worker server %s:%d: %w", workerSpec.Ip, workerSpec.PortSsh, err)
+					task.Fail(wrapped)
 					recordWorkerErr(wrapped)
+				} else {
+					task.Done()
 				}
 				return nil
 			})
@@ -471,15 +573,28 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			case envoySpec.Version == "":
 				envoySpec.Version = latestFallback
 			}
+			task := tasks[fmt.Sprintf("envoy%d", index)]
+			task.Start()
 			if err := m.DeployEnvoyServer(specification.FilerServers, envoySpec, index); err != nil {
+				task.Fail(err)
 				return fmt.Errorf("deploy to envoy server %s:%d :%v", envoySpec.Ip, envoySpec.PortSsh, err)
 			}
+			task.Done()
 		}
 	}
 
 	if m.shouldInstall("monitoring") && specification.Monitoring != nil {
+		if task := tasks["monitoring"]; task != nil {
+			task.Start()
+		}
 		if err := m.DeployMonitoring(specification); err != nil {
+			if task := tasks["monitoring"]; task != nil {
+				task.Fail(err)
+			}
 			return fmt.Errorf("deploy monitoring: %w", err)
+		}
+		if task := tasks["monitoring"]; task != nil {
+			task.Done()
 		}
 	}
 	return nil
@@ -561,7 +676,10 @@ func (m *Manager) deployComponentInstance(op operator.CommandOperator, component
 // weed-volume binary). Only the volume deploy/upgrade paths pass a non-empty
 // engine; every other component installs the Go weed binary as before.
 func (m *Manager) deployComponentBinary(op operator.CommandOperator, component string, componentInstance string, engine string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {
-	info("Deploying " + componentInstance + "...")
+	// Route this instance's streamed install output to its own progress line.
+	task := m.taskFor(componentInstance)
+	bindTask(op, task)
+	task.Detail("Deploying " + componentInstance + "...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
 
@@ -675,12 +793,10 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		}
 	}
 
-	info("Installing " + componentInstance + "...")
+	task.Detail("Installing " + componentInstance + "...")
 	err = op.Execute(fmt.Sprintf("cat %s/install_%s.sh | SUDO_PASS=%s sh -\n", dir, componentInstance, shellSingleQuote(m.sudoPass)))
 	if err != nil {
 		return fmt.Errorf("error received during installation: %s", err)
 	}
-
-	info("Done.")
 	return nil
 }

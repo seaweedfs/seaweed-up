@@ -30,7 +30,53 @@ type CommandOperator interface {
 	UploadFile(path string, remotePath string, mode string) error
 }
 
+// OutputSink is an optional capability: an operator implementing it streams
+// command stdout/stderr to the supplied writers instead of the process
+// os.Stdout/os.Stderr. The live progress console needs exclusive control of
+// the real stdout, so it redirects each component's streamed output into a
+// per-task sink. It is intentionally NOT part of CommandOperator so the many
+// hand-rolled test fakes keep compiling — callers type-assert and only call
+// SetOutput when the operator supports it.
+type OutputSink interface {
+	// SetOutput redirects streamed command output. A nil writer resets that
+	// stream to its os.Std* default.
+	SetOutput(stdout, stderr io.Writer)
+}
+
 type Callback func(CommandOperator) error
+
+// Default streamed-output destination. Every operator created by
+// ExecuteRemote/ExecuteLocal inherits these writers, so a process can route
+// all command output (e.g. into a live progress console) by setting them once
+// before a batch of operations instead of threading a writer through every
+// call site. A callback may still override per-operator via OutputSink.
+var (
+	defaultOutMu  sync.RWMutex
+	defaultStdout io.Writer = os.Stdout
+	defaultStderr io.Writer = os.Stderr
+)
+
+// SetDefaultOutput sets the stdout/stderr writers newly created operators
+// stream to. A nil writer resets that stream to its os.Std* default. Set it
+// before a batch of operations and restore (nil) afterwards; it is read when
+// each operator is created.
+func SetDefaultOutput(stdout, stderr io.Writer) {
+	defaultOutMu.Lock()
+	defer defaultOutMu.Unlock()
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	defaultStdout, defaultStderr = stdout, stderr
+}
+
+func currentDefaultOutput() (io.Writer, io.Writer) {
+	defaultOutMu.RLock()
+	defer defaultOutMu.RUnlock()
+	return defaultStdout, defaultStderr
+}
 
 // BastionConfig describes an SSH jump host. When one is installed via
 // SetBastion, every ExecuteRemote connection is dialed *through* the
@@ -156,7 +202,9 @@ func closeBastionLocked() {
 }
 
 func ExecuteLocal(callback Callback) error {
-	return callback(NewLocalOperator())
+	op := NewLocalOperator()
+	op.SetOutput(currentDefaultOutput())
+	return callback(op)
 }
 
 func ExecuteRemote(host string, user string, privateKey string, password string, callback Callback) error {
@@ -295,6 +343,7 @@ func executeRemote(address string, user string, authMethod ssh.AuthMethod, callb
 
 	defer operator.Close()
 
+	operator.SetOutput(currentDefaultOutput())
 	return callback(operator)
 }
 

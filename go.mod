@@ -3,7 +3,6 @@ module github.com/seaweedfs/seaweed-up
 go 1.26.0
 
 require (
-	github.com/alexellis/go-execute v0.6.0
 	github.com/bramvdbogaerde/go-scp v1.6.0
 	github.com/fatih/color v1.19.0
 	github.com/mitchellh/go-homedir v1.1.0

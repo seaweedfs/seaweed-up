@@ -349,7 +349,7 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 	for _, k := range orderedPaths {
 		dev := disks[k]
 		if dev.FilesystemType == "" {
-			info("mkfs " + dev.Path)
+			m.info("mkfs " + dev.Path)
 			if err := m.sudo(op, fmt.Sprintf("mkfs.ext4 %s", dev.Path)); err != nil {
 				return fmt.Errorf("create file system on %s: %v", dev.Path, err)
 			}
@@ -390,13 +390,13 @@ func (m *Manager) prepareUnmountedDisks(op operator.CommandOperator, target stri
 			if err != nil {
 				return err
 			}
-			info("Installing mount_" + dev.DeviceName + ".sh")
+			m.info("Installing mount_" + dev.DeviceName + ".sh")
 			err = op.Upload(prepareScript, fmt.Sprintf("/tmp/mount_%s.sh", dev.DeviceName), "0755")
 			if err != nil {
 				return fmt.Errorf("error received during upload mount script: %s", err)
 			}
 
-			info(fmt.Sprintf("mount %s (UUID=%s) at %s", dev.DeviceName, dev.UUID, targetMountPoint))
+			m.info(fmt.Sprintf("mount %s (UUID=%s) at %s", dev.DeviceName, dev.UUID, targetMountPoint))
 			err = op.Execute(fmt.Sprintf("cat /tmp/mount_%s.sh | SUDO_PASS=%s sh -\n", dev.DeviceName, shellSingleQuote(m.sudoPass)))
 			if err != nil {
 				return fmt.Errorf("error received during mount: %s", err)

@@ -23,7 +23,7 @@ func PrepareHostsForSpec(m *Manager, specification *spec.Specification) error {
 // sysctls, firewall rules, and time sync. It is idempotent and safe to run
 // multiple times.
 func (m *Manager) PrepareHost(op operator.CommandOperator) error {
-	info("Running host preparation (ulimits, sysctls, firewall, time sync)...")
+	m.info("Running host preparation (ulimits, sysctls, firewall, time sync)...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
 	defer func() { _ = op.Execute("rm -rf " + dir) }()
@@ -42,7 +42,7 @@ func (m *Manager) PrepareHost(op operator.CommandOperator) error {
 		return fmt.Errorf("run host_prep.sh: %w", err)
 	}
 
-	info("Host preparation complete.")
+	m.info("Host preparation complete.")
 	return nil
 }
 
@@ -95,7 +95,7 @@ func (m *Manager) PrepareAllHosts(specification *spec.Specification) error {
 		prepare = m.PrepareHostAddress
 	}
 	for _, h := range order {
-		info(fmt.Sprintf("Preparing host %s:%d", h.ip, h.sshPort))
+		m.info(fmt.Sprintf("Preparing host %s:%d", h.ip, h.sshPort))
 		if err := prepare(h.ip, h.sshPort); err != nil {
 			return fmt.Errorf("prepare host %s: %w", h.ip, err)
 		}
