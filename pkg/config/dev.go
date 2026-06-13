@@ -27,22 +27,25 @@ type DevAsset struct {
 }
 
 // devAssetRe matches a dev asset name and captures its build datestamp.
-// largeDisk builds are named weed-large-disk-<stamp>-linux-<arch>.tar.gz;
-// regular builds weed-<stamp>-linux-<arch>.tar.gz. The \d right after the
-// "weed-" prefix in the regular pattern keeps it from also matching the
-// "weed-large-disk-" ones.
-func devAssetRe(largeDisk bool, goArch string) *regexp.Regexp {
+// `binary` is the binary prefix ("weed" for the Go server, "weed-volume"
+// for the standalone Rust volume server). largeDisk builds are named
+// <binary>-large-disk-<stamp>-linux-<arch>.tar.gz; regular builds
+// <binary>-<stamp>-linux-<arch>.tar.gz. The \d right after the "<binary>-"
+// prefix in the regular pattern keeps it from also matching the
+// "<binary>-large-disk-" ones (and "weed-" from matching "weed-volume-").
+func devAssetRe(binary string, largeDisk bool, goArch string) *regexp.Regexp {
+	prefix := regexp.QuoteMeta(binary)
 	if largeDisk {
-		return regexp.MustCompile(`^weed-large-disk-(\d{8}-\d{4})-linux-` + regexp.QuoteMeta(goArch) + `\.tar\.gz$`)
+		return regexp.MustCompile(`^` + prefix + `-large-disk-(\d{8}-\d{4})-linux-` + regexp.QuoteMeta(goArch) + `\.tar\.gz$`)
 	}
-	return regexp.MustCompile(`^weed-(\d{8}-\d{4})-linux-` + regexp.QuoteMeta(goArch) + `\.tar\.gz$`)
+	return regexp.MustCompile(`^` + prefix + `-(\d{8}-\d{4})-linux-` + regexp.QuoteMeta(goArch) + `\.tar\.gz$`)
 }
 
 // pickDevAsset returns the name and build datestamp of the newest dev
-// asset for the given variant/arch. Datestamps are YYYYMMDD-HHMM, so a
-// plain string comparison orders them chronologically.
-func pickDevAsset(assets []Asset, largeDisk bool, goArch string) (name, buildID string, ok bool) {
-	re := devAssetRe(largeDisk, goArch)
+// asset for the given binary/variant/arch. Datestamps are YYYYMMDD-HHMM,
+// so a plain string comparison orders them chronologically.
+func pickDevAsset(assets []Asset, binary string, largeDisk bool, goArch string) (name, buildID string, ok bool) {
+	re := devAssetRe(binary, largeDisk, goArch)
 	for _, a := range assets {
 		m := re.FindStringSubmatch(a.Name)
 		if m == nil {
@@ -87,17 +90,18 @@ func GitHubReleaseByTag(ctx context.Context, owner, repo, tag string) (Release, 
 }
 
 // ResolveDevAsset resolves the newest rolling "dev" build for the given
-// repo / variant / architecture into a concrete download.
-func ResolveDevAsset(ctx context.Context, owner, repo string, largeDisk bool, goArch string) (DevAsset, error) {
+// repo / binary / variant / architecture into a concrete download. `binary`
+// is "weed" for the Go server or "weed-volume" for the Rust volume server.
+func ResolveDevAsset(ctx context.Context, owner, repo, binary string, largeDisk bool, goArch string) (DevAsset, error) {
 	rel, err := GitHubReleaseByTag(ctx, owner, repo, DevTag)
 	if err != nil {
 		return DevAsset{}, fmt.Errorf("resolve dev release: %w", err)
 	}
-	name, buildID, ok := pickDevAsset(rel.Assets, largeDisk, goArch)
+	name, buildID, ok := pickDevAsset(rel.Assets, binary, largeDisk, goArch)
 	if !ok {
-		variant := "weed"
+		variant := binary
 		if largeDisk {
-			variant = "weed-large-disk"
+			variant = binary + "-large-disk"
 		}
 		return DevAsset{}, fmt.Errorf("no %s-*-linux-%s.tar.gz asset in the %q release", variant, goArch, DevTag)
 	}

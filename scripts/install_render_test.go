@@ -16,6 +16,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"Version": "4.31", "ProxyConfig": "", "ReleaseOwner": "seaweedfs",
 		"ReleaseRepo": "seaweedfs", "AssetPrefix": "", "FullSuffix": "_full",
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
+		"RustDevAssetURL": "", "RustDevMd5URL": "", "RustDevBuildID": "",
 		"Binary": "weed", "RustVolume": false, "Enterprise": false,
 	}
 	for k, v := range data {
@@ -74,6 +75,31 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	}
 	if strings.Contains(out, "-logdir=") || strings.Contains(out, "${COMPONENT} -options=") {
 		t.Errorf("rust ExecStart should not use go-style flags / subcommand")
+	}
+}
+
+func TestInstallScript_RustVolumeDevPath(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "volume", "ComponentInstance": "volume0",
+		"Binary": "weed-volume", "RustVolume": true, "Version": "dev",
+		"RustDevAssetURL": "https://github.com/seaweedfs/seaweedfs/releases/download/dev/weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz",
+		"RustDevMd5URL":   "https://github.com/seaweedfs/seaweedfs/releases/download/dev/weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz.md5",
+		"RustDevBuildID":  "20260613-0656",
+	})
+	for _, want := range []string{
+		"BINARY=weed-volume",
+		"weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz", // resolved dev asset URL
+		`RUST_VERSION_ID="20260613-0656"`,                          // keyed on dev build id, not "dev"
+		".weed-volume-version",
+		"skipping checksum verification", // best-effort md5 (dev lacks .md5)
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rust dev install script missing %q", want)
+		}
+	}
+	// must NOT construct the stable per-arch asset name with version=dev
+	if strings.Contains(out, "weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz") {
+		t.Errorf("rust dev path should use the resolved dev asset, not the stable asset name")
 	}
 }
 

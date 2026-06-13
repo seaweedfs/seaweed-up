@@ -183,7 +183,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	m.prepare(specification)
 
 	// Resolve the rolling "dev" build to a concrete dated asset, if asked.
-	if err := m.resolveDevAsset(m.Version); err != nil {
+	if err := m.resolveDevAsset(m.Version, specification); err != nil {
 		return fmt.Errorf("resolve dev build: %w", err)
 	}
 
@@ -602,15 +602,25 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		"Enterprise":        m.Enterprise,
 		// Rolling "dev" build fields. Empty unless m.Version == "dev" and
 		// the asset was resolved; install.sh takes its dev code path only
-		// when DevAssetURL is non-empty.
-		"DevAssetURL": "",
-		"DevMd5URL":   "",
-		"DevBuildID":  "",
+		// when DevAssetURL is non-empty. The Rust volume binary is a
+		// separate, independently-datestamped dev asset, threaded apart and
+		// used only by the rust install branch.
+		"DevAssetURL":     "",
+		"DevMd5URL":       "",
+		"DevBuildID":      "",
+		"RustDevAssetURL": "",
+		"RustDevMd5URL":   "",
+		"RustDevBuildID":  "",
 	}
 	if m.devAsset != nil {
 		data["DevAssetURL"] = m.devAsset.DownloadURL
 		data["DevMd5URL"] = m.devAsset.Md5URL
 		data["DevBuildID"] = m.devAsset.BuildID
+	}
+	if rustVolume && m.rustDevAsset != nil {
+		data["RustDevAssetURL"] = m.rustDevAsset.DownloadURL
+		data["RustDevMd5URL"] = m.rustDevAsset.Md5URL
+		data["RustDevBuildID"] = m.rustDevAsset.BuildID
 	}
 
 	// Configure proxy if specified
