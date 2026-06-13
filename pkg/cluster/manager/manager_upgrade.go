@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
@@ -114,9 +115,9 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 	targets := buildUpgradeTargets(specification, scheme)
 
 	if opts.DryRun {
-		info(fmt.Sprintf("Dry-run: rolling upgrade plan to version %q (previous=%q)", targetVersion, previousVersion))
+		m.info(fmt.Sprintf("Dry-run: rolling upgrade plan to version %q (previous=%q)", targetVersion, previousVersion))
 		for _, t := range targets {
-			info(fmt.Sprintf("  would upgrade %s (%s)", t.describe, t.component))
+			m.info(fmt.Sprintf("  would upgrade %s (%s)", t.describe, t.component))
 		}
 		return nil
 	}
@@ -138,14 +139,32 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		workerAdmins = resolved
 	}
 
-	info(fmt.Sprintf("Starting rolling upgrade to version %q (previous=%q)", targetVersion, previousVersion))
+	// Bring up the live console: one line per upgrade target, in rolling
+	// order. In live mode route incidental command output through the reporter
+	// so it scrolls above the block.
+	rep := m.reporter()
+	upTasks := map[string]*progress.Task{}
+	for _, t := range targets {
+		id := fmt.Sprintf("%s%d", t.component, t.index)
+		upTasks[id] = rep.AddTask(id, fmt.Sprintf("%-10s %s", id, t.describe))
+	}
+	m.registerTasks(upTasks)
+	rep.Start()
+	defer rep.Stop()
+	if rep.Live() {
+		lw := progress.NewLogWriter(rep)
+		operator.SetDefaultOutput(lw, lw)
+		defer operator.SetDefaultOutput(nil, nil)
+	}
+
+	m.info(fmt.Sprintf("Starting rolling upgrade to version %q (previous=%q)", targetVersion, previousVersion))
 
 	// rollbackHost reinstalls the given previous version on t, if any.
 	rollbackHost := func(t upgradeTarget, prev string, cause error) error {
 		if !opts.RollbackOnFailure || prev == "" {
 			return cause
 		}
-		info(fmt.Sprintf("Rolling back %s to version %q", t.describe, prev))
+		m.info(fmt.Sprintf("Rolling back %s to version %q", t.describe, prev))
 		m.Version = prev
 		// Clear any resolved dev asset so the rollback installs the concrete
 		// previous version through the versioned path. Without this, m.devAsset
@@ -163,7 +182,9 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 	}
 
 	for _, t := range targets {
-		info(fmt.Sprintf("Upgrading %s...", t.describe))
+		task := upTasks[fmt.Sprintf("%s%d", t.component, t.index)]
+		task.Start()
+		task.Detail("upgrading")
 
 		// Capture the version running on this host right before we touch it.
 		// Today this is homogeneous across the cluster (sourced from
@@ -174,9 +195,11 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 
 		m.Version = targetVersion
 		if err := m.upgradeOneHost(specification, masters, workerAdmins, t); err != nil {
+			task.Fail(err)
 			return rollbackHost(t, hostPrev, fmt.Errorf("upgrade %s: %w", t.describe, err))
 		}
 
+		task.Detail("waiting for healthy")
 		sshAddr := net.JoinHostPort(t.ip, strconv.Itoa(t.portSsh))
 		var healthErr error
 		if t.healthURL != "" {
@@ -187,15 +210,15 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 			healthErr = m.waitForServiceActiveViaSSH(sshAddr, unit, opts.HealthTimeout, opts.HealthInterval)
 		}
 		if healthErr != nil {
-			info(fmt.Sprintf("Health check failed for %s: %v", t.describe, healthErr))
+			task.Fail(fmt.Errorf("health check failed: %w", healthErr))
 			return rollbackHost(t, hostPrev, fmt.Errorf("health check failed for %s: %w", t.describe, healthErr))
 		}
 
-		info(fmt.Sprintf("%s upgraded and healthy", t.describe))
+		task.Done()
 	}
 
 	m.Version = targetVersion
-	info(fmt.Sprintf("Rolling upgrade to %q complete", targetVersion))
+	m.info(fmt.Sprintf("Rolling upgrade to %q complete", targetVersion))
 	return nil
 }
 
@@ -351,11 +374,12 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 	if err := hooks.stop(); err != nil {
 		// Best-effort stop: log and continue to reinstall which will restart the unit.
-		info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
+		m.info(fmt.Sprintf("stop %s returned: %v (continuing)", t.describe, err))
 	}
 	componentInstance := fmt.Sprintf("%s%d", hooks.serviceName, t.index)
 	deploy := func() error {
 		return operator.ExecuteRemote(hooks.sshAddr, m.User, m.IdentityFile, m.sudoPass, func(op operator.CommandOperator) error {
+			bindTask(op, m.taskFor(componentInstance))
 			var buf bytes.Buffer
 			hooks.writeConfig(&buf)
 			var extras []extraConfigFile
@@ -391,7 +415,7 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 			return nil
 		}
 		if i < attempts-1 {
-			info(fmt.Sprintf("deploy %s attempt %d/%d failed: %v (retrying)", t.describe, i+1, attempts, lastErr))
+			m.info(fmt.Sprintf("deploy %s attempt %d/%d failed: %v (retrying)", t.describe, i+1, attempts, lastErr))
 		}
 	}
 	return lastErr

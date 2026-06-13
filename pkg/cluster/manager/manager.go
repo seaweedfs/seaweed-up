@@ -2,9 +2,11 @@ package manager
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
@@ -49,7 +51,7 @@ func (m *Manager) ReleaseOwnerRepo() (owner, repo string) {
 
 // shellSingleQuote wraps s in single quotes so it is safe to embed in a POSIX
 // shell command. Any single quote inside s is escaped by closing the quoted
-// string, inserting an escaped quote, and reopening: ' -> '\''.
+// string, inserting an escaped quote, and reopening: ' -> '\”.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -143,6 +145,17 @@ type Manager struct {
 	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
 	// PrepareAllHosts calls PrepareHostAddress directly.
 	prepareHostAddressFn func(ip string, sshPort int) error
+
+	// Reporter renders the per-component console. Defaults to a plain
+	// (line-by-line) reporter via NewManager so non-TTY runs and tests keep
+	// their historical output; the cmd layer swaps in a live reporter on a
+	// TTY. All component logging routes through it (see info/taskFor).
+	Reporter progress.Reporter
+	// tasks maps a component instance id ("volume3") to its progress line.
+	// DeployCluster/UpgradeCluster populate it before fanning work out, then
+	// only read it concurrently, so a plain RWMutex suffices.
+	tasksMu sync.RWMutex
+	tasks   map[string]*progress.Task
 }
 
 func NewManager() *Manager {
@@ -152,15 +165,67 @@ func NewManager() *Manager {
 		skipStart:  false,
 		Version:    "",
 		sudoPass:   "",
+		Reporter:   progress.NewPlain(os.Stdout),
 	}
 }
 
-func info(message string) {
-	fmt.Println("[INFO] " + message)
+// reporter returns the manager's console reporter, defaulting to plain so
+// directly-constructed &Manager{} values (e.g. in tests) never nil-panic.
+func (m *Manager) reporter() progress.Reporter {
+	if m.Reporter == nil {
+		m.Reporter = progress.NewPlain(os.Stdout)
+	}
+	return m.Reporter
+}
+
+// info logs a non-component message above the live block (live mode) or as a
+// plain "[INFO] …" line (plain mode). It replaces the old package-level
+// info() so that, during a live render, stray log lines can't corrupt the
+// in-place block.
+func (m *Manager) info(message string) {
+	m.reporter().Log(message)
+}
+
+// registerTasks installs the per-instance task map for the duration of a
+// deploy/upgrade so callbacks deep in the call tree can find their line.
+func (m *Manager) registerTasks(tasks map[string]*progress.Task) {
+	m.tasksMu.Lock()
+	m.tasks = tasks
+	m.tasksMu.Unlock()
+}
+
+// taskFor returns the progress task for a component instance id. When none was
+// pre-registered (direct Deploy*Server calls, tests) it returns a detached
+// task so callers never need a nil check.
+func (m *Manager) taskFor(id string) *progress.Task {
+	m.tasksMu.RLock()
+	t := m.tasks[id]
+	m.tasksMu.RUnlock()
+	if t != nil {
+		return t
+	}
+	return m.reporter().AddTask(id, id)
+}
+
+// bindTask redirects an operator's streamed command output to the component's
+// progress line, so install/disk-prep output drives that line's detail (live
+// mode) instead of scrolling to stdout. No-op for operators that don't support
+// redirection (test fakes).
+func bindTask(op operator.CommandOperator, task *progress.Task) {
+	if s, ok := op.(operator.OutputSink); ok {
+		w := task.Writer()
+		s.SetOutput(w, w)
+	}
 }
 
 func (m *Manager) sudo(op operator.CommandOperator, cmd string) error {
-	info("[execute] " + cmd)
+	// In live mode the streamed command output already drives the component
+	// line, so suppress the verbose per-command trace that would otherwise
+	// scroll above the block. Plain mode keeps the historical "[INFO]
+	// [execute] …" line.
+	if !m.reporter().Live() {
+		m.info("[execute] " + cmd)
+	}
 	// Already root: run the command directly (the box may not even have
 	// sudo installed).
 	if m.User == "root" {

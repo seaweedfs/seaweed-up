@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/health"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/manager"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/preflight"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/scale"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/state"
@@ -33,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,6 +62,9 @@ type ClusterDeployOptions struct {
 	// release metadata lookup to dodge the 60 req/hr anonymous rate
 	// limit on shared CI runners.
 	Enterprise bool
+	// Plain disables the live docker-compose-style console and falls back to
+	// line-by-line logging (also the automatic behavior when stdout isn't a TTY).
+	Plain bool
 }
 
 type ClusterStatusOptions struct {
@@ -68,6 +73,8 @@ type ClusterStatusOptions struct {
 	Verbose    bool
 	Timeout    string
 	Refresh    int
+	// Plain forces the tabwriter table instead of the compose-style status view.
+	Plain bool
 }
 
 type ClusterUpgradeOptions struct {
@@ -83,6 +90,8 @@ type ClusterUpgradeOptions struct {
 	// Enterprise pulls target binaries from the public SeaweedFS
 	// enterprise release repo (github.com/seaweedfs/artifactory).
 	Enterprise bool
+	// Plain disables the live console (see ClusterDeployOptions.Plain).
+	Plain bool
 }
 
 type ClusterScaleOutOptions struct {
@@ -142,6 +151,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	mgr.ProxyUrl = opts.ProxyUrl
 	mgr.Concurrency = opts.Concurrency
 	mgr.Enterprise = opts.Enterprise
+	mgr.Reporter = progress.New(os.Stdout, opts.Plain)
 
 	// If `cluster plan -o` left a deploy-disks.json sidecar alongside
 	// cluster.yaml, feed its allowlist into the manager so
@@ -425,10 +435,75 @@ func displayClusterStatus(ctx context.Context, clusterSpec *spec.Specification, 
 		return ch, nil
 	}
 
-	if err := renderStatusTable(clusterSpec, ch, opts.Verbose); err != nil {
+	// Compose-style one-line-per-component view on a TTY; fall back to the
+	// plain tabwriter table when piped, in CI, or with --plain.
+	if opts.Plain || !stdoutIsTTY() {
+		if err := renderStatusTable(clusterSpec, ch, opts.Verbose); err != nil {
+			return ch, err
+		}
+		return ch, nil
+	}
+	if err := renderStatusCompose(clusterSpec, ch, opts.Verbose, os.Stdout); err != nil {
 		return ch, err
 	}
 	return ch, nil
+}
+
+// stdoutIsTTY reports whether stdout is an interactive terminal.
+func stdoutIsTTY() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// renderStatusCompose prints one colored line per probed component
+// (● green healthy / red unhealthy), aligned into fixed columns. It mirrors
+// renderStatusTable's information but in the docker-compose-style layout.
+func renderStatusCompose(s *spec.Specification, ch *health.ClusterHealth, verbose bool, w io.Writer) error {
+	name := s.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	color.Green("Cluster Status: %s", name)
+
+	green := color.New(color.FgGreen).SprintFunc()
+	red := color.New(color.FgRed).SprintFunc()
+
+	fmt.Fprintf(w, "  %-8s %-24s %-5s %-14s %s\n", "KIND", "ADDRESS", "STATE", "VERSION", "DETAIL")
+	row := func(r health.ProbeResult) {
+		dot, stateStr := green("●"), "OK"
+		if !r.Healthy {
+			dot, stateStr = red("●"), "DOWN"
+		}
+		detail := r.Err
+		if verbose && r.Raw != nil {
+			if b, err := json.Marshal(r.Raw); err == nil {
+				if detail != "" {
+					detail += " | " + string(b)
+				} else {
+					detail = string(b)
+				}
+			}
+		}
+		if detail == "" {
+			detail = "-"
+		}
+		fmt.Fprintf(w, "%s %-8s %-24s %-5s %-14s %s\n", dot, r.Kind, r.Address, stateStr, orDash(r.Version), detail)
+	}
+	for _, r := range ch.Masters {
+		row(r)
+	}
+	for _, r := range ch.Volumes {
+		row(r)
+	}
+	for _, r := range ch.Filers {
+		row(r)
+	}
+
+	if !ch.AllHealthy() {
+		color.Red("Cluster is UNHEALTHY")
+	} else {
+		color.Green("Cluster is healthy")
+	}
+	return nil
 }
 
 func renderStatusTable(s *spec.Specification, ch *health.ClusterHealth, verbose bool) error {
@@ -523,6 +598,7 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		mgr.SshPort = 22
 	}
 	mgr.Enterprise = opts.Enterprise
+	mgr.Reporter = progress.New(os.Stdout, opts.Plain)
 
 	if opts.User == "" {
 		currentUser, err := utils.CurrentUser()

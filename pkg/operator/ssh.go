@@ -16,6 +16,32 @@ type SSHOperator struct {
 	// chain — target client, bastion client, and any ssh-agent socket.
 	// When nil (direct connections) Close just closes conn.
 	cleanup func() error
+	// stdout/stderr redirect streamed command output when non-nil (set via
+	// SetOutput); nil falls back to os.Stdout/os.Stderr. One operator is
+	// owned by one goroutine, so these need no locking.
+	stdout io.Writer
+	stderr io.Writer
+}
+
+// SetOutput implements OutputSink: streamed Execute output (and Output's
+// stderr) is redirected to the given writers. Passing nil resets to os.Std*.
+func (s *SSHOperator) SetOutput(stdout, stderr io.Writer) {
+	s.stdout = stdout
+	s.stderr = stderr
+}
+
+func (s *SSHOperator) outW() io.Writer {
+	if s.stdout != nil {
+		return s.stdout
+	}
+	return os.Stdout
+}
+
+func (s *SSHOperator) errW() io.Writer {
+	if s.stderr != nil {
+		return s.stderr
+	}
+	return os.Stderr
 }
 
 func NewSSHOperator(address string, config *ssh.ClientConfig) (*SSHOperator, error) {
@@ -77,14 +103,14 @@ func newSSHOperatorViaBastion(b *BastionConfig, targetAddr string, config *ssh.C
 	return nil, lastErr
 }
 
-func (s SSHOperator) Close() error {
+func (s *SSHOperator) Close() error {
 	if s.cleanup != nil {
 		return s.cleanup()
 	}
 	return s.conn.Close()
 }
 
-func (s SSHOperator) Output(command string) (output []byte, err error) {
+func (s *SSHOperator) Output(command string) (output []byte, err error) {
 	sess, err := s.conn.NewSession()
 	if err != nil {
 		return nil, err
@@ -92,13 +118,15 @@ func (s SSHOperator) Output(command string) (output []byte, err error) {
 
 	defer sess.Close()
 
-	sess.Stderr = os.Stderr
+	// Only stderr is redirected; stdout is returned to the caller (upgrade
+	// health/version probes parse it), so it must not go to the sink.
+	sess.Stderr = s.errW()
 	output, err = sess.Output(command)
 
 	return output, err
 }
 
-func (s SSHOperator) Execute(command string) error {
+func (s *SSHOperator) Execute(command string) error {
 	sess, err := s.conn.NewSession()
 	if err != nil {
 		return err
@@ -106,19 +134,19 @@ func (s SSHOperator) Execute(command string) error {
 
 	defer sess.Close()
 
-	sess.Stdout = os.Stdout
-	sess.Stderr = os.Stderr
+	sess.Stdout = s.outW()
+	sess.Stderr = s.errW()
 	err = sess.Run(command)
 
 	return err
 }
 
-func (s SSHOperator) Upload(source io.Reader, remotePath string, mode string) error {
+func (s *SSHOperator) Upload(source io.Reader, remotePath string, mode string) error {
 	client, _ := scp.NewClientBySSH(s.conn)
 	return client.CopyFile(context.Background(), source, remotePath, mode)
 }
 
-func (s SSHOperator) UploadFile(path string, remotePath string, mode string) error {
+func (s *SSHOperator) UploadFile(path string, remotePath string, mode string) error {
 	source, err := os.Open(expandPath(path))
 	if err != nil {
 		return err

@@ -61,7 +61,7 @@ func (m *Manager) DeployEnvoyServer(filerSpecs []*spec.FilerServerSpec, envoySpe
 }
 
 func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component string, componentInstance string, envoySpec *spec.EnvoyServerSpec, buf *bytes.Buffer) error {
-	info("Deploying " + componentInstance + "...")
+	m.info("Deploying " + componentInstance + "...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
 
@@ -107,12 +107,12 @@ func (m *Manager) deployEnvoyInstance(op operator.CommandOperator, component str
 		return fmt.Errorf("error received during upload %s.yaml: %s", component, err)
 	}
 
-	info("Installing " + componentInstance + "...")
+	m.info("Installing " + componentInstance + "...")
 	err = op.Execute(fmt.Sprintf("cat %s/install_%s.sh | SUDO_PASS=\"%s\" sh -\n", dir, componentInstance, m.sudoPass))
 	if err != nil {
 		return fmt.Errorf("error received during installation: %s", err)
 	}
 
-	info("Done.")
+	m.info("Done.")
 	return nil
 }

@@ -48,7 +48,7 @@ func (m *Manager) resolveDevAsset(version string, specification *spec.Specificat
 	if err != nil {
 		return err
 	}
-	info(fmt.Sprintf("Resolved dev build %s -> %s", asset.BuildID, asset.DownloadURL))
+	m.info(fmt.Sprintf("Resolved dev build %s -> %s", asset.BuildID, asset.DownloadURL))
 	m.devAsset = &asset
 
 	// The Rust volume binary ships as a separate weed-volume-large-disk-*
@@ -58,7 +58,7 @@ func (m *Manager) resolveDevAsset(version string, specification *spec.Specificat
 		if err != nil {
 			return err
 		}
-		info(fmt.Sprintf("Resolved rust dev build %s -> %s", rustAsset.BuildID, rustAsset.DownloadURL))
+		m.info(fmt.Sprintf("Resolved rust dev build %s -> %s", rustAsset.BuildID, rustAsset.DownloadURL))
 		m.rustDevAsset = &rustAsset
 	} else {
 		m.rustDevAsset = nil

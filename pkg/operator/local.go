@@ -3,39 +3,53 @@ package operator
 import (
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
-
-	goexecute "github.com/alexellis/go-execute/pkg/v1"
 )
 
 type LocalOperator struct {
+	// stdout/stderr redirect command output when non-nil (set via
+	// SetOutput); nil falls back to os.Stdout/os.Stderr.
+	stdout io.Writer
+	stderr io.Writer
 }
 
 func NewLocalOperator() *LocalOperator {
 	return &LocalOperator{}
 }
 
-func (e LocalOperator) Output(command string) ([]byte, error) {
+// SetOutput implements OutputSink: command output is streamed to the given
+// writers instead of os.Stdout/os.Stderr. Passing nil resets to os.Std*.
+func (e *LocalOperator) SetOutput(stdout, stderr io.Writer) {
+	e.stdout = stdout
+	e.stderr = stderr
+}
+
+func (e *LocalOperator) Output(command string) ([]byte, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (e LocalOperator) Execute(command string) error {
-	task := goexecute.ExecTask{
-		Command:     command,
-		Shell:       true,
-		StreamStdio: true,
+// Execute runs command through bash, streaming stdout/stderr live to the
+// configured sink (default os.Stdout/os.Stderr). Replaces go-execute's
+// StreamStdio, which hardcodes os.Stdout and so can't be redirected into the
+// live progress console.
+func (e *LocalOperator) Execute(command string) error {
+	cmd := exec.Command("/bin/bash", "-c", command)
+	if e.stdout != nil {
+		cmd.Stdout = e.stdout
+	} else {
+		cmd.Stdout = os.Stdout
 	}
-
-	_, err := task.Execute()
-	if err != nil {
-		return err
+	if e.stderr != nil {
+		cmd.Stderr = e.stderr
+	} else {
+		cmd.Stderr = os.Stderr
 	}
-
-	return nil
+	return cmd.Run()
 }
 
-func (e LocalOperator) UploadFile(path string, remotePath string, mode string) error {
+func (e *LocalOperator) UploadFile(path string, remotePath string, mode string) error {
 	source, err := os.Open(expandPath(path))
 	if err != nil {
 		return err
@@ -45,7 +59,7 @@ func (e LocalOperator) UploadFile(path string, remotePath string, mode string) e
 	return e.Upload(source, remotePath, mode)
 }
 
-func (e LocalOperator) Upload(source io.Reader, remotePath string, mode string) error {
+func (e *LocalOperator) Upload(source io.Reader, remotePath string, mode string) error {
 	permissions, err := strconv.ParseInt(mode, 8, 32)
 	if err != nil {
 		return err
