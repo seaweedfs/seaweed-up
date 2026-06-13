@@ -91,6 +91,21 @@ func validateSingleAdminServer(specification *spec.Specification) error {
 		len(ips), strings.Join(ips, ", "))
 }
 
+// validateVolumeServers rejects nil entries in the volume_servers list.
+// A YAML null list item (a stray bullet on its own line, or `volume_servers:
+// [null]`) decodes to a nil *VolumeServerSpec; later passes that iterate the
+// list (disk-demand accounting, the per-server deploy fan-out, the Rust-asset
+// scan) would then dereference it and panic. Catch it up front with a clear
+// error, mirroring validateSingleAdminServer.
+func validateVolumeServers(specification *spec.Specification) error {
+	for i, v := range specification.VolumeServers {
+		if v == nil {
+			return fmt.Errorf("invalid cluster spec: volume_servers[%d] is null (yaml null list item?)", i)
+		}
+	}
+	return nil
+}
+
 // validateSftpFilerPrerequisite ensures that any SFTP server can reach a
 // filer: either the spec defines at least one FilerServer (which prepare()
 // would wire in as the default), or every SftpServer declares an explicit
@@ -174,6 +189,9 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateSingleAdminServer(specification); err != nil {
 		return err
 	}
+	if err := validateVolumeServers(specification); err != nil {
+		return err
+	}
 	if err := validateS3Prerequisites(specification); err != nil {
 		return err
 	}
@@ -183,7 +201,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	m.prepare(specification)
 
 	// Resolve the rolling "dev" build to a concrete dated asset, if asked.
-	if err := m.resolveDevAsset(m.Version); err != nil {
+	if err := m.resolveDevAsset(m.Version, specification); err != nil {
 		return fmt.Errorf("resolve dev build: %w", err)
 	}
 
@@ -602,15 +620,25 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		"Enterprise":        m.Enterprise,
 		// Rolling "dev" build fields. Empty unless m.Version == "dev" and
 		// the asset was resolved; install.sh takes its dev code path only
-		// when DevAssetURL is non-empty.
-		"DevAssetURL": "",
-		"DevMd5URL":   "",
-		"DevBuildID":  "",
+		// when DevAssetURL is non-empty. The Rust volume binary is a
+		// separate, independently-datestamped dev asset, threaded apart and
+		// used only by the rust install branch.
+		"DevAssetURL":     "",
+		"DevMd5URL":       "",
+		"DevBuildID":      "",
+		"RustDevAssetURL": "",
+		"RustDevMd5URL":   "",
+		"RustDevBuildID":  "",
 	}
 	if m.devAsset != nil {
 		data["DevAssetURL"] = m.devAsset.DownloadURL
 		data["DevMd5URL"] = m.devAsset.Md5URL
 		data["DevBuildID"] = m.devAsset.BuildID
+	}
+	if rustVolume && m.rustDevAsset != nil {
+		data["RustDevAssetURL"] = m.rustDevAsset.DownloadURL
+		data["RustDevMd5URL"] = m.rustDevAsset.Md5URL
+		data["RustDevBuildID"] = m.rustDevAsset.BuildID
 	}
 
 	// Configure proxy if specified

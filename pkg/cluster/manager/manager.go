@@ -131,9 +131,14 @@ type Manager struct {
 	sudoPass   string
 	confDir    string
 	dataDir    string
-	// devAsset holds the resolved rolling "dev" build (set by
-	// resolveDevAsset when Version == "dev"); nil for normal versions.
+	// devAsset holds the resolved rolling "dev" build of the Go `weed`
+	// server (set by resolveDevAsset when Version == "dev"); nil otherwise.
 	devAsset *config.DevAsset
+	// rustDevAsset holds the resolved rolling "dev" build of the standalone
+	// Rust `weed-volume` binary, set only when Version == "dev" and the spec
+	// has a Rust volume server (the dev release datestamps it separately
+	// from the Go asset); nil otherwise.
+	rustDevAsset *config.DevAsset
 
 	// prepareHostAddressFn overrides PrepareHostAddress for tests. When nil,
 	// PrepareAllHosts calls PrepareHostAddress directly.

@@ -16,6 +16,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"Version": "4.31", "ProxyConfig": "", "ReleaseOwner": "seaweedfs",
 		"ReleaseRepo": "seaweedfs", "AssetPrefix": "", "FullSuffix": "_full",
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
+		"RustDevAssetURL": "", "RustDevMd5URL": "", "RustDevBuildID": "",
 		"Binary": "weed", "RustVolume": false, "Enterprise": false,
 	}
 	for k, v := range data {
@@ -62,6 +63,7 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 		"BINARY=weed-volume",
 		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",             // versioned per-arch release asset
 		".weed-volume-version",                                       // version marker
+		`RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"`,         // composite key: version + flavor
 		"ExecStart=${BIN_DIR}/${BINARY} -options=",                   // no `weed volume` subcommand / go globals
 	} {
 		if !strings.Contains(out, want) {
@@ -74,6 +76,38 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	}
 	if strings.Contains(out, "-logdir=") || strings.Contains(out, "${COMPONENT} -options=") {
 		t.Errorf("rust ExecStart should not use go-style flags / subcommand")
+	}
+	// Stable releases ship a .md5, so checksum verification is mandatory:
+	// the best-effort skip notice must not appear on the stable path.
+	if strings.Contains(out, "skipping checksum verification") {
+		t.Errorf("stable rust path must verify md5, not skip it")
+	}
+}
+
+func TestInstallScript_RustVolumeDevPath(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "volume", "ComponentInstance": "volume0",
+		"Binary": "weed-volume", "RustVolume": true, "Version": "dev",
+		"RustDevAssetURL": "https://github.com/seaweedfs/seaweedfs/releases/download/dev/weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz",
+		"RustDevMd5URL":   "https://github.com/seaweedfs/seaweedfs/releases/download/dev/weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz.md5",
+		"RustDevBuildID":  "20260613-0656",
+	})
+	for _, want := range []string{
+		"BINARY=weed-volume",
+		"weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz", // resolved dev asset URL
+		`RUST_VERSION_ID="20260613-0656"`,                          // keyed on dev build id, not "dev"
+		".weed-volume-version",
+		"skipping checksum verification", // best-effort md5 (dev lacks .md5)
+		`[ "$md5Code" = "404" ]`,         // only a genuine 404 is a soft skip
+		"failed to fetch .md5",           // other md5 errors are fatal, not silent
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rust dev install script missing %q", want)
+		}
+	}
+	// must NOT construct the stable per-arch asset name with version=dev
+	if strings.Contains(out, "weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz") {
+		t.Errorf("rust dev path should use the resolved dev asset, not the stable asset name")
 	}
 }
 

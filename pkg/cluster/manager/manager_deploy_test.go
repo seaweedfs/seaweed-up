@@ -140,6 +140,30 @@ func TestValidateSingleAdminServer_rejectsTwo(t *testing.T) {
 	}
 }
 
+func TestValidateVolumeServers_rejectsNilEntry(t *testing.T) {
+	// No volume servers, or all real entries: allowed.
+	if err := validateVolumeServers(&spec.Specification{}); err != nil {
+		t.Errorf("empty volume_servers should pass: %v", err)
+	}
+	ok := &spec.Specification{}
+	ok.VolumeServers = append(ok.VolumeServers, &spec.VolumeServerSpec{Ip: "10.0.0.1"})
+	if err := validateVolumeServers(ok); err != nil {
+		t.Errorf("real volume_servers entry should pass: %v", err)
+	}
+
+	// A YAML null list item decodes to a nil *VolumeServerSpec; later passes
+	// iterate the list and would panic. The validator turns that into an error.
+	s := &spec.Specification{}
+	s.VolumeServers = append(s.VolumeServers, &spec.VolumeServerSpec{Ip: "10.0.0.1"}, nil)
+	err := validateVolumeServers(s)
+	if err == nil {
+		t.Fatal("expected error for nil volume_servers entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "null") {
+		t.Errorf("error should mention the null entry, got: %v", err)
+	}
+}
+
 func TestValidateSftpFilerPrerequisite_NoSftp(t *testing.T) {
 	s := &spec.Specification{}
 	if err := validateSftpFilerPrerequisite(s); err != nil {

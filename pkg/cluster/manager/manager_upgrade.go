@@ -95,7 +95,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 	// concrete dated build now (keyed on targetVersion, not m.Version which
 	// still holds the probed current version for rollback). The resolved
 	// asset + its build id drive the download and content-based skip check.
-	if err := m.resolveDevAsset(targetVersion); err != nil {
+	if err := m.resolveDevAsset(targetVersion, specification); err != nil {
 		return fmt.Errorf("resolve dev build: %w", err)
 	}
 
@@ -153,7 +153,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		// would still drive install.sh down the dev path and "roll back" to the
 		// very build we're backing out of. prev is the probed pre-upgrade
 		// release and never "dev", so this is effectively a clear.
-		if err := m.resolveDevAsset(prev); err != nil {
+		if err := m.resolveDevAsset(prev, specification); err != nil {
 			return fmt.Errorf("%s failed (%v); resolving rollback target %q: %w", t.describe, cause, prev, err)
 		}
 		if rbErr := m.upgradeOneHost(specification, masters, workerAdmins, t); rbErr != nil {
