@@ -63,6 +63,7 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 		"BINARY=weed-volume",
 		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",             // versioned per-arch release asset
 		".weed-volume-version",                                       // version marker
+		`RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"`,         // composite key: version + flavor
 		"ExecStart=${BIN_DIR}/${BINARY} -options=",                   // no `weed volume` subcommand / go globals
 	} {
 		if !strings.Contains(out, want) {
@@ -75,6 +76,11 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	}
 	if strings.Contains(out, "-logdir=") || strings.Contains(out, "${COMPONENT} -options=") {
 		t.Errorf("rust ExecStart should not use go-style flags / subcommand")
+	}
+	// Stable releases ship a .md5, so checksum verification is mandatory:
+	// the best-effort skip notice must not appear on the stable path.
+	if strings.Contains(out, "skipping checksum verification") {
+		t.Errorf("stable rust path must verify md5, not skip it")
 	}
 }
 
@@ -92,6 +98,8 @@ func TestInstallScript_RustVolumeDevPath(t *testing.T) {
 		`RUST_VERSION_ID="20260613-0656"`,                          // keyed on dev build id, not "dev"
 		".weed-volume-version",
 		"skipping checksum verification", // best-effort md5 (dev lacks .md5)
+		`[ "$md5Code" = "404" ]`,         // only a genuine 404 is a soft skip
+		"failed to fetch .md5",           // other md5 errors are fatal, not silent
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust dev install script missing %q", want)

@@ -91,6 +91,21 @@ func validateSingleAdminServer(specification *spec.Specification) error {
 		len(ips), strings.Join(ips, ", "))
 }
 
+// validateVolumeServers rejects nil entries in the volume_servers list.
+// A YAML null list item (a stray bullet on its own line, or `volume_servers:
+// [null]`) decodes to a nil *VolumeServerSpec; later passes that iterate the
+// list (disk-demand accounting, the per-server deploy fan-out, the Rust-asset
+// scan) would then dereference it and panic. Catch it up front with a clear
+// error, mirroring validateSingleAdminServer.
+func validateVolumeServers(specification *spec.Specification) error {
+	for i, v := range specification.VolumeServers {
+		if v == nil {
+			return fmt.Errorf("invalid cluster spec: volume_servers[%d] is null (yaml null list item?)", i)
+		}
+	}
+	return nil
+}
+
 // validateSftpFilerPrerequisite ensures that any SFTP server can reach a
 // filer: either the spec defines at least one FilerServer (which prepare()
 // would wire in as the default), or every SftpServer declares an explicit
@@ -172,6 +187,9 @@ func computeVolumeTargetDemand(volumes []*spec.VolumeServerSpec) (mountpoints, s
 
 func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateSingleAdminServer(specification); err != nil {
+		return err
+	}
+	if err := validateVolumeServers(specification); err != nil {
 		return err
 	}
 	if err := validateS3Prerequisites(specification); err != nil {

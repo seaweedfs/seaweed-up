@@ -130,8 +130,11 @@ download_and_install() {
   # binary named weed-volume-large-disk. OSS publishes weed-volume_... from
   # seaweedfs/seaweedfs; enterprise publishes weed-volume-enterprise_... from
   # seaweedfs/artifactory (ReleaseOwner/ReleaseRepo already select the repo).
-  RUST_VERSION_ID="${SEAWEED_VERSION}"
   RUST_ASSET="weed-volume{{if .Enterprise}}-enterprise{{end}}_large_disk_${OS}_${SUFFIX}.tar.gz"
+  # Key idempotency on version + asset name: the OSS and enterprise builds
+  # share a version but ship different binaries, so the asset name in the
+  # marker forces a reinstall when the flavor changes at the same version.
+  RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"
   RUST_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${RUST_ASSET}"
   RUST_MD5_URL="${RUST_URL}.md5"
 {{end}}
@@ -142,17 +145,31 @@ download_and_install() {
   else
     info "Downloading weed-volume ${RUST_VERSION_ID} (${RUST_URL})"
     curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}" -sfL "${RUST_URL}"
-    # Verify md5 when published. Stable releases ship a .md5; the rolling dev
-    # build currently does not, so a missing .md5 is best-effort rather than a
-    # hard failure (the download already came over HTTPS from the release).
-    if curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}.md5" -sfL "${RUST_MD5_URL}"; then
+{{if .RustDevAssetURL}}
+    # Rolling dev assets currently publish no .md5, so verification here is
+    # best-effort -- but only a genuine 404 (the checksum truly isn't there) is
+    # a soft skip. Capture the HTTP status (no -f, so 404 still returns a code;
+    # keep -L since release URLs redirect to the CDN) and fail loudly on
+    # network/proxy errors rather than silently install an unverified binary.
+    md5Code=$(curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}.md5" -sSL -w "%{http_code}" "${RUST_MD5_URL}" || true)
+    if [ "$md5Code" = "200" ]; then
       info "Verifying weed-volume ${RUST_VERSION_ID}"
-      md5Value=`cat "$TMP_DIR/${RUST_ASSET}.md5" | awk '{print $1}'`
+      md5Value=$(awk '{print $1}' "$TMP_DIR/${RUST_ASSET}.md5")
       ( cd "$TMP_DIR" && echo "${md5Value}  ${RUST_ASSET}" | md5sum -c )
-    else
+    elif [ "$md5Code" = "404" ]; then
       info "No .md5 published for weed-volume ${RUST_VERSION_ID}; skipping checksum verification"
+    else
+      fatal "failed to fetch .md5 for weed-volume ${RUST_VERSION_ID} (HTTP ${md5Code})"
     fi
-    rustBin=`tar tzf "$TMP_DIR/${RUST_ASSET}" | grep -E '(^|/)weed-volume(-large-disk)?$' | head -1`
+{{else}}
+    # Stable releases ship a .md5, so verification is mandatory: a failed
+    # download or missing checksum must abort rather than install unverified.
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${RUST_ASSET}.md5" -sfL "${RUST_MD5_URL}"
+    info "Verifying weed-volume ${RUST_VERSION_ID}"
+    md5Value=$(awk '{print $1}' "$TMP_DIR/${RUST_ASSET}.md5")
+    ( cd "$TMP_DIR" && echo "${md5Value}  ${RUST_ASSET}" | md5sum -c )
+{{end}}
+    rustBin=$(tar tzf "$TMP_DIR/${RUST_ASSET}" | grep -E '(^|/)weed-volume(-large-disk)?$' | head -1)
     if [ -z "$rustBin" ]; then fatal "no weed-volume binary in ${RUST_ASSET}"; fi
     $SUDO tar xzf "$TMP_DIR/${RUST_ASSET}" -C "$TMP_DIR"
     $SUDO install -m 0755 "$TMP_DIR/${rustBin}" "${BIN_DIR}/${BINARY}"
