@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/user"
 	"strconv"
@@ -143,23 +144,65 @@ func currentBastion() *BastionConfig {
 // scale-in master probes) ride the same tunnel the SSH operator uses instead
 // of failing to connect. The bastion is read at dial time, so callers don't
 // need to order construction against SetBastion.
+//
+// ssh.Client.Dial is synchronous and ignores context, so the tunnel dial runs
+// in a goroutine and we select on ctx: if the caller's deadline fires first we
+// return promptly and close any connection the goroutine later establishes,
+// rather than blocking on an unreachable address past the timeout.
 func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if b := currentBastion(); b != nil && b.Host != "" {
-		client, err := sharedBastionClient(b)
-		if err != nil {
-			return nil, err
-		}
-		// ssh.Client.Dial has no ctx; the caller's http.Client timeout still
-		// bounds the request. A failed tunnel dial usually means the shared
-		// bastion connection dropped, so drop it to force a re-dial next time.
-		conn, err := client.Dial(network, addr)
-		if err != nil {
-			dropBastion(client)
-			return nil, err
-		}
-		return conn, nil
+	b := currentBastion()
+	if b == nil || b.Host == "" {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
 	}
-	return (&net.Dialer{}).DialContext(ctx, network, addr)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	client, err := sharedBastionClient(b)
+	if err != nil {
+		return nil, err
+	}
+
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	ch := make(chan dialResult, 1)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		conn, derr := client.Dial(network, addr)
+		select {
+		case ch <- dialResult{conn, derr}:
+		case <-done:
+			if derr == nil {
+				_ = conn.Close() // caller already gave up; don't leak the conn
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.err != nil {
+			// A failed tunnel dial usually means the shared bastion connection
+			// dropped; drop it so the next attempt re-dials.
+			dropBastion(client)
+			return nil, res.err
+		}
+		return res.conn, nil
+	}
+}
+
+// HTTPTransport returns a clone of http.DefaultTransport — preserving its proxy,
+// connection-pool, and handshake/idle-timeout defaults — with DialContext set to
+// route through the configured jump host (see DialContext). Callers may further
+// set TLSClientConfig. Use this instead of a bare &http.Transport{} so probes
+// keep the standard transport behaviors.
+func HTTPTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = DialContext
+	return t
 }
 
 // sharedBastionClient returns the process-wide bastion connection,

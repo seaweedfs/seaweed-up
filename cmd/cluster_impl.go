@@ -928,10 +928,14 @@ func newUpgradeHTTPTransport(insecureSkipTLSVerify bool, clusterName string) *ht
 			}
 		}
 	}
-	// Tunnel probes through the jump host when one is configured (loadClusterSpec
-	// installs it via applyBastionFromSpec), so the upgrade version probe and the
-	// scale-in master/drain checks reach private addresses instead of failing.
-	return &http.Transport{TLSClientConfig: tlsConfig, DialContext: operator.DialContext}
+	// Clone of http.DefaultTransport (keeps proxy/idle/handshake defaults) with
+	// DialContext routing through the jump host when one is configured
+	// (loadClusterSpec installs it via applyBastionFromSpec), so the upgrade
+	// version probe and the scale-in master/drain checks reach private addresses
+	// instead of failing.
+	transport := operator.HTTPTransport()
+	transport.TLSClientConfig = tlsConfig
+	return transport
 }
 
 func runClusterScaleOut(clusterName string, opts *ClusterScaleOutOptions) error {
