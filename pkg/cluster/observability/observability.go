@@ -23,9 +23,14 @@ const NodeExporterVersion = "1.8.2"
 // NodeExporterPort is the TCP port node_exporter listens on.
 const NodeExporterPort = 9100
 
-// dashboardJSON is the bundled Grafana dashboard shipped with
-// seaweed-up. It is exposed for tests and callers that need to push it
-// to Grafana.
+// dashboardJSON is the bundled Grafana dashboard shipped with seaweed-up.
+// It is exposed for tests and callers that need to push it to Grafana.
+//
+// This is a vendored copy of the canonical SeaweedFS dashboard maintained in
+// the main repo at other/metrics/grafana_seaweedfs.json — keep the two in
+// sync rather than editing this file directly. It targets the direct-scrape
+// label model (job=seaweedfs-<component>, instance, optional cluster) that
+// `cluster prometheus-config` emits.
 //
 //go:embed dashboard.json
 var dashboardJSON []byte
