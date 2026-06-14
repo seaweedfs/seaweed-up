@@ -168,7 +168,7 @@ func (r *liveReporter) render(final bool) {
 		b.WriteByte('\n')
 	}
 	r.prevLines = len(r.tasks)
-	io.WriteString(r.w, b.String())
+	_, _ = io.WriteString(r.w, b.String())
 }
 
 func (r *liveReporter) renderLine(t *Task, final bool, width int) string {

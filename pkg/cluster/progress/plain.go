@@ -29,13 +29,13 @@ func (r *plainReporter) AddTask(id, label string) *Task {
 func (r *plainReporter) Log(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	fmt.Fprintln(r.w, "[INFO] "+msg)
+	_, _ = fmt.Fprintln(r.w, "[INFO] "+msg)
 }
 
 func (r *plainReporter) LogError(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	fmt.Fprintf(r.w, "[ERROR] %v\n", err)
+	_, _ = fmt.Fprintf(r.w, "[ERROR] %v\n", err)
 }
 
 func (r *plainReporter) Start()     {}
@@ -57,9 +57,9 @@ func (r *plainReporter) taskStateChanged(t *Task) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if detail != "" {
-			fmt.Fprintf(r.w, "[ERROR] %s\n", detail)
+			_, _ = fmt.Fprintf(r.w, "[ERROR] %s\n", detail)
 		} else {
-			fmt.Fprintf(r.w, "[ERROR] %s failed\n", t.label)
+			_, _ = fmt.Fprintf(r.w, "[ERROR] %s failed\n", t.label)
 		}
 	}
 }
