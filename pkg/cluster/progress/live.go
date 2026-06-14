@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -146,7 +147,7 @@ func (r *liveReporter) clock() time.Time               { return r.nowFn() }
 
 // render paints one frame. Caller holds r.mu.
 func (r *liveReporter) render(final bool) {
-	var b strings.Builder
+	var b bytes.Buffer
 	if r.prevLines > 0 {
 		fmt.Fprintf(&b, "\x1b[%dA", r.prevLines) // cursor up to top of block
 	}
@@ -168,7 +169,7 @@ func (r *liveReporter) render(final bool) {
 		b.WriteByte('\n')
 	}
 	r.prevLines = len(r.tasks)
-	io.WriteString(r.w, b.String())
+	_, _ = b.WriteTo(r.w) // writes the buffered bytes directly, no string copy
 }
 
 func (r *liveReporter) renderLine(t *Task, final bool, width int) string {

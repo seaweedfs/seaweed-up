@@ -467,7 +467,7 @@ func renderStatusCompose(s *spec.Specification, ch *health.ClusterHealth, verbos
 	green := color.New(color.FgGreen).SprintFunc()
 	red := color.New(color.FgRed).SprintFunc()
 
-	fmt.Fprintf(w, "  %-8s %-24s %-5s %-14s %s\n", "KIND", "ADDRESS", "STATE", "VERSION", "DETAIL")
+	_, _ = fmt.Fprintf(w, "  %-8s %-24s %-5s %-14s %s\n", "KIND", "ADDRESS", "STATE", "VERSION", "DETAIL")
 	row := func(r health.ProbeResult) {
 		dot, stateStr := green("●"), "OK"
 		if !r.Healthy {
@@ -486,7 +486,7 @@ func renderStatusCompose(s *spec.Specification, ch *health.ClusterHealth, verbos
 		if detail == "" {
 			detail = "-"
 		}
-		fmt.Fprintf(w, "%s %-8s %-24s %-5s %-14s %s\n", dot, r.Kind, r.Address, stateStr, orDash(r.Version), detail)
+		_, _ = fmt.Fprintf(w, "%s %-8s %-24s %-5s %-14s %s\n", dot, r.Kind, r.Address, stateStr, orDash(r.Version), detail)
 	}
 	for _, r := range ch.Masters {
 		row(r)
