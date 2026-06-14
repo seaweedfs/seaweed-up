@@ -144,15 +144,19 @@ func RenderPromConfig(s *spec.Specification) string {
 		hosts[f.Ip] = struct{}{}
 	}
 
-	writeJob(name+"-master", masters)
-	writeJob(name+"-volume", volumes)
-	writeJob(name+"-filer", filers)
+	// Job names use the fixed "seaweedfs-<component>" convention so they match
+	// the bundled Grafana dashboard's `job="seaweedfs-..."` selectors (and the
+	// upstream SeaweedFS convention). The cluster is distinguished by the
+	// `cluster` label written above, not by the job name.
+	writeJob("seaweedfs-master", masters)
+	writeJob("seaweedfs-volume", volumes)
+	writeJob("seaweedfs-filer", filers)
 
 	var nodeTargets []string
 	for h := range hosts {
 		nodeTargets = append(nodeTargets, fmt.Sprintf("%s:%d", h, NodeExporterPort))
 	}
-	writeJob(name+"-node-exporter", nodeTargets)
+	writeJob("seaweedfs-node-exporter", nodeTargets)
 
 	return b.String()
 }

@@ -50,8 +50,11 @@ func TestRenderPromConfigGolden(t *testing.T) {
 
 	got := RenderPromConfig(s)
 
+	// Job names are the fixed "seaweedfs-<component>" convention (matching the
+	// bundled Grafana dashboard's selectors); the cluster name appears only in
+	// the `cluster` label, not the job name.
 	want := `scrape_configs:
-  - job_name: "golden-master"
+  - job_name: "seaweedfs-master"
     metrics_path: /metrics
     static_configs:
       - targets:
@@ -59,14 +62,14 @@ func TestRenderPromConfigGolden(t *testing.T) {
           - "10.0.0.2:9324"
         labels:
           cluster: "golden"
-  - job_name: "golden-volume"
+  - job_name: "seaweedfs-volume"
     metrics_path: /metrics
     static_configs:
       - targets:
           - "10.0.0.3:9324"
         labels:
           cluster: "golden"
-  - job_name: "golden-filer"
+  - job_name: "seaweedfs-filer"
     metrics_path: /metrics
     static_configs:
       - targets:
@@ -80,7 +83,7 @@ func TestRenderPromConfigGolden(t *testing.T) {
 
 	// The node_exporter job is rendered last with a map-ordered target list,
 	// so verify its presence and unique hosts rather than exact ordering.
-	if !strings.Contains(got, `job_name: "golden-node-exporter"`) {
+	if !strings.Contains(got, `job_name: "seaweedfs-node-exporter"`) {
 		t.Error("missing node-exporter job")
 	}
 	for _, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"} {
