@@ -2,6 +2,7 @@ package operator
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -133,6 +134,32 @@ func currentBastion() *BastionConfig {
 	bastionMu.Lock()
 	defer bastionMu.Unlock()
 	return defaultBastion
+}
+
+// DialContext dials network/addr, tunneling through the configured jump host
+// when one is installed (see SetBastion) and connecting directly otherwise.
+// It is a drop-in for http.Transport.DialContext, so HTTP clients that must
+// reach private component addresses (the status health prober, upgrade and
+// scale-in master probes) ride the same tunnel the SSH operator uses instead
+// of failing to connect. The bastion is read at dial time, so callers don't
+// need to order construction against SetBastion.
+func DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if b := currentBastion(); b != nil && b.Host != "" {
+		client, err := sharedBastionClient(b)
+		if err != nil {
+			return nil, err
+		}
+		// ssh.Client.Dial has no ctx; the caller's http.Client timeout still
+		// bounds the request. A failed tunnel dial usually means the shared
+		// bastion connection dropped, so drop it to force a re-dial next time.
+		conn, err := client.Dial(network, addr)
+		if err != nil {
+			dropBastion(client)
+			return nil, err
+		}
+		return conn, nil
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
 }
 
 // sharedBastionClient returns the process-wide bastion connection,

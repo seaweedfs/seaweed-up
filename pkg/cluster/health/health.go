@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
 // serverHeaderVersionRe matches "SeaweedFS <version>" in an HTTP Server header,
@@ -134,6 +135,9 @@ func NewProber(timeout time.Duration) *Prober {
 		Scheme:  "http",
 		Client: &http.Client{
 			Timeout: timeout,
+			// Tunnel through the jump host when one is configured so status
+			// probes reach private component addresses; direct otherwise.
+			Transport: &http.Transport{DialContext: operator.DialContext},
 		},
 	}
 }
@@ -166,7 +170,7 @@ func NewProberForSpec(timeout time.Duration, s *spec.Specification, clusterCertD
 	}
 	p.Client = &http.Client{
 		Timeout:   timeout,
-		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+		Transport: &http.Transport{TLSClientConfig: tlsCfg, DialContext: operator.DialContext},
 	}
 	return p
 }
