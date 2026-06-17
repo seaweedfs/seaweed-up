@@ -76,7 +76,11 @@ func (vs *VolumeServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	}
 	addToBuffer(buf, "dir", strings.Join(dirs, ","))
 	addToBuffer(buf, "max", strings.Join(maxes, ","))
-	addToBuffer(buf, "disks", strings.Join(disks, ","))
+	// Both `weed volume` (Go) and `weed-volume` (Rust) take the disk-type
+	// flag as -disk (singular). The plural "disks" key was silently ignored
+	// by Go's lenient -options reader but rejected outright by the Rust
+	// binary's strict parser ("unexpected argument '--disks'").
+	addToBuffer(buf, "disk", strings.Join(disks, ","))
 	// `weed volume -dir.idx=<path>` puts the per-volume .idx files in
 	// a single shared directory rather than next to the data files in
 	// each -dir entry. Used to keep indexes on a small fast disk while
