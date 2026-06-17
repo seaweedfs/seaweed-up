@@ -64,7 +64,7 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",             // versioned per-arch release asset
 		".weed-volume-version",                                       // version marker
 		`RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"`,         // composite key: version + flavor
-		"ExecStart=${BIN_DIR}/${BINARY} -options=",                   // no `weed volume` subcommand / go globals
+		"ExecStart=${BIN_DIR}/${BINARY} --options=",                  // double-dash --options (Rust binary); no `weed volume` subcommand / go globals
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust volume install script missing %q", want)
