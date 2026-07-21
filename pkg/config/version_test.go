@@ -37,6 +37,7 @@ func TestPickRelease(t *testing.T) {
 func TestIsWeedReleaseTag(t *testing.T) {
 	for tag, want := range map[string]bool{
 		"4.40":      true,
+		"v4.40":     true,
 		"3.59":      true,
 		"vfs-0.1.6": false,
 		"dev":       false,

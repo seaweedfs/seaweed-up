@@ -65,10 +65,11 @@ func setGithubAuthHeaders(req *http.Request) {
 	}
 }
 
-// weedReleaseTagRE matches numeric weed release tags like "4.40". The
-// enterprise release repo also hosts other product lines (e.g. seaweed-vfs
-// client packages tagged "vfs-0.1.6") that carry no weed server assets.
-var weedReleaseTagRE = regexp.MustCompile(`^\d+\.\d+`)
+// weedReleaseTagRE matches numeric weed release tags like "4.40" (an
+// optional "v" prefix is tolerated). The enterprise release repo also hosts
+// other product lines (e.g. seaweed-vfs client packages tagged "vfs-0.1.6")
+// that carry no weed server assets.
+var weedReleaseTagRE = regexp.MustCompile(`^v?\d+\.\d+`)
 
 // IsWeedReleaseTag reports whether tag names a weed server release.
 func IsWeedReleaseTag(tag string) bool {
