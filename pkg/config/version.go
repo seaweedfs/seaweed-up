@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -64,9 +65,40 @@ func setGithubAuthHeaders(req *http.Request) {
 	}
 }
 
+// weedReleaseTagRE matches numeric weed release tags like "4.40". The
+// enterprise release repo also hosts other product lines (e.g. seaweed-vfs
+// client packages tagged "vfs-0.1.6") that carry no weed server assets.
+var weedReleaseTagRE = regexp.MustCompile(`^\d+\.\d+`)
+
+// IsWeedReleaseTag reports whether tag names a weed server release.
+func IsWeedReleaseTag(tag string) bool {
+	return weedReleaseTagRE.MatchString(tag)
+}
+
+// pickRelease selects the release for ver from releaseList: the newest tag
+// accepted by tagFilter when ver is "0" (nil accepts all), or the exact tag
+// match otherwise. Returns a zero Release when nothing matches.
+func pickRelease(releaseList []Release, ver string, tagFilter func(string) bool) Release {
+	if ver == "0" {
+		for _, r := range releaseList {
+			if tagFilter == nil || tagFilter(r.TagName) {
+				return r
+			}
+		}
+		return Release{}
+	}
+	for _, r := range releaseList {
+		if r.TagName == ver {
+			return r
+		}
+	}
+	return Release{}
+}
+
 // GitHubLatestRelease uses the GitHub API to get information about the specific
-// release of a repository.
-func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (Release, error) {
+// release of a repository. When ver is "0", the newest release whose tag passes
+// tagFilter is picked; pass nil to accept every tag.
+func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string, tagFilter func(string) bool) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, githubAPITimeout)
 	defer cancel()
 
@@ -105,26 +137,18 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 		return Release{}, err
 	}
 
-	var release Release
 	var releaseList []Release
 	err = json.Unmarshal(buf, &releaseList)
 	if err != nil {
 		return Release{}, err
 	}
-	if ver == "0" {
-		release = releaseList[0]
-		log.Printf("latest version is %v / %v", release.TagName, release.PublishedAt.Local())
-	} else {
-		for _, r := range releaseList {
-			if r.TagName == ver {
-				release = r
-				break
-			}
-		}
-	}
+	release := pickRelease(releaseList, ver, tagFilter)
 
 	if release.TagName == "" {
 		return Release{}, fmt.Errorf("can not find the specific version")
+	}
+	if ver == "0" {
+		log.Printf("latest version is %v / %v", release.TagName, release.PublishedAt.Local())
 	}
 
 	release.Version = release.TagName

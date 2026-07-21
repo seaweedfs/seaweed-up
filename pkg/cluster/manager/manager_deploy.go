@@ -556,7 +556,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		if m.EnvoyVersion == "" {
 			for _, es := range specification.EnvoyServers {
 				if es.Version == "" {
-					latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy")
+					latest, err := config.GitHubLatestRelease(context.Background(), "0", "envoyproxy", "envoy", nil)
 					if err != nil {
 						return errors.Wrapf(err, "unable to get latest envoy version, pin one with --envoy-version")
 					}
