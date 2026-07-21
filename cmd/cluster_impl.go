@@ -232,7 +232,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 	// version from the public artifactory repo instead of the OSS repo.
 	if mgr.Version == "" {
 		owner, repo := mgr.ReleaseOwnerRepo()
-		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", owner, repo)
+		latest, err := config.GitHubLatestRelease(cmd.Context(), "0", owner, repo, config.IsWeedReleaseTag)
 		if err != nil {
 			return fmt.Errorf("unable to get latest version from %s/%s: %w", owner, repo, err)
 		}
