@@ -158,7 +158,15 @@ jobs:
       - name: Write and read a file via filer
         run: |
           echo "hello-enterprise" > /tmp/test.txt
-          curl -sf -F file=@/tmp/test.txt http://172.28.0.10:8888/test/test.txt
+          # The first write races volume registration and can 500 — retry it;
+          # the read after a successful write is deterministic.
+          for i in $(seq 1 30); do
+            if curl -sf -F file=@/tmp/test.txt http://172.28.0.10:8888/test/test.txt; then
+              break
+            fi
+            [ "$i" = "30" ] && { echo "filer write never succeeded"; exit 1; }
+            sleep 2
+          done
           body=$(curl -sf http://172.28.0.10:8888/test/test.txt)
           echo "Read back: $body"
           echo "$body" | grep -q hello-enterprise
