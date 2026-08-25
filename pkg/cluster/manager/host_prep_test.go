@@ -15,6 +15,8 @@ type fakeOperator struct {
 	executed []string
 	uploads  map[string]string
 	execErr  error
+	// outputFn, when set, answers Output calls (e.g. the uname probe).
+	outputFn func(cmd string) ([]byte, error)
 }
 
 func newFakeOperator() *fakeOperator {
@@ -28,6 +30,9 @@ func (f *fakeOperator) Execute(cmd string) error {
 
 func (f *fakeOperator) Output(cmd string) ([]byte, error) {
 	f.executed = append(f.executed, cmd)
+	if f.outputFn != nil {
+		return f.outputFn(cmd)
+	}
 	return nil, f.execErr
 }
 

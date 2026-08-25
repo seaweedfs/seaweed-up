@@ -175,6 +175,39 @@ download_and_install() {
     $SUDO install -m 0755 "$TMP_DIR/${rustBin}" "${BIN_DIR}/${BINARY}"
     echo "${RUST_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
   fi
+{{else}}{{if .RustWorker}}
+  # Rust maintenance worker. The release ships linux amd64/arm64 only;
+  # refuse other targets up front.
+  case $SUFFIX in
+  amd64 | arm64) ;;
+  *)
+    fatal "weed-worker is published for linux amd64/arm64 only; this host is ${ARCH}"
+    ;;
+  esac
+  # Marker-keyed idempotency: weed-worker's version scheme differs from the release tag.
+  MARKER="${BIN_DIR}/.weed-worker-version"
+  OS="linux"
+  WORKER_ASSET="weed-worker_${OS}_${SUFFIX}.tar.gz"
+  WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"
+  WORKER_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${WORKER_ASSET}"
+  curID=""
+  [ -f "$MARKER" ] && curID=$(cat "$MARKER" 2>/dev/null)
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$curID" = "${WORKER_VERSION_ID}" ]; then
+    info "weed-worker ${WORKER_VERSION_ID} already installed, skipping"
+  else
+    info "Downloading weed-worker ${WORKER_VERSION_ID} (${WORKER_URL})"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${WORKER_ASSET}" -sfL "${WORKER_URL}"
+    # Every worker asset ships a .md5; verification is mandatory.
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${WORKER_ASSET}.md5" -sfL "${WORKER_URL}.md5"
+    info "Verifying weed-worker ${WORKER_VERSION_ID}"
+    md5Value=$(awk '{print $1}' "$TMP_DIR/${WORKER_ASSET}.md5")
+    ( cd "$TMP_DIR" && echo "${md5Value}  ${WORKER_ASSET}" | md5sum -c )
+    # The archive holds a single file named weed-worker.
+    $SUDO tar xzf "$TMP_DIR/${WORKER_ASSET}" -C "$TMP_DIR"
+    [ -f "$TMP_DIR/weed-worker" ] || fatal "no weed-worker binary in ${WORKER_ASSET}"
+    $SUDO install -m 0755 "$TMP_DIR/weed-worker" "${BIN_DIR}/${BINARY}"
+    echo "${WORKER_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
+  fi
 {{else}}{{if .DevAssetURL}}
   # Rolling "dev" build path. The version string ("dev") never changes, so
   # idempotency keys on the build datestamp ({{.DevBuildID}}) recorded in a
@@ -251,7 +284,7 @@ download_and_install() {
     info "Unpacking ${SEAWEED_VERSION} ${assetFileName}"
     $SUDO tar xvf "$TMP_DIR/seaweed_${SEAWEED_VERSION}_${assetFileName}" --directory $BIN_DIR
   fi
-{{end}}{{end}}
+{{end}}{{end}}{{end}}
 }
 
 create_user_and_config() {
@@ -278,7 +311,7 @@ StartLimitIntervalSec=10
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
-{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}
+{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustWorker}}ExecStart=${BIN_DIR}/${BINARY} {{.RustWorkerArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process
 KillSignal=SIGINT

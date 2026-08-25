@@ -68,6 +68,9 @@ type componentHooks struct {
 	// fresh on every deploy attempt because each extra carries a single-use
 	// Reader the retry loop would otherwise exhaust. May be nil.
 	extras func() ([]extraConfigFile, error)
+	// postDeploy runs inside the SSH session after the main unit is
+	// reinstalled (worker hosts reinstall the companion Lance unit). May be nil.
+	postDeploy func(op operator.CommandOperator) error
 	// engine selects the volume binary ("" Go weed, "rust" weed-volume);
 	// empty for non-volume components.
 	engine string
@@ -361,6 +364,9 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			sshAddr:     net.JoinHostPort(w.Ip, strconv.Itoa(w.PortSsh)),
 			stop:        func() error { return m.StopWorkerServer(w, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { w.WriteToBuffer(workerAdmins, buf) },
+			postDeploy: func(op operator.CommandOperator) error {
+				return m.deployLanceWorker(op, workerAdmins, w, t.index)
+			},
 		}
 	default:
 		return fmt.Errorf("unknown component: %s", t.component)
@@ -397,6 +403,11 @@ func (m *Manager) runUpgradeHost(t upgradeTarget, hooks componentHooks) error {
 			}
 			if err := m.deployComponentBinary(op, hooks.serviceName, componentInstance, hooks.engine, &buf, extras...); err != nil {
 				return err
+			}
+			if hooks.postDeploy != nil {
+				if err := hooks.postDeploy(op); err != nil {
+					return err
+				}
 			}
 			return m.sudo(op, fmt.Sprintf("systemctl restart seaweed_%s.service", componentInstance))
 		})

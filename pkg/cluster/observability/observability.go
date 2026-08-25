@@ -149,6 +149,21 @@ func RenderPromConfig(s *spec.Specification) string {
 		hosts[f.Ip] = struct{}{}
 	}
 
+	// Worker metrics are opt-in (no auto-assignment). Worker hosts carry no
+	// node_exporter, so they stay out of that job.
+	var workers []string
+	for _, w := range s.WorkerServers {
+		if w == nil {
+			continue
+		}
+		if w.MetricsPort != 0 {
+			workers = append(workers, fmt.Sprintf("%s:%d", w.Ip, w.MetricsPort))
+		}
+		if w.LanceMetricsPort != 0 {
+			workers = append(workers, fmt.Sprintf("%s:%d", w.Ip, w.LanceMetricsPort))
+		}
+	}
+
 	// Job names use the fixed "seaweedfs-<component>" convention so they match
 	// the bundled Grafana dashboard's `job="seaweedfs-..."` selectors (and the
 	// upstream SeaweedFS convention). The cluster is distinguished by the
@@ -156,6 +171,7 @@ func RenderPromConfig(s *spec.Specification) string {
 	writeJob("seaweedfs-master", masters)
 	writeJob("seaweedfs-volume", volumes)
 	writeJob("seaweedfs-filer", filers)
+	writeJob("seaweedfs-worker", workers)
 
 	var nodeTargets []string
 	for h := range hosts {

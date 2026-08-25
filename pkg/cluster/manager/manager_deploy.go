@@ -658,6 +658,15 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 	for _, workerSpec := range specification.WorkerServers {
 		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
+		// Default the Lance namespace to the first s3 server's port.lance.
+		if workerSpec.Namespace == "" && len(specification.S3Servers) > 0 {
+			s3Spec := specification.S3Servers[0]
+			lancePort := s3Spec.PortLance
+			if lancePort == 0 {
+				lancePort = 9101
+			}
+			workerSpec.Namespace = "http://" + net.JoinHostPort(s3Spec.Ip, strconv.Itoa(lancePort))
+		}
 	}
 	// The monitoring host's SSH port isn't a struct-tag default, so normalize
 	// it here like every other server; otherwise lifecycle commands would dial
@@ -665,6 +674,24 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	if specification.Monitoring != nil {
 		specification.Monitoring.PortSsh = utils.NvlInt(specification.Monitoring.PortSsh, m.SshPort, 22)
 	}
+}
+
+// rustWorkerArgs turns rendered worker-lance options into `--key value` flags:
+// weed-worker reads no options file, so they go on the ExecStart line.
+func rustWorkerArgs(cliOptions *bytes.Buffer) string {
+	var args []string
+	for _, line := range strings.Split(cliOptions.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		args = append(args, "--"+k, v)
+	}
+	return strings.Join(args, " ")
 }
 
 func (m *Manager) deployComponentInstance(op operator.CommandOperator, component string, componentInstance string, cliOptions *bytes.Buffer, extras ...extraConfigFile) error {
@@ -710,12 +737,16 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		fullSuffix = ""
 	}
 
-	// Rust volume servers install the standalone weed-volume binary; every
-	// other component (and Go volume servers) install weed.
+	// Rust volume servers install weed-volume, the worker-lance component
+	// weed-worker; everything else installs weed.
 	rustVolume := engine == "rust" || engine == "weed-volume"
+	rustWorker := component == workerLanceComponent
 	binary := "weed"
-	if rustVolume {
+	switch {
+	case rustVolume:
 		binary = "weed-volume"
+	case rustWorker:
+		binary = "weed-worker"
 	}
 
 	data := map[string]interface{}{
@@ -723,6 +754,8 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		"ComponentInstance": componentInstance,
 		"Binary":            binary,
 		"RustVolume":        rustVolume,
+		"RustWorker":        rustWorker,
+		"RustWorkerArgs":    "",
 		"ConfigDir":         m.confDir,
 		"DataDir":           m.dataDir,
 		"TmpDir":            dir,
@@ -752,6 +785,9 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		data["DevAssetURL"] = m.devAsset.DownloadURL
 		data["DevMd5URL"] = m.devAsset.Md5URL
 		data["DevBuildID"] = m.devAsset.BuildID
+	}
+	if rustWorker {
+		data["RustWorkerArgs"] = rustWorkerArgs(cliOptions)
 	}
 	if rustVolume && m.rustDevAsset != nil {
 		data["RustDevAssetURL"] = m.rustDevAsset.DownloadURL
