@@ -8,12 +8,16 @@ import (
 // It is deployed as a separate process running `weed s3`, talking to an
 // existing filer endpoint.
 type S3ServerSpec struct {
-	Ip          string                 `yaml:"ip"`
-	PortSsh     int                    `yaml:"port.ssh" default:"22"`
-	IpBind      string                 `yaml:"ip.bind,omitempty"`
-	Port        int                    `yaml:"port" default:"8333"`
-	PortGrpc    int                    `yaml:"port.grpc,omitempty"`
-	MetricsPort int                    `yaml:"metrics_port,omitempty"`
+	Ip       string `yaml:"ip"`
+	PortSsh  int    `yaml:"port.ssh" default:"22"`
+	IpBind   string `yaml:"ip.bind,omitempty"`
+	Port     int    `yaml:"port" default:"8333"`
+	PortGrpc int    `yaml:"port.grpc,omitempty"`
+	// PortIceberg / PortLance map to `weed s3 -port.iceberg` / `-port.lance`;
+	// zero omits the option so the weed defaults (8181/9101) hold.
+	PortIceberg int `yaml:"port.iceberg,omitempty"`
+	PortLance   int `yaml:"port.lance,omitempty"`
+	MetricsPort int `yaml:"metrics_port,omitempty"`
 	// Filer is the ip:port of the filer this gateway connects to. If empty,
 	// the deploy logic will default it to the first filer in the spec.
 	Filer string `yaml:"filer,omitempty"`
@@ -31,6 +35,8 @@ func (s *S3ServerSpec) WriteToBuffer(buf *bytes.Buffer, s3ConfigPath string) {
 	addToBuffer(buf, "ip.bind", s.IpBind)
 	addToBufferInt(buf, "port", s.Port, 8333)
 	addToBufferInt(buf, "port.grpc", s.PortGrpc, 0)
+	addToBufferInt(buf, "port.iceberg", s.PortIceberg, 0)
+	addToBufferInt(buf, "port.lance", s.PortLance, 0)
 	addToBufferInt(buf, "metricsPort", s.MetricsPort, 0)
 	addToBuffer(buf, "filer", s.Filer)
 	if s3ConfigPath != "" {

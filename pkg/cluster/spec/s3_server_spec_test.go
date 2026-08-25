@@ -27,6 +27,8 @@ func TestS3ServerSpec_WriteToBuffer_AllFields(t *testing.T) {
 		IpBind:      "0.0.0.0",
 		Port:        8443,
 		PortGrpc:    18443,
+		PortIceberg: 8181,
+		PortLance:   9101,
 		MetricsPort: 9091,
 		Filer:       "10.0.0.2:8888",
 	}
@@ -38,6 +40,8 @@ func TestS3ServerSpec_WriteToBuffer_AllFields(t *testing.T) {
 		"ip.bind=0.0.0.0\n" +
 		"port=8443\n" +
 		"port.grpc=18443\n" +
+		"port.iceberg=8181\n" +
+		"port.lance=9101\n" +
 		"metricsPort=9091\n" +
 		"filer=10.0.0.2:8888\n" +
 		"config=/etc/seaweed/s30.d/s3.json\n"
