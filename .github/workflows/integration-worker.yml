@@ -128,11 +128,12 @@ jobs:
       - name: Deploy cluster with worker
         working-directory: test/integration
         run: |
+          set -o pipefail
           ../../seaweed-up cluster deploy test-worker \
             -f testdata/cluster-worker.yaml \
             -u root \
             --identity .ssh/id_rsa_test \
-            --yes
+            --yes 2>&1 | tee deploy.log
 
           echo "Waiting for services to initialize..."
           sleep 30
@@ -153,6 +154,23 @@ jobs:
             exit 1
           fi
           echo "Worker service verified active on host3"
+
+      - name: Verify Lance worker deployed or skipped with a warning
+        working-directory: test/integration
+        run: |
+          # Either the Lance unit is active (release ships weed-worker) or the
+          # skip warning was logged; silence means the Lance path never ran.
+          state=$(docker exec seaweed-up-host3 systemctl is-active seaweed_worker-lance0 2>/dev/null || true)
+          echo "seaweed_worker-lance0 state: $state"
+          if [ "$state" = "active" ]; then
+            echo "Lance worker unit verified active on host3"
+          elif grep -q "skipping the Lance maintenance worker" deploy.log; then
+            echo "Lance worker skipped with a warning (release carries no weed-worker asset yet)"
+          else
+            echo "Neither an active seaweed_worker-lance0 unit nor a skip warning found"
+            docker exec seaweed-up-host3 journalctl -u seaweed_worker-lance0 --no-pager -n 100 2>&1 || true
+            exit 1
+          fi
 
       - name: Archive logs
         if: always()

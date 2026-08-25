@@ -20,6 +20,11 @@ filer_servers:
   - ip: 172.28.0.10
     port: 8888
 
+# An s3 server makes a Lance namespace derivable, so the deploy exercises the
+# worker host's Lance unit path.
+s3_servers:
+  - ip: 172.28.0.10
+
 worker_servers:
   - ip: 172.28.0.12
     admin: 172.28.0.10:23646
