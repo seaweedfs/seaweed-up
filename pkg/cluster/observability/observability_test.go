@@ -124,3 +124,45 @@ func TestNodeExporterUnitContainsPort(t *testing.T) {
 		t.Error("systemd unit missing ExecStart")
 	}
 }
+
+// Worker metrics are opt-in; worker hosts must not join the node_exporter job.
+func TestRenderPromConfigWorkerTargets(t *testing.T) {
+	s := &spec.Specification{
+		Name: "golden",
+		MasterServers: []*spec.MasterServerSpec{
+			{Ip: "10.0.0.1", MetricsPort: 9324},
+		},
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "10.0.0.71", MetricsPort: 9327, LanceMetricsPort: 9328},
+			{Ip: "10.0.0.72"}, // no metrics ports: contributes no targets
+		},
+	}
+
+	got := RenderPromConfig(s)
+	want := `  - job_name: "seaweedfs-worker"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "10.0.0.71:9327"
+          - "10.0.0.71:9328"
+        labels:
+          cluster: "golden"
+`
+	if !strings.Contains(got, want) {
+		t.Errorf("worker job mismatch:\nwant block:\n%s\ngot:\n%s", want, got)
+	}
+	if strings.Contains(got, "10.0.0.72") {
+		t.Error("a worker without metrics ports should contribute no targets")
+	}
+	if strings.Contains(got, "10.0.0.71:9100") {
+		t.Error("worker hosts must not join the node_exporter job")
+	}
+
+	s2 := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1"}},
+		WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.71"}},
+	}
+	if strings.Contains(RenderPromConfig(s2), "seaweedfs-worker") {
+		t.Error("no worker job expected when no worker exposes metrics")
+	}
+}

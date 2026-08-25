@@ -303,3 +303,43 @@ func TestResolveWorkerDefaultAdmins(t *testing.T) {
 		}
 	})
 }
+
+// TestPrepare_DerivesLanceNamespace covers the worker namespace default.
+func TestPrepare_DerivesLanceNamespace(t *testing.T) {
+	m := &Manager{User: "root"} // root skips the sudo password prompt
+
+	sp := &spec.Specification{
+		S3Servers: []*spec.S3ServerSpec{{Ip: "10.0.0.51"}},
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "10.0.0.10"},
+			{Ip: "10.0.0.11", Namespace: "http://lance.example:9200"},
+		},
+	}
+	m.prepare(sp)
+
+	if got, want := sp.WorkerServers[0].Namespace, "http://10.0.0.51:9101"; got != want {
+		t.Errorf("derived namespace: got %q want %q", got, want)
+	}
+	if got, want := sp.WorkerServers[1].Namespace, "http://lance.example:9200"; got != want {
+		t.Errorf("explicit namespace must win, got %q want %q", got, want)
+	}
+
+	sp2 := &spec.Specification{
+		S3Servers: []*spec.S3ServerSpec{{Ip: "10.0.0.51", PortLance: 9200}},
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "10.0.0.10"},
+		},
+	}
+	m.prepare(sp2)
+	if got, want := sp2.WorkerServers[0].Namespace, "http://10.0.0.51:9200"; got != want {
+		t.Errorf("derived namespace with explicit port.lance: got %q want %q", got, want)
+	}
+
+	sp3 := &spec.Specification{
+		WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.10"}},
+	}
+	m.prepare(sp3)
+	if got := sp3.WorkerServers[0].Namespace; got != "" {
+		t.Errorf("no s3 servers: namespace should stay empty, got %q", got)
+	}
+}

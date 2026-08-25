@@ -18,6 +18,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
 		"RustDevAssetURL": "", "RustDevMd5URL": "", "RustDevBuildID": "",
 		"Binary": "weed", "RustVolume": false, "Enterprise": false,
+		"RustWorker": false, "RustWorkerArgs": "",
 	}
 	for k, v := range data {
 		base[k] = v
@@ -61,10 +62,10 @@ func TestInstallScript_RustVolumePath(t *testing.T) {
 	})
 	for _, want := range []string{
 		"BINARY=weed-volume",
-		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",             // versioned per-arch release asset
-		".weed-volume-version",                                       // version marker
-		`RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"`,         // composite key: version + flavor
-		"ExecStart=${BIN_DIR}/${BINARY} --options=",                  // double-dash --options (Rust binary); no `weed volume` subcommand / go globals
+		"weed-volume_large_disk_${OS}_${SUFFIX}.tar.gz",      // versioned per-arch release asset
+		".weed-volume-version",                               // version marker
+		`RUST_VERSION_ID="${SEAWEED_VERSION}:${RUST_ASSET}"`, // composite key: version + flavor
+		"ExecStart=${BIN_DIR}/${BINARY} --options=",          // double-dash --options (Rust binary); no `weed volume` subcommand / go globals
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust volume install script missing %q", want)
@@ -95,7 +96,7 @@ func TestInstallScript_RustVolumeDevPath(t *testing.T) {
 	for _, want := range []string{
 		"BINARY=weed-volume",
 		"weed-volume-large-disk-20260613-0656-linux-amd64.tar.gz", // resolved dev asset URL
-		`RUST_VERSION_ID="20260613-0656"`,                          // keyed on dev build id, not "dev"
+		`RUST_VERSION_ID="20260613-0656"`,                         // keyed on dev build id, not "dev"
 		".weed-volume-version",
 		"skipping checksum verification", // best-effort md5 (dev lacks .md5)
 		`[ "$md5Code" = "404" ]`,         // only a genuine 404 is a soft skip
@@ -125,6 +126,38 @@ func TestInstallScript_RustVolumeEnterprisePath(t *testing.T) {
 	}
 	if strings.Contains(out, "weed-volume_large_disk_") {
 		t.Errorf("enterprise rust path should not use the OSS asset name")
+	}
+}
+
+func TestInstallScript_RustWorkerPath(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
+		"Binary": "weed-worker", "RustWorker": true, "Version": "4.44",
+		"RustWorkerArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+	})
+	for _, want := range []string{
+		"BINARY=weed-worker",
+		"weed-worker_${OS}_${SUFFIX}.tar.gz", // versioned per-arch release asset
+		".weed-worker-version",               // version marker
+		`WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"`,
+		"weed-worker is published for linux amd64/arm64 only", // arch guard
+		"md5sum -c",
+		// flags on the ExecStart line: weed-worker reads no options file
+		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rust worker install script missing %q", want)
+		}
+	}
+	// must not take the Go weed download path or the go-style ExecStart
+	if strings.Contains(out, "_full_large_disk.tar.gz") {
+		t.Errorf("rust worker path should not download the Go weed tarball")
+	}
+	if strings.Contains(out, "-logdir=") || strings.Contains(out, "${COMPONENT} -options=") {
+		t.Errorf("rust worker ExecStart should not use go-style flags / subcommand")
+	}
+	if strings.Contains(out, "weed-volume") {
+		t.Errorf("rust worker path should not reference weed-volume")
 	}
 }
 

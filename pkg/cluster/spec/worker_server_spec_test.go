@@ -96,3 +96,56 @@ func TestWorkerServerSpec_WriteToBuffer_JobTypeInConfigSuppressed(t *testing.T) 
 		t.Errorf("Config jobType should be dropped by reserved-keys filter; got %q", got)
 	}
 }
+
+func TestWorkerServerSpec_WriteToBuffer_MetricsPort(t *testing.T) {
+	w := &WorkerServerSpec{
+		Ip:          "10.0.0.5",
+		Admin:       "10.0.0.1:23646",
+		MetricsPort: 9327,
+	}
+	var buf bytes.Buffer
+	w.WriteToBuffer(nil, &buf)
+
+	got := buf.String()
+	want := "admin=10.0.0.1:23646\njobType=all\nmetricsPort=9327\n"
+	if got != want {
+		t.Fatalf("WriteToBuffer metrics port: got %q want %q", got, want)
+	}
+}
+
+func TestWorkerServerSpec_WriteLanceToBuffer(t *testing.T) {
+	// Go-worker vocabulary (jobType, metricsPort, Config) must not leak in;
+	// a non-zero lance metrics port brings the 0.0.0.0 bind with it.
+	w := &WorkerServerSpec{
+		Ip:               "10.0.0.5",
+		Namespace:        "http://10.0.0.51:9101",
+		JobType:          "ec,balance",
+		MetricsPort:      9327,
+		LanceMetricsPort: 9328,
+		Config:           map[string]interface{}{"maxDetect": 2},
+	}
+	var buf bytes.Buffer
+	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
+
+	got := buf.String()
+	want := "admin=10.0.0.1:23646\nnamespace=http://10.0.0.51:9101\nmetrics-port=9328\nmetrics-ip=0.0.0.0\n"
+	if got != want {
+		t.Fatalf("WriteLanceToBuffer: got %q want %q", got, want)
+	}
+}
+
+func TestWorkerServerSpec_WriteLanceToBuffer_ExplicitAdmin(t *testing.T) {
+	w := &WorkerServerSpec{
+		Ip:        "10.0.0.5",
+		Admin:     "10.0.0.2:23646",
+		Namespace: "http://10.0.0.51:9101",
+	}
+	var buf bytes.Buffer
+	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
+
+	got := buf.String()
+	want := "admin=10.0.0.2:23646\nnamespace=http://10.0.0.51:9101\n"
+	if got != want {
+		t.Fatalf("WriteLanceToBuffer explicit admin: got %q want %q", got, want)
+	}
+}

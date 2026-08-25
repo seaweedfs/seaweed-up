@@ -29,6 +29,15 @@ type WorkerServerSpec struct {
 	Config  map[string]interface{} `yaml:"config,omitempty"`
 	Arch    string                 `yaml:"arch,omitempty"`
 	OS      string                 `yaml:"os,omitempty"`
+	// MetricsPort exposes the Go worker's /metrics (`weed worker -metricsPort`);
+	// the Rust unit has its own LanceMetricsPort so the two never share a port.
+	MetricsPort int `yaml:"metrics_port,omitempty"`
+	// LanceMetricsPort exposes the companion Rust unit's /metrics
+	// (`weed-worker --metrics-port`); 9328 continues the per-component series.
+	LanceMetricsPort int `yaml:"lance_metrics_port,omitempty"`
+	// Namespace is the companion Rust weed-worker's Lance namespace URL; empty
+	// derives from the first s3 server's port.lance (9101), else the unit skips.
+	Namespace string `yaml:"namespace,omitempty"`
 }
 
 // DefaultWorkerJobType is the value WriteToBuffer falls back to when
@@ -63,17 +72,14 @@ var workerReservedKeys = map[string]struct{}{
 // sorted key order, skipping any keys that collide with fields already
 // rendered from explicit struct fields.
 func (w *WorkerServerSpec) WriteToBuffer(admins []string, buf *bytes.Buffer) {
-	admin := w.Admin
-	if admin == "" && len(admins) > 0 {
-		admin = admins[0]
-	}
-	addToBuffer(buf, "admin", admin)
+	addToBuffer(buf, "admin", w.adminEndpoint(admins))
 
 	jobType := w.JobType
 	if jobType == "" {
 		jobType = DefaultWorkerJobType
 	}
 	addToBuffer(buf, "jobType", jobType)
+	addToBufferInt(buf, "metricsPort", w.MetricsPort, 0)
 
 	if len(w.Config) == 0 {
 		return
@@ -88,5 +94,28 @@ func (w *WorkerServerSpec) WriteToBuffer(admins []string, buf *bytes.Buffer) {
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Fprintf(buf, "%s=%v\n", k, w.Config[k])
+	}
+}
+
+// adminEndpoint is the explicit Admin field or the deploy-time default.
+func (w *WorkerServerSpec) adminEndpoint(admins []string) string {
+	if w.Admin != "" {
+		return w.Admin
+	}
+	if len(admins) > 0 {
+		return admins[0]
+	}
+	return ""
+}
+
+// WriteLanceToBuffer renders the companion Rust unit's options; the deploy
+// path turns them into ExecStart flags since weed-worker reads no options file.
+func (w *WorkerServerSpec) WriteLanceToBuffer(admins []string, buf *bytes.Buffer) {
+	addToBuffer(buf, "admin", w.adminEndpoint(admins))
+	addToBuffer(buf, "namespace", w.Namespace)
+	addToBufferInt(buf, "metrics-port", w.LanceMetricsPort, 0)
+	if w.LanceMetricsPort != 0 {
+		// weed-worker defaults metrics to loopback; prometheus scrapes remotely.
+		addToBuffer(buf, "metrics-ip", "0.0.0.0")
 	}
 }
