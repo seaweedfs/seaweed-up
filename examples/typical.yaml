@@ -9,6 +9,8 @@
 # throughput, increase s3_servers if S3 traffic saturates a gateway, and
 # increase worker_servers if background maintenance queues back up.
 
+cluster_name: seaweed-typical
+
 global:
   dir.conf: "/etc/seaweed"
   dir.data: "/opt/seaweed"

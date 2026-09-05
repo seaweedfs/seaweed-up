@@ -42,6 +42,30 @@ Two example specs live under `examples/`:
   2 S3 gateways, 1 admin, 2 workers, and a co-located Prometheus + Grafana
   monitoring stack.
 
+## Cluster name
+
+Set a top-level `cluster_name` in every spec that has `filer_servers` or
+`admin_servers` (both example specs above set one):
+
+```yaml
+cluster_name: my-cluster
+```
+
+The filer needs a `jwt.filer_signing` key to register the IAM gRPC service
+the Admin UI Users tab calls, and the admin server signs Bearer tokens with
+that same key — this is required even with TLS off. `seaweed-up` generates
+that key on first deploy and persists it locally under
+`~/.seaweed-up/clusters/<cluster_name>/` so later runs (redeploys, scale
+out/in, upgrades) reuse it instead of rotating it and locking out existing
+tokens. Without a `cluster_name` there's nowhere stable to persist it, so
+`cluster deploy` fails fast with `cluster name is required to persist
+jwt.filer_signing key` rather than silently generating a throwaway one.
+`cluster_name` also doubles as the `<cluster-name>` argument to `cluster
+status` / `upgrade` / `scale` / `destroy`, and can be supplied as a
+positional argument to `cluster deploy` instead of in the YAML — e.g.
+`seaweed-up cluster deploy my-cluster -f cluster.yaml` (the positional
+argument, when given, overrides `cluster_name` in the file).
+
 ## Shared config defaults
 
 Cluster-wide values are written once and inherited by each entry, so you
