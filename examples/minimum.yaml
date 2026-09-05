@@ -4,6 +4,8 @@
 # Good for local experimentation and smoke tests. For anything close to
 # production, see examples/typical.yaml.
 
+cluster_name: seaweed-minimum
+
 global:
   dir.conf: "/etc/seaweed"
   dir.data: "/opt/seaweed"
