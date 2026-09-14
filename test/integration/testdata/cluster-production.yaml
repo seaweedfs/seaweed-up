@@ -84,6 +84,8 @@ s3_servers:
 admin_servers:
   - ip: 172.28.0.10
     port: 23646
+    # Isolated docker bridge; opt out of weed 4.47's non-loopback bind guard.
+    allow_insecure_bind: true
 
 worker_servers:
   - ip: 172.28.0.12

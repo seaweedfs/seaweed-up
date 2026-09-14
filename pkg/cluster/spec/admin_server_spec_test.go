@@ -63,6 +63,46 @@ func TestAdminServerSpec_WriteToBuffer_CustomPortAndAuth(t *testing.T) {
 	}
 }
 
+// TestAdminServerSpec_WriteToBuffer_AllowInsecureBind guards the
+// -allowInsecureBind pass-through: emitted when set, omitted when unset.
+func TestAdminServerSpec_WriteToBuffer_AllowInsecureBind(t *testing.T) {
+	a := &AdminServerSpec{Ip: "10.0.0.5", Port: 23646, AllowInsecureBind: true}
+	var buf bytes.Buffer
+	a.WriteToBuffer([]string{"10.0.0.1:9333"}, &buf)
+	want := "ip=10.0.0.5\nmaster=10.0.0.1:9333\ndataDir=.\nallowInsecureBind=true\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("enabled: unexpected options output\n got: %q\nwant: %q", got, want)
+	}
+
+	a = &AdminServerSpec{Ip: "10.0.0.5", Port: 23646}
+	buf.Reset()
+	a.WriteToBuffer([]string{"10.0.0.1:9333"}, &buf)
+	want = "ip=10.0.0.5\nmaster=10.0.0.1:9333\ndataDir=.\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("disabled: unexpected options output\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// TestAdminServerSpec_WriteToBuffer_AllowInsecureBindReserved ensures the
+// first-class field supersedes a colliding Config entry.
+func TestAdminServerSpec_WriteToBuffer_AllowInsecureBindReserved(t *testing.T) {
+	a := &AdminServerSpec{
+		Ip:                "10.0.0.5",
+		Port:              23646,
+		AllowInsecureBind: true,
+		Config: map[string]interface{}{
+			"allowInsecureBind": false,
+			"port.grpc":         33646,
+		},
+	}
+	var buf bytes.Buffer
+	a.WriteToBuffer([]string{"10.0.0.1:9333"}, &buf)
+	want := "ip=10.0.0.5\nmaster=10.0.0.1:9333\ndataDir=.\nallowInsecureBind=true\nport.grpc=33646\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("unexpected options output\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestAdminServerSpec_WriteToBuffer_MastersOverride(t *testing.T) {
 	a := &AdminServerSpec{
 		Ip:      "10.0.0.5",
