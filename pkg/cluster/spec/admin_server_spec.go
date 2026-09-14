@@ -37,12 +37,15 @@ type AdminServerSpec struct {
 	// `-dataDir`, `-adminUser`, and `-adminPassword` flags defined in
 	// SeaweedFS weed/command/admin.go. They are intentionally retained as
 	// first-class fields because they are supported by `weed admin`.
-	DataDir       string                 `yaml:"dataDir,omitempty"`
-	AdminUser     string                 `yaml:"admin_user,omitempty"`
-	AdminPassword string                 `yaml:"admin_password,omitempty"`
-	Config        map[string]interface{} `yaml:"config,omitempty"`
-	Arch          string                 `yaml:"arch,omitempty"`
-	OS            string                 `yaml:"os,omitempty"`
+	DataDir       string `yaml:"dataDir,omitempty"`
+	AdminUser     string `yaml:"admin_user,omitempty"`
+	AdminPassword string `yaml:"admin_password,omitempty"`
+	// AllowInsecureBind maps to weed admin's -allowInsecureBind opt-out of
+	// the 4.47+ non-loopback bind guard. INSECURE; prefer admin_password.
+	AllowInsecureBind bool                   `yaml:"allow_insecure_bind,omitempty"`
+	Config            map[string]interface{} `yaml:"config,omitempty"`
+	Arch              string                 `yaml:"arch,omitempty"`
+	OS                string                 `yaml:"os,omitempty"`
 }
 
 // WriteToBuffer writes the `weed admin` CLI options into buf, one per line in
@@ -75,6 +78,7 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "dataDir", dataDir)
 	addToBuffer(buf, "adminUser", a.AdminUser)
 	addToBuffer(buf, "adminPassword", a.AdminPassword)
+	addToBufferBool(buf, "allowInsecureBind", a.AllowInsecureBind, false)
 
 	// Write free-form Config entries in stable (sorted) order so the
 	// resulting options file is deterministic. Keys that are already
@@ -83,13 +87,14 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	// placing e.g. `port:` under `config:`.
 	if len(a.Config) > 0 {
 		reserved := map[string]bool{
-			"ip":            true,
-			"ip.bind":       true,
-			"port":          true,
-			"master":        true,
-			"dataDir":       true,
-			"adminUser":     true,
-			"adminPassword": true,
+			"ip":                true,
+			"ip.bind":           true,
+			"port":              true,
+			"master":            true,
+			"dataDir":           true,
+			"adminUser":         true,
+			"adminPassword":     true,
+			"allowInsecureBind": true,
 		}
 		keys := make([]string, 0, len(a.Config))
 		for k := range a.Config {
