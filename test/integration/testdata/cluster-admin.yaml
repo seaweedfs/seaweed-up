@@ -26,3 +26,6 @@ filer_servers:
 admin_servers:
   - ip: 172.28.0.10
     port: 23646
+    # CI runs on an isolated docker bridge; opt out of weed 4.47's
+    # non-loopback bind guard instead of wiring auth the probe lacks.
+    allow_insecure_bind: true
