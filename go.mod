@@ -12,7 +12,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/thanhpk/randstr v1.0.7
 	golang.org/x/crypto v0.58.0
-	golang.org/x/net v0.60.0
+	golang.org/x/net v0.61.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/term v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
