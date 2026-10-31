@@ -165,7 +165,7 @@ jobs:
           if [ "$state" = "active" ]; then
             echo "Lance worker unit verified active on host3"
           elif grep -q "skipping the Lance maintenance worker" deploy.log; then
-            echo "Lance worker skipped with a warning (release carries no weed-worker asset yet)"
+            echo "Lance worker skipped with a warning (no weed-worker asset for this release, or the host glibc is too old)"
           else
             echo "Neither an active seaweed_worker-lance0 unit nor a skip warning found"
             docker exec seaweed-up-host3 journalctl -u seaweed_worker-lance0 --no-pager -n 100 2>&1 || true
