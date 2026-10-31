@@ -2,9 +2,14 @@ package observability
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
 // decodedFiles returns the concatenated decoded content of every
@@ -26,8 +31,9 @@ func decodedFiles(script string) string {
 
 // recordOp records executed commands without opening any SSH session.
 type recordOp struct {
-	executed []string
-	uploaded map[string]string
+	executed  []string
+	uploaded  map[string]string
+	uploadErr error
 	// archOut overrides the `uname -m` reply; defaults to x86_64 when empty.
 	archOut string
 }
@@ -49,7 +55,7 @@ func (r *recordOp) Upload(src io.Reader, path, mode string) error {
 		r.uploaded = map[string]string{}
 	}
 	r.uploaded[path] = mode + ":" + string(data)
-	return nil
+	return r.uploadErr
 }
 func (r *recordOp) UploadFile(string, string, string) error {
 	return nil
@@ -90,6 +96,55 @@ func TestRunScriptSudoVariants(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The bundled dashboard alone exceeds Linux's 128 KiB per-argument limit,
+// so the remote command must stay small no matter how big the script is.
+func TestInstallGrafanaCommandsStaySmall(t *testing.T) {
+	op := &recordOp{}
+	opts := GrafanaOptions{ClusterName: "prod"}
+	if err := InstallGrafana(op, "root", "", opts); err != nil {
+		t.Fatal(err)
+	}
+	want := "0600:" + GrafanaInstallScript("amd64", DashboardJSON(), opts)
+	var found bool
+	for _, content := range op.uploaded {
+		found = found || content == want
+	}
+	if !found {
+		t.Fatal("full grafana install script was not uploaded")
+	}
+	for _, cmd := range op.executed {
+		if len(cmd) > 1024 {
+			t.Fatalf("remote command is %d bytes: %.80s...", len(cmd), cmd)
+		}
+	}
+}
+
+func TestRunScriptFailedUploadIsRemoved(t *testing.T) {
+	op := &recordOp{uploadErr: errors.New("scp failed")}
+	if err := runScript(op, "root", "", "echo hi"); !errors.Is(err, op.uploadErr) {
+		t.Fatalf("got %v, want upload error", err)
+	}
+	if len(op.executed) != 1 || !strings.HasPrefix(op.executed[0], "rm -f /tmp/seaweed-up.") {
+		t.Fatalf("executed %q, want only the cleanup", op.executed)
+	}
+}
+
+func TestRunScriptLargeScript(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	payload := strings.Repeat("dashboard\n", 30000)
+	script := "set -e\n" + writeFileCmd(out, payload, "0600")
+	if err := runScript(operator.NewLocalOperator(), "root", "", script); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != payload {
+		t.Fatalf("payload round trip: got %d bytes, want %d", len(got), len(payload))
 	}
 }
 
