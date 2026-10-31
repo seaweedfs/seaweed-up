@@ -917,7 +917,7 @@ func serverHeaderFrom(block string) string {
 func newUpgradeHTTPTransport(insecureSkipTLSVerify bool, clusterName string) *http.Transport {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if insecureSkipTLSVerify {
-		tlsConfig.InsecureSkipVerify = true //nolint:gosec // explicitly requested via --insecure-skip-tls-verify
+		tlsConfig.InsecureSkipVerify = true // #nosec G402 -- explicitly requested via --insecure-skip-tls-verify
 	} else if clusterName != "" {
 		if dir, err := sutls.LocalClusterDir(clusterName); err == nil {
 			if pemBytes, rerr := os.ReadFile(filepath.Join(dir, "ca.crt")); rerr == nil && len(pemBytes) > 0 {
