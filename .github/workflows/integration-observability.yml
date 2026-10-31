@@ -22,7 +22,7 @@ env:
 
 jobs:
   observability:
-    name: node_exporter install + metrics
+    name: node_exporter + Prometheus + Grafana
     runs-on: ubuntu-22.04
     timeout-minutes: 30
 
@@ -113,6 +113,39 @@ jobs:
           curl -v http://172.28.0.10:9100/metrics || true
           exit 1
 
+      - name: Deploy Prometheus + Grafana via seaweed-up
+        working-directory: test/integration
+        run: |
+          ../../seaweed-up cluster deploy test-obs \
+            -f testdata/cluster-monitoring.yaml \
+            -c monitoring \
+            -u root \
+            --identity .ssh/id_rsa_test \
+            --yes
+
+      - name: Verify Prometheus and Grafana
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://172.28.0.10:9090/-/ready >/dev/null; then
+              echo "prometheus ready"
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://172.28.0.10:9090/-/ready
+
+          # The bundled dashboard is file-provisioned at startup.
+          for i in {1..30}; do
+            if curl -fsS -u admin:test-grafana-pw 'http://172.28.0.10:3000/api/search?query=SeaweedFS' | grep -q '"title"'; then
+              echo "grafana dashboard provisioned"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "SeaweedFS dashboard not found in Grafana"
+          curl -sS -u admin:test-grafana-pw http://172.28.0.10:3000/api/search || true
+          exit 1
+
       - name: Verify prometheus-config output
         working-directory: test/integration
         run: |
@@ -128,6 +161,9 @@ jobs:
           docker ps -a > observability-logs/docker-ps.txt
           docker logs seaweed-up-host1 > observability-logs/host1.log 2>&1 || true
           docker exec seaweed-up-host1 systemctl status node_exporter > observability-logs/node_exporter.txt 2>&1 || true
+          docker exec seaweed-up-host1 systemctl status prometheus > observability-logs/prometheus.txt 2>&1 || true
+          docker exec seaweed-up-host1 systemctl status grafana > observability-logs/grafana.txt 2>&1 || true
+          docker exec seaweed-up-host1 journalctl -u grafana --no-pager > observability-logs/grafana-journal.txt 2>&1 || true
 
       - name: Upload logs
         if: always()
