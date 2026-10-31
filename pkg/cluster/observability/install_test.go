@@ -2,9 +2,14 @@ package observability
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
 
 // decodedFiles returns the concatenated decoded content of every
@@ -26,7 +31,9 @@ func decodedFiles(script string) string {
 
 // recordOp records executed commands without opening any SSH session.
 type recordOp struct {
-	executed []string
+	executed  []string
+	uploaded  map[string]string
+	uploadErr error
 	// archOut overrides the `uname -m` reply; defaults to x86_64 when empty.
 	archOut string
 }
@@ -39,7 +46,17 @@ func (r *recordOp) Output(cmd string) ([]byte, error) {
 	}
 	return []byte("x86_64\n"), nil
 }
-func (r *recordOp) Upload(io.Reader, string, string) error { return nil }
+func (r *recordOp) Upload(src io.Reader, path, mode string) error {
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return err
+	}
+	if r.uploaded == nil {
+		r.uploaded = map[string]string{}
+	}
+	r.uploaded[path] = mode + ":" + string(data)
+	return r.uploadErr
+}
 func (r *recordOp) UploadFile(string, string, string) error {
 	return nil
 }
@@ -50,9 +67,9 @@ func TestRunScriptSudoVariants(t *testing.T) {
 		wantContains     string
 		wantNotContains  string
 	}{
-		{"root runs bare", "root", "", "| base64 -d | sh", "sudo"},
-		{"non-root passwordless uses sudo -n", "chris", "", "| base64 -d | sudo -n sh", "sudo -S"},
-		{"non-root with password uses sudo -S", "chris", "pw", "sudo -S -p '' sh", "sudo -n"},
+		{"root runs bare", "root", "", "sh /tmp/seaweed-up.", "sudo"},
+		{"non-root passwordless uses sudo -n", "chris", "", "sudo -n sh /tmp/seaweed-up.", "sudo -S"},
+		{"non-root with password uses sudo -S", "chris", "pw", "printf '%s\\n' 'pw' | sudo -S -p '' sh /tmp/seaweed-up.", "sudo -n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,7 +84,67 @@ func TestRunScriptSudoVariants(t *testing.T) {
 			if tc.wantNotContains != "" && strings.Contains(got, tc.wantNotContains) {
 				t.Errorf("did not want %q in %q", tc.wantNotContains, got)
 			}
+			if len(op.uploaded) != 1 {
+				t.Fatalf("want one uploaded script, got %v", op.uploaded)
+			}
+			for path, content := range op.uploaded {
+				if content != "0600:echo hi" {
+					t.Errorf("uploaded %q = %q, want private script", path, content)
+				}
+				if last := op.executed[len(op.executed)-1]; last != "rm -f "+path {
+					t.Errorf("last command %q, want cleanup of %s", last, path)
+				}
+			}
 		})
+	}
+}
+
+// The bundled dashboard alone exceeds Linux's 128 KiB per-argument limit,
+// so the remote command must stay small no matter how big the script is.
+func TestInstallGrafanaCommandsStaySmall(t *testing.T) {
+	op := &recordOp{}
+	opts := GrafanaOptions{ClusterName: "prod"}
+	if err := InstallGrafana(op, "root", "", opts); err != nil {
+		t.Fatal(err)
+	}
+	want := "0600:" + GrafanaInstallScript("amd64", DashboardJSON(), opts)
+	var found bool
+	for _, content := range op.uploaded {
+		found = found || content == want
+	}
+	if !found {
+		t.Fatal("full grafana install script was not uploaded")
+	}
+	for _, cmd := range op.executed {
+		if len(cmd) > 1024 {
+			t.Fatalf("remote command is %d bytes: %.80s...", len(cmd), cmd)
+		}
+	}
+}
+
+func TestRunScriptFailedUploadIsRemoved(t *testing.T) {
+	op := &recordOp{uploadErr: errors.New("scp failed")}
+	if err := runScript(op, "root", "", "echo hi"); !errors.Is(err, op.uploadErr) {
+		t.Fatalf("got %v, want upload error", err)
+	}
+	if len(op.executed) != 1 || !strings.HasPrefix(op.executed[0], "rm -f /tmp/seaweed-up.") {
+		t.Fatalf("executed %q, want only the cleanup", op.executed)
+	}
+}
+
+func TestRunScriptLargeScript(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	payload := strings.Repeat("dashboard\n", 30000)
+	script := "set -e\n" + writeFileCmd(out, payload, "0600")
+	if err := runScript(operator.NewLocalOperator(), "root", "", script); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != payload {
+		t.Fatalf("payload round trip: got %d bytes, want %d", len(got), len(payload))
 	}
 }
 

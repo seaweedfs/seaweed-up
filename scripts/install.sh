@@ -205,6 +205,15 @@ download_and_install() {
     # The archive holds a single file named weed-worker.
     $SUDO tar xzf "$TMP_DIR/${WORKER_ASSET}" -C "$TMP_DIR"
     [ -f "$TMP_DIR/weed-worker" ] || fatal "no weed-worker binary in ${WORKER_ASSET}"
+    # A build against a newer glibc than this host has would only crash-loop
+    # under systemd; leave any previous install in place and skip the unit.
+    loaderErr=$("$TMP_DIR/weed-worker" --help 2>&1 >/dev/null) || true
+    case "$loaderErr" in
+    *GLIBC*)
+      info "weed-worker needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1)); skipping the Lance maintenance worker"
+      exit 0
+      ;;
+    esac
     $SUDO install -m 0755 "$TMP_DIR/weed-worker" "${BIN_DIR}/${BINARY}"
     echo "${WORKER_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
   fi
