@@ -27,6 +27,7 @@ func decodedFiles(script string) string {
 // recordOp records executed commands without opening any SSH session.
 type recordOp struct {
 	executed []string
+	uploaded map[string]string
 	// archOut overrides the `uname -m` reply; defaults to x86_64 when empty.
 	archOut string
 }
@@ -39,7 +40,17 @@ func (r *recordOp) Output(cmd string) ([]byte, error) {
 	}
 	return []byte("x86_64\n"), nil
 }
-func (r *recordOp) Upload(io.Reader, string, string) error { return nil }
+func (r *recordOp) Upload(src io.Reader, path, mode string) error {
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return err
+	}
+	if r.uploaded == nil {
+		r.uploaded = map[string]string{}
+	}
+	r.uploaded[path] = mode + ":" + string(data)
+	return nil
+}
 func (r *recordOp) UploadFile(string, string, string) error {
 	return nil
 }
@@ -50,9 +61,9 @@ func TestRunScriptSudoVariants(t *testing.T) {
 		wantContains     string
 		wantNotContains  string
 	}{
-		{"root runs bare", "root", "", "| base64 -d | sh", "sudo"},
-		{"non-root passwordless uses sudo -n", "chris", "", "| base64 -d | sudo -n sh", "sudo -S"},
-		{"non-root with password uses sudo -S", "chris", "pw", "sudo -S -p '' sh", "sudo -n"},
+		{"root runs bare", "root", "", "sh /tmp/seaweed-up.", "sudo"},
+		{"non-root passwordless uses sudo -n", "chris", "", "sudo -n sh /tmp/seaweed-up.", "sudo -S"},
+		{"non-root with password uses sudo -S", "chris", "pw", "printf '%s\\n' 'pw' | sudo -S -p '' sh /tmp/seaweed-up.", "sudo -n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +77,17 @@ func TestRunScriptSudoVariants(t *testing.T) {
 			}
 			if tc.wantNotContains != "" && strings.Contains(got, tc.wantNotContains) {
 				t.Errorf("did not want %q in %q", tc.wantNotContains, got)
+			}
+			if len(op.uploaded) != 1 {
+				t.Fatalf("want one uploaded script, got %v", op.uploaded)
+			}
+			for path, content := range op.uploaded {
+				if content != "0600:echo hi" {
+					t.Errorf("uploaded %q = %q, want private script", path, content)
+				}
+				if last := op.executed[len(op.executed)-1]; last != "rm -f "+path {
+					t.Errorf("last command %q, want cleanup of %s", last, path)
+				}
 			}
 		})
 	}

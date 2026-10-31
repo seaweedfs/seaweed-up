@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
+	"github.com/thanhpk/randstr"
 )
 
 // prepareDashboard returns the bundled dashboard JSON ready for Grafana
@@ -68,23 +69,26 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// runScript runs script on the remote host, elevating to root the same
-// way pkg/cluster/tls.runInstallScript does: direct when the SSH user is
-// root, `sudo -n` when a non-root user has passwordless sudo, and
-// `sudo -S` when a sudo password is supplied. The script is base64-encoded
-// so its contents (heredocs, embedded files) survive shell quoting.
+// runScript uploads script to a private temp file and runs it as root:
+// directly for root, `sudo -n` for passwordless sudo, `sudo -S` otherwise.
+// Uploading keeps large scripts (the bundled dashboard) clear of the
+// shell's per-argument size limit.
 func runScript(op operator.CommandOperator, sshUser, sudoPass, script string) error {
-	enc := base64.StdEncoding.EncodeToString([]byte(script))
+	path := "/tmp/seaweed-up." + randstr.String(6) + ".sh"
+	defer func() { _ = op.Execute("rm -f " + path) }()
+	if err := op.Upload(strings.NewReader(script), path, "0600"); err != nil {
+		return fmt.Errorf("upload install script: %w", err)
+	}
 	var cmd string
 	switch {
 	case sshUser == "root":
-		cmd = fmt.Sprintf("echo %s | base64 -d | sh", enc)
+		cmd = "sh " + path
 	case sudoPass == "":
-		cmd = fmt.Sprintf("echo %s | base64 -d | sudo -n sh", enc)
+		cmd = "sudo -n sh " + path
 	default:
 		// printf (not echo) emits the password so one starting with '-'
 		// isn't swallowed as an echo flag.
-		cmd = fmt.Sprintf("(printf '%%s\\n' %s; echo %s | base64 -d) | sudo -S -p '' sh", shellQuote(sudoPass), enc)
+		cmd = fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' sh %s", shellQuote(sudoPass), path)
 	}
 	return op.Execute(cmd)
 }
