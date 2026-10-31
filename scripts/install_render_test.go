@@ -142,6 +142,8 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 		`WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"`,
 		"weed-worker is published for linux amd64/arm64 only", // arch guard
 		"md5sum -c",
+		`"$TMP_DIR/weed-worker" --help`, // glibc probe before install
+		"skipping the Lance maintenance worker",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
 	} {
