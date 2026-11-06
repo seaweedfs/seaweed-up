@@ -302,10 +302,12 @@ create_user_and_config() {
 
     if [ "$(ls -A ${TMP_DIR}/config/)" ]; then
       info "Copying configuration files"
-      # cp would write through a symlinked security.toml into the shared file.
-      if [ -f "${TMP_DIR}/config/security.toml" ] && [ -L "${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.toml" ]; then
-        $SUDO rm -f "${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.toml"
-      fi
+      # Recreate key files: cp would write through a symlink or keep a wider mode.
+      for keyFile in security.toml security.env; do
+        if [ -f "${TMP_DIR}/config/${keyFile}" ]; then
+          $SUDO rm -f "${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${keyFile}"
+        fi
+      done
       $SUDO cp ${TMP_DIR}/config/* ${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}
     fi
 }

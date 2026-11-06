@@ -182,7 +182,7 @@ func TestInstallScript_VersionedPath(t *testing.T) {
 	}
 }
 
-func TestInstallScript_ReplacesSymlinkedSecurityToml(t *testing.T) {
+func TestInstallScript_RecreatesKeyFiles(t *testing.T) {
 	out := renderInstall(t, map[string]interface{}{"Component": "worker"})
 	_, body, ok := strings.Cut(out, "create_user_and_config() {")
 	if !ok {
@@ -209,6 +209,13 @@ func TestInstallScript_ReplacesSymlinkedSecurityToml(t *testing.T) {
 	if err := os.Symlink(shared, target); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(tmpConfig, "security.env"), []byte("KEY=new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(configDir, "security.env")
+	if err := os.WriteFile(envFile, []byte("KEY=old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	script := "info() { :; }\nSUDO=\nTMP_DIR=" + filepath.Join(dir, "tmp") +
 		"\nSEAWEED_COMPONENT_INSTANCE_CONFIG_DIR=" + configDir +
@@ -225,5 +232,13 @@ func TestInstallScript_ReplacesSymlinkedSecurityToml(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(target); string(got) != "instance" {
 		t.Errorf("instance security.toml = %q, want the rendered file", got)
+	}
+	for _, f := range []string{target, envFile} {
+		if fi, err := os.Stat(f); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s must be owner-only after install: %v %v", f, fi.Mode(), err)
+		}
+	}
+	if got, _ := os.ReadFile(envFile); string(got) != "KEY=new\n" {
+		t.Errorf("security.env = %q, want the rendered file", got)
 	}
 }
