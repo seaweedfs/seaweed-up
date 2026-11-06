@@ -319,7 +319,8 @@ StartLimitBurst=3
 StartLimitIntervalSec=10
 
 [Service]
-WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
+{{if .RustWorker}}# weed-worker has no -config_dir; it reads security.toml from its working directory.
+WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}{{else}}WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}{{end}}
 {{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustWorker}}ExecStart=${BIN_DIR}/${BINARY} {{.RustWorkerArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process

@@ -211,22 +211,26 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	m := &Manager{User: "root", Version: "4.44", filerSigning: filerSigningKeys{write: "w-key", read: "r-key"}}
 	op := newFakeOperator()
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
-	stubLanceAssetHead(t, func(url string) (int, error) { return 404, nil })
+	stubLanceAssetHead(t, func(url string) (int, error) { return 200, nil })
 
-	w := &spec.WorkerServerSpec{Ip: "10.0.0.10"}
+	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
-	var found bool
+	found := map[string]bool{}
 	for path, content := range op.uploads {
 		if strings.HasSuffix(path, "/config/security.toml") {
-			found = true
 			if !strings.Contains(content, `key = "w-key"`) || !strings.Contains(content, `key = "r-key"`) {
 				t.Errorf("worker security.toml must carry the cluster keys:\n%s", content)
 			}
+			for _, component := range []string{"worker", workerLanceComponent} {
+				if strings.Contains(content, "for component: "+component+"\n") {
+					found[component] = true
+				}
+			}
 		}
 	}
-	if !found {
-		t.Fatalf("worker config dir must receive security.toml; uploads: %v", keys(op.uploads))
+	if !found["worker"] || !found[workerLanceComponent] {
+		t.Fatalf("both worker units must receive security.toml (got %v); uploads: %v", found, keys(op.uploads))
 	}
 }

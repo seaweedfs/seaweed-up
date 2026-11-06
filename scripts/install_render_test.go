@@ -146,6 +146,8 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 		"skipping the Lance maintenance worker",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		// security.toml is found in the working directory
+		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust worker install script missing %q", want)
