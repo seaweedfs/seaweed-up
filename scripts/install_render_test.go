@@ -2,6 +2,9 @@ package scripts
 
 import (
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -172,5 +175,51 @@ func TestInstallScript_VersionedPath(t *testing.T) {
 	}
 	if strings.Contains(out, ".weed-dev-buildid") {
 		t.Errorf("versioned path should not contain dev marker logic")
+	}
+}
+
+func TestInstallScript_ReplacesSymlinkedSecurityToml(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{"Component": "worker"})
+	_, body, ok := strings.Cut(out, "create_user_and_config() {")
+	if !ok {
+		t.Fatal("create_user_and_config not found")
+	}
+	body, _, _ = strings.Cut(body, "\n}\n")
+
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "security.toml")
+	configDir := filepath.Join(dir, "worker0.d")
+	tmpConfig := filepath.Join(dir, "tmp", "config")
+	for _, d := range []string{configDir, tmpConfig} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(shared, []byte("shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpConfig, "security.toml"), []byte("instance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(configDir, "security.toml")
+	if err := os.Symlink(shared, target); err != nil {
+		t.Fatal(err)
+	}
+
+	script := "info() { :; }\nSUDO=\nTMP_DIR=" + filepath.Join(dir, "tmp") +
+		"\nSEAWEED_COMPONENT_INSTANCE_CONFIG_DIR=" + configDir +
+		"\nSEAWEED_COMPONENT_INSTANCE_DATA_DIR=" + filepath.Join(dir, "data") +
+		"\ncreate_user_and_config() {" + body + "\n}\ncreate_user_and_config\n"
+	if b, err := exec.Command("sh", "-ec", script).CombinedOutput(); err != nil {
+		t.Fatalf("create_user_and_config: %v\n%s", err, b)
+	}
+	if got, _ := os.ReadFile(shared); string(got) != "shared" {
+		t.Errorf("shared security.toml was overwritten: %q", got)
+	}
+	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("instance security.toml should be a regular file: %v %v", fi, err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "instance" {
+		t.Errorf("instance security.toml = %q, want the rendered file", got)
 	}
 }
