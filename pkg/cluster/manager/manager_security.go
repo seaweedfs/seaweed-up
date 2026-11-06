@@ -104,8 +104,9 @@ func loadFilerSigningKeys(clusterName string) (filerSigningKeys, error) {
 // jwt.filer_signing.key, so each of those instances gets its own copy of the
 // key (see instanceSecurityToml).
 func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
-	if !(m.shouldInstall("admin") && len(specification.AdminServers) > 0) &&
-		!(m.shouldInstall("worker") && len(specification.WorkerServers) > 0) {
+	installsAdmin := m.shouldInstall("admin") && len(specification.AdminServers) > 0
+	installsWorker := m.shouldInstall("worker") && len(specification.WorkerServers) > 0
+	if !installsAdmin && !installsWorker {
 		return nil
 	}
 	keys, err := loadFilerSigningKeys(specification.Name)
