@@ -127,3 +127,13 @@ func (m *Manager) instanceSecurityToml(component string) []extraConfigFile {
 	toml := sutls.RenderSecurityTOML(component, m.filerSigning.write, m.filerSigning.read, false)
 	return []extraConfigFile{{Name: "security.toml", Content: bytes.NewBufferString(toml), Mode: "0600"}}
 }
+
+// instanceSecurityEnv hands the key to weed-worker, which has no -config_dir
+// and reads WEED_FILER_SIGNING_KEY in every release that signs its stream.
+func (m *Manager) instanceSecurityEnv() []extraConfigFile {
+	if m.filerSigning.write == "" {
+		return nil
+	}
+	env := "WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n"
+	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env), Mode: "0600"}}
+}

@@ -149,8 +149,9 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 		"skipping the Lance maintenance worker",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
-		// security.toml is found in the working directory
-		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}\n",
+		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}\n",
+		// the admin signing key, kept off the command line
+		"EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust worker install script missing %q", want)
@@ -165,6 +166,9 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 	}
 	if strings.Contains(out, "weed-volume") {
 		t.Errorf("rust worker path should not reference weed-volume")
+	}
+	if goUnit := renderInstall(t, map[string]interface{}{"Component": "worker"}); strings.Contains(goUnit, "EnvironmentFile") {
+		t.Errorf("go units read security.toml from -config_dir and need no environment file")
 	}
 }
 

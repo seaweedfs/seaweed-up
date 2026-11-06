@@ -217,20 +217,23 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
-	found := map[string]bool{}
+	var goToml, lanceEnv int
 	for path, content := range op.uploads {
-		if strings.HasSuffix(path, "/config/security.toml") {
-			if !strings.Contains(content, `key = "w-key"`) || !strings.Contains(content, `key = "r-key"`) {
+		switch {
+		case strings.HasSuffix(path, "/config/security.toml"):
+			goToml++
+			if !strings.Contains(content, "for component: worker\n") ||
+				!strings.Contains(content, `key = "w-key"`) || !strings.Contains(content, `key = "r-key"`) {
 				t.Errorf("worker security.toml must carry the cluster keys:\n%s", content)
 			}
-			for _, component := range []string{"worker", workerLanceComponent} {
-				if strings.Contains(content, "for component: "+component+"\n") {
-					found[component] = true
-				}
+		case strings.HasSuffix(path, "/config/security.env"):
+			lanceEnv++
+			if content != "WEED_FILER_SIGNING_KEY=w-key\n" {
+				t.Errorf("lance security.env = %q", content)
 			}
 		}
 	}
-	if !found["worker"] || !found[workerLanceComponent] {
-		t.Fatalf("both worker units must receive security.toml (got %v); uploads: %v", found, keys(op.uploads))
+	if goToml != 1 || lanceEnv != 1 {
+		t.Fatalf("want security.toml for the go unit and security.env for the lance unit, got %d/%d; uploads: %v", goToml, lanceEnv, keys(op.uploads))
 	}
 }
