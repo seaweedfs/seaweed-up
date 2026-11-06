@@ -302,6 +302,12 @@ create_user_and_config() {
 
     if [ "$(ls -A ${TMP_DIR}/config/)" ]; then
       info "Copying configuration files"
+      # Recreate key files: cp would write through a symlink or keep a wider mode.
+      for keyFile in security.toml security.env; do
+        if [ -f "${TMP_DIR}/config/${keyFile}" ]; then
+          $SUDO rm -f "${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${keyFile}"
+        fi
+      done
       $SUDO cp ${TMP_DIR}/config/* ${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}
     fi
 }
@@ -320,7 +326,8 @@ StartLimitIntervalSec=10
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
-{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustWorker}}ExecStart=${BIN_DIR}/${BINARY} {{.RustWorkerArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
+{{if .RustWorker}}EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env
+{{end}}{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustWorker}}ExecStart=${BIN_DIR}/${BINARY} {{.RustWorkerArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process
 KillSignal=SIGINT

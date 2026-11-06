@@ -2,6 +2,9 @@ package scripts
 
 import (
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -146,6 +149,9 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 		"skipping the Lance maintenance worker",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}\n",
+		// the admin signing key, kept off the command line
+		"EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rust worker install script missing %q", want)
@@ -161,6 +167,9 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 	if strings.Contains(out, "weed-volume") {
 		t.Errorf("rust worker path should not reference weed-volume")
 	}
+	if goUnit := renderInstall(t, map[string]interface{}{"Component": "worker"}); strings.Contains(goUnit, "EnvironmentFile") {
+		t.Errorf("go units read security.toml from -config_dir and need no environment file")
+	}
 }
 
 func TestInstallScript_VersionedPath(t *testing.T) {
@@ -170,5 +179,66 @@ func TestInstallScript_VersionedPath(t *testing.T) {
 	}
 	if strings.Contains(out, ".weed-dev-buildid") {
 		t.Errorf("versioned path should not contain dev marker logic")
+	}
+}
+
+func TestInstallScript_RecreatesKeyFiles(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{"Component": "worker"})
+	_, body, ok := strings.Cut(out, "create_user_and_config() {")
+	if !ok {
+		t.Fatal("create_user_and_config not found")
+	}
+	body, _, _ = strings.Cut(body, "\n}\n")
+
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "security.toml")
+	configDir := filepath.Join(dir, "worker0.d")
+	tmpConfig := filepath.Join(dir, "tmp", "config")
+	for _, d := range []string{configDir, tmpConfig} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(shared, []byte("shared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpConfig, "security.toml"), []byte("instance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(configDir, "security.toml")
+	if err := os.Symlink(shared, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpConfig, "security.env"), []byte("KEY=new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(configDir, "security.env")
+	if err := os.WriteFile(envFile, []byte("KEY=old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	script := "info() { :; }\nSUDO=\nTMP_DIR=" + filepath.Join(dir, "tmp") +
+		"\nSEAWEED_COMPONENT_INSTANCE_CONFIG_DIR=" + configDir +
+		"\nSEAWEED_COMPONENT_INSTANCE_DATA_DIR=" + filepath.Join(dir, "data") +
+		"\ncreate_user_and_config() {" + body + "\n}\ncreate_user_and_config\n"
+	if b, err := exec.Command("sh", "-ec", script).CombinedOutput(); err != nil {
+		t.Fatalf("create_user_and_config: %v\n%s", err, b)
+	}
+	if got, _ := os.ReadFile(shared); string(got) != "shared" {
+		t.Errorf("shared security.toml was overwritten: %q", got)
+	}
+	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("instance security.toml should be a regular file: %v %v", fi, err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "instance" {
+		t.Errorf("instance security.toml = %q, want the rendered file", got)
+	}
+	for _, f := range []string{target, envFile} {
+		if fi, err := os.Stat(f); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s must be owner-only after install: %v %v", f, fi.Mode(), err)
+		}
+	}
+	if got, _ := os.ReadFile(envFile); string(got) != "KEY=new\n" {
+		t.Errorf("security.env = %q, want the rendered file", got)
 	}
 }

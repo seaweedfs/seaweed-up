@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
@@ -29,17 +30,11 @@ func (m *Manager) EnsureSecurityToml(specification *spec.Specification) error {
 	if len(hosts) == 0 {
 		return nil
 	}
-	if specification.Name == "" {
-		return fmt.Errorf("ensure security.toml: cluster name is required to persist jwt.filer_signing key")
-	}
-	jwtWrite, err := sutls.LoadOrGenerateFilerSigningKey(specification.Name, "write")
+	keys, err := loadFilerSigningKeys(specification.Name)
 	if err != nil {
-		return fmt.Errorf("load/generate filer signing key (write): %w", err)
+		return fmt.Errorf("ensure security.toml: %w", err)
 	}
-	jwtRead, err := sutls.LoadOrGenerateFilerSigningKey(specification.Name, "read")
-	if err != nil {
-		return fmt.Errorf("load/generate filer signing key (read): %w", err)
-	}
+	jwtWrite, jwtRead := keys.write, keys.read
 
 	color.Cyan("Installing security.toml on %d filer/admin host(s) for IAM gRPC", len(hosts))
 
@@ -82,4 +77,65 @@ func (m *Manager) EnsureSecurityToml(specification *spec.Specification) error {
 		return fmt.Errorf("ensure security.toml: %d host(s) failed: %w", len(hostErrs), stderrors.Join(hostErrs...))
 	}
 	return nil
+}
+
+// filerSigningKeys are the cluster's persisted jwt.filer_signing keys.
+type filerSigningKeys struct {
+	write, read string
+}
+
+func loadFilerSigningKeys(clusterName string) (filerSigningKeys, error) {
+	if clusterName == "" {
+		return filerSigningKeys{}, fmt.Errorf("cluster name is required to persist jwt.filer_signing key")
+	}
+	write, err := sutls.LoadOrGenerateFilerSigningKey(clusterName, "write")
+	if err != nil {
+		return filerSigningKeys{}, fmt.Errorf("load/generate filer signing key (write): %w", err)
+	}
+	read, err := sutls.LoadOrGenerateFilerSigningKey(clusterName, "read")
+	if err != nil {
+		return filerSigningKeys{}, fmt.Errorf("load/generate filer signing key (read): %w", err)
+	}
+	return filerSigningKeys{write: write, read: read}, nil
+}
+
+// installsAdminOrWorker reports whether a deploy installs admin or worker
+// instances.
+func (m *Manager) installsAdminOrWorker(specification *spec.Specification) bool {
+	installsAdmin := m.shouldInstall("admin") && len(specification.AdminServers) > 0
+	installsWorker := m.shouldInstall("worker") && len(specification.WorkerServers) > 0
+	return installsAdmin || installsWorker
+}
+
+// loadInstanceSecurity loads the signing keys for admin and worker instances.
+// The admin authenticates worker streams with jwt.filer_signing.key, so each
+// of those instances gets its own copy of the key.
+func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
+	keys, err := loadFilerSigningKeys(specification.Name)
+	if err != nil {
+		return fmt.Errorf("admin/worker security.toml: %w", err)
+	}
+	m.filerSigning = keys
+	return nil
+}
+
+// instanceSecurityToml is the JWT-only security.toml installed into an
+// instance's config dir. /etc/seaweed/security.toml is not on the search path
+// of a process started with -config_dir=<instance>.d.
+func (m *Manager) instanceSecurityToml(component string) []extraConfigFile {
+	if m.filerSigning.write == "" {
+		return nil
+	}
+	toml := sutls.RenderSecurityTOML(component, m.filerSigning.write, m.filerSigning.read, false)
+	return []extraConfigFile{{Name: "security.toml", Content: bytes.NewBufferString(toml), Mode: "0600"}}
+}
+
+// instanceSecurityEnv hands the key to weed-worker, which has no -config_dir
+// and reads WEED_FILER_SIGNING_KEY in every release that signs its stream.
+func (m *Manager) instanceSecurityEnv() []extraConfigFile {
+	if m.filerSigning.write == "" {
+		return nil
+	}
+	env := "WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n"
+	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env), Mode: "0600"}}
 }

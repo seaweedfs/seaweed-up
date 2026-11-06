@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mitchellh/go-homedir"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
@@ -60,6 +61,79 @@ func TestEnsureSecurityTomlEarlyReturns(t *testing.T) {
 		// what's missing rather than a generic "name required".
 		if !strings.Contains(err.Error(), "jwt") {
 			t.Errorf("error should reference the JWT key it cannot persist, got: %v", err)
+		}
+	})
+}
+
+func TestLoadInstanceSecurity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	homedir.Reset()
+	t.Cleanup(homedir.Reset)
+
+	t.Run("deploys without admin or worker skip the keys", func(t *testing.T) {
+		m := NewManager()
+		s := &spec.Specification{
+			FilerServers:  []*spec.FilerServerSpec{{Ip: "10.0.0.1"}},
+			WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.3"}},
+		}
+		m.ComponentToDeploy = "filer"
+		if m.installsAdminOrWorker(s) {
+			t.Error("a filer-only deploy must not need the admin signing key")
+		}
+		m.ComponentToDeploy = ""
+		if !m.installsAdminOrWorker(s) {
+			t.Error("a full deploy with workers needs the admin signing key")
+		}
+		if got := m.instanceSecurityToml("worker"); got != nil {
+			t.Fatalf("expected no security.toml without loaded keys, got %d files", len(got))
+		}
+	})
+
+	t.Run("worker-only deploy requires a cluster name", func(t *testing.T) {
+		m := NewManager()
+		m.ComponentToDeploy = "worker"
+		s := &spec.Specification{WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.3"}}}
+		err := m.loadInstanceSecurity(s)
+		if err == nil || !strings.Contains(err.Error(), "jwt") {
+			t.Fatalf("expected missing JWT persistence error, got: %v", err)
+		}
+	})
+
+	t.Run("admin and workers share the cluster key", func(t *testing.T) {
+		s := &spec.Specification{
+			Name:          "auth-cluster",
+			AdminServers:  []*spec.AdminServerSpec{{Ip: "10.0.0.2"}},
+			WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.3"}},
+		}
+		m := NewManager()
+		if err := m.loadInstanceSecurity(s); err != nil {
+			t.Fatalf("loadInstanceSecurity: %v", err)
+		}
+		admin := m.instanceSecurityToml("admin")
+		worker := m.instanceSecurityToml("worker")
+		if len(admin) != 1 || len(worker) != 1 {
+			t.Fatalf("expected one security.toml each, got admin=%d worker=%d", len(admin), len(worker))
+		}
+		if admin[0].Name != "security.toml" || admin[0].Mode != "0600" {
+			t.Errorf("security.toml must be owner-only: %+v", admin[0])
+		}
+		adminToml, workerToml := admin[0].Content.String(), worker[0].Content.String()
+		for _, want := range []string{"[jwt.filer_signing]", m.filerSigning.write, m.filerSigning.read} {
+			if !strings.Contains(adminToml, want) || !strings.Contains(workerToml, want) {
+				t.Errorf("admin and worker security.toml must both carry %q", want)
+			}
+		}
+		if strings.Contains(workerToml, "[grpc") {
+			t.Errorf("instance security.toml must not enable gRPC TLS:\n%s", workerToml)
+		}
+
+		again := NewManager()
+		again.ComponentToDeploy = "worker"
+		if err := again.loadInstanceSecurity(s); err != nil {
+			t.Fatalf("worker-only reload: %v", err)
+		}
+		if again.filerSigning != m.filerSigning {
+			t.Errorf("worker-only redeploy must reuse the persisted keys")
 		}
 	})
 }

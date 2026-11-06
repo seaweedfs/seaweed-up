@@ -256,6 +256,11 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateSftpFilerPrerequisite(specification); err != nil {
 		return err
 	}
+	if m.installsAdminOrWorker(specification) {
+		if err := m.loadInstanceSecurity(specification); err != nil {
+			return err
+		}
+	}
 	m.prepare(specification)
 
 	// Resolve the rolling "dev" build to a concrete dated asset, if asked.

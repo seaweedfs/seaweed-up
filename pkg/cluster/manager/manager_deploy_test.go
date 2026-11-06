@@ -48,6 +48,24 @@ func TestDeployCluster_SecurityTomlFailureSkipsFilers(t *testing.T) {
 	}
 }
 
+func TestDeployCluster_WorkerOnlyWithoutClusterNameFailsBeforeSSH(t *testing.T) {
+	m := NewManager()
+	m.User = "root"
+	m.ComponentToDeploy = "worker"
+	sp := &spec.Specification{
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "240.0.0.1", PortSsh: 22, Admin: "240.0.0.2:23646"},
+		},
+	}
+	err := m.DeployCluster(sp)
+	if err == nil || !strings.Contains(err.Error(), "jwt") {
+		t.Fatalf("expected the missing JWT key error, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "deploy worker server") {
+		t.Errorf("worker must not be deployed without the admin signing key, got: %v", err)
+	}
+}
+
 // TestPrepareDefaultsMonitoringSSHPort locks in that prepare normalizes the
 // monitoring host's SSH port. Unlike the other servers it has no struct-tag
 // default, so without this the lifecycle commands (start/stop/restart) would

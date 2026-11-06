@@ -19,7 +19,7 @@ func (m *Manager) DeployAdminServer(masters []string, a *spec.AdminServerSpec, i
 		var buf bytes.Buffer
 		a.WriteToBuffer(masters, &buf)
 
-		return m.deployComponentInstance(op, component, componentInstance, &buf)
+		return m.deployComponentInstance(op, component, componentInstance, &buf, m.instanceSecurityToml(component)...)
 
 	})
 }

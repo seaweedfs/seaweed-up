@@ -124,6 +124,11 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		return nil
 	}
+	if len(specification.AdminServers) > 0 || len(specification.WorkerServers) > 0 {
+		if err := m.loadInstanceSecurity(specification); err != nil {
+			return err
+		}
+	}
 
 	var masters []string
 	for _, masterSpec := range specification.MasterServers {
@@ -356,6 +361,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			sshAddr:     net.JoinHostPort(a.Ip, strconv.Itoa(a.PortSsh)),
 			stop:        func() error { return m.StopAdminServer(a, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { a.WriteToBuffer(masters, buf) },
+			extras:      func() ([]extraConfigFile, error) { return m.instanceSecurityToml("admin"), nil },
 		}
 	case "worker":
 		w := specification.WorkerServers[t.index]
@@ -364,6 +370,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			sshAddr:     net.JoinHostPort(w.Ip, strconv.Itoa(w.PortSsh)),
 			stop:        func() error { return m.StopWorkerServer(w, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { w.WriteToBuffer(workerAdmins, buf) },
+			extras:      func() ([]extraConfigFile, error) { return m.instanceSecurityToml("worker"), nil },
 			postDeploy: func(op operator.CommandOperator) error {
 				return m.deployLanceWorker(op, workerAdmins, w, t.index)
 			},
