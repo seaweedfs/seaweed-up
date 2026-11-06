@@ -44,8 +44,8 @@ Two example specs live under `examples/`:
 
 ## Cluster name
 
-Set a top-level `cluster_name` in every spec that has `filer_servers` or
-`admin_servers` (both example specs above set one):
+Set a top-level `cluster_name` in every spec that has `filer_servers`,
+`admin_servers`, or `worker_servers` (both example specs above set one):
 
 ```yaml
 cluster_name: my-cluster
@@ -53,7 +53,10 @@ cluster_name: my-cluster
 
 The filer needs a `jwt.filer_signing` key to register the IAM gRPC service
 the Admin UI Users tab calls, and the admin server signs Bearer tokens with
-that same key — this is required even with TLS off. `seaweed-up` generates
+that same key — this is required even with TLS off. The admin server also
+requires it from every worker that connects, so each admin and worker
+instance gets a copy in its own config dir (`<dir.conf>/<instance>.d/security.toml`).
+`seaweed-up` generates
 that key on first deploy and persists it locally under
 `~/.seaweed-up/clusters/<cluster_name>/` so later runs (redeploys, scale
 out/in, upgrades) reuse it instead of rotating it and locking out existing
