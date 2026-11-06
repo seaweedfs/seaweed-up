@@ -51,7 +51,7 @@ func (m *Manager) DeployWorkerServer(admins []string, w *spec.WorkerServerSpec, 
 func (m *Manager) deployWorkerInstances(op operator.CommandOperator, admins []string, w *spec.WorkerServerSpec, index int) error {
 	var buf bytes.Buffer
 	w.WriteToBuffer(admins, &buf)
-	if err := m.deployComponentInstance(op, "worker", workerComponentInstance(index), &buf); err != nil {
+	if err := m.deployComponentInstance(op, "worker", workerComponentInstance(index), &buf, m.instanceSecurityToml("worker")...); err != nil {
 		return err
 	}
 	return m.deployLanceWorker(op, admins, w, index)
