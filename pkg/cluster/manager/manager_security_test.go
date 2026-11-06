@@ -70,11 +70,19 @@ func TestLoadInstanceSecurity(t *testing.T) {
 	homedir.Reset()
 	t.Cleanup(homedir.Reset)
 
-	t.Run("no admin or worker skips the keys", func(t *testing.T) {
+	t.Run("deploys without admin or worker skip the keys", func(t *testing.T) {
 		m := NewManager()
-		s := &spec.Specification{FilerServers: []*spec.FilerServerSpec{{Ip: "10.0.0.1"}}}
-		if err := m.loadInstanceSecurity(s); err != nil {
-			t.Fatalf("expected no-op, got: %v", err)
+		s := &spec.Specification{
+			FilerServers:  []*spec.FilerServerSpec{{Ip: "10.0.0.1"}},
+			WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.3"}},
+		}
+		m.ComponentToDeploy = "filer"
+		if m.installsAdminOrWorker(s) {
+			t.Error("a filer-only deploy must not need the admin signing key")
+		}
+		m.ComponentToDeploy = ""
+		if !m.installsAdminOrWorker(s) {
+			t.Error("a full deploy with workers needs the admin signing key")
 		}
 		if got := m.instanceSecurityToml("worker"); got != nil {
 			t.Fatalf("expected no security.toml without loaded keys, got %d files", len(got))

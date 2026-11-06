@@ -124,8 +124,10 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		return nil
 	}
-	if err := m.loadInstanceSecurity(specification); err != nil {
-		return err
+	if len(specification.AdminServers) > 0 || len(specification.WorkerServers) > 0 {
+		if err := m.loadInstanceSecurity(specification); err != nil {
+			return err
+		}
 	}
 
 	var masters []string

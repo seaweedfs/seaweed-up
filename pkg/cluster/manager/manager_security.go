@@ -99,16 +99,18 @@ func loadFilerSigningKeys(clusterName string) (filerSigningKeys, error) {
 	return filerSigningKeys{write: write, read: read}, nil
 }
 
-// loadInstanceSecurity loads the signing keys when admin or worker instances
-// are about to be installed. The admin authenticates worker streams with
-// jwt.filer_signing.key, so each of those instances gets its own copy of the
-// key (see instanceSecurityToml).
-func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
+// installsAdminOrWorker reports whether a deploy installs admin or worker
+// instances.
+func (m *Manager) installsAdminOrWorker(specification *spec.Specification) bool {
 	installsAdmin := m.shouldInstall("admin") && len(specification.AdminServers) > 0
 	installsWorker := m.shouldInstall("worker") && len(specification.WorkerServers) > 0
-	if !installsAdmin && !installsWorker {
-		return nil
-	}
+	return installsAdmin || installsWorker
+}
+
+// loadInstanceSecurity loads the signing keys for admin and worker instances.
+// The admin authenticates worker streams with jwt.filer_signing.key, so each
+// of those instances gets its own copy of the key.
+func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
 	keys, err := loadFilerSigningKeys(specification.Name)
 	if err != nil {
 		return fmt.Errorf("admin/worker security.toml: %w", err)
