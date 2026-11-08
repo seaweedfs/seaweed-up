@@ -76,7 +76,8 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 	case "worker":
 		for i, w := range s.WorkerServers {
 			if w.Ip == ip {
-				names = append(names, fmt.Sprintf("seaweed_worker%d.service", i))
+				names = append(names, fmt.Sprintf("seaweed_worker%d.service", i),
+					fmt.Sprintf("seaweed_%s.service", workerLanceComponentInstance(i)))
 			}
 		}
 	case vectorComponent:
