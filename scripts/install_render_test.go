@@ -172,6 +172,28 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 	}
 }
 
+// weed-vector is asked for by name, so a glibc too old for it fails the
+// deploy instead of skipping the unit like the Lance worker.
+func TestInstallScript_RustToolGlibc(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "vector", "ComponentInstance": "vector0",
+		"Binary": "weed-vector", "RustTool": "weed-vector", "Version": "4.53",
+	})
+	if want := `fatal "weed-vector needs a newer glibc`; !strings.Contains(out, want) {
+		t.Errorf("vector install script missing %q", want)
+	}
+	if strings.Contains(out, "skipping the weed-vector unit") {
+		t.Errorf("vector install script must not skip its unit on an old glibc")
+	}
+	out = renderInstall(t, map[string]interface{}{
+		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
+		"Binary": "weed-worker", "RustTool": "weed-worker", "Version": "4.53",
+	})
+	if strings.Contains(out, `fatal "weed-worker needs a newer glibc`) {
+		t.Errorf("the optional Lance worker must skip, not fail, on an old glibc")
+	}
+}
+
 func TestInstallScript_VersionedPath(t *testing.T) {
 	out := renderInstall(t, map[string]interface{}{"Version": "4.31"})
 	if !strings.Contains(out, `[ "$installedVersion" = "${SEAWEED_VERSION}" ]`) {

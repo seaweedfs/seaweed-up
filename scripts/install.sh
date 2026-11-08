@@ -207,13 +207,15 @@ download_and_install() {
     $SUDO tar xzf "$TMP_DIR/${TOOL_ASSET}" -C "$TMP_DIR"
     [ -f "$TMP_DIR/{{.RustTool}}" ] || fatal "no {{.RustTool}} binary in ${TOOL_ASSET}"
     # A build against a newer glibc than this host has would only crash-loop
-    # under systemd; leave any previous install in place and skip the unit.
+    # under systemd; leave any previous install in place. The Lance worker is
+    # optional and skips its unit; weed-vector was asked for by name and fails.
     loaderErr=$("$TMP_DIR/{{.RustTool}}" --help 2>&1 >/dev/null) || true
     case "$loaderErr" in
     *GLIBC*)
-      info "{{.RustTool}} needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1)); skipping the {{.RustTool}} unit"
+{{if eq .RustTool "weed-worker"}}      info "{{.RustTool}} needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1)); skipping the {{.RustTool}} unit"
       exit 0
-      ;;
+{{else}}      fatal "{{.RustTool}} needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1))"
+{{end}}      ;;
     esac
     $SUDO install -m 0755 "$TMP_DIR/{{.RustTool}}" "${BIN_DIR}/${BINARY}"
     echo "${TOOL_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
