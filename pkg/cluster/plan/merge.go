@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -156,7 +157,7 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 		{key: "admin_servers", build: func() ([]serverEntry, error) { return adminEntries(fresh.AdminServers) }, keyOfNode: ipPortKeyOfNode},
 		{key: "envoy_servers", build: func() ([]serverEntry, error) { return envoyEntries(fresh.EnvoyServers) }, keyOfNode: ipSentinelKeyFn("envoy")},
 		{key: "worker_servers", build: func() ([]serverEntry, error) { return workerEntries(fresh.WorkerServers) }, keyOfNode: ipSentinelKeyFn("worker")},
-		{key: "vector_servers", build: func() ([]serverEntry, error) { return vectorEntries(fresh.VectorServers) }, keyOfNode: ipPortKeyOfNode},
+		{key: "vector_servers", build: func() ([]serverEntry, error) { return vectorEntries(fresh.VectorServers) }, keyOfNode: ipDefaultPortKeyFn(spec.DefaultVectorPort)},
 	}
 
 	// Track which refresh-host IPs landed somewhere so we can surface
@@ -578,6 +579,18 @@ func ipPortKeyOfNode(node *yaml.Node) string {
 		return ""
 	}
 	return ip + ":" + port
+}
+
+// ipDefaultPortKeyFn keys on ip:port like ipPortKeyOfNode, reading an absent
+// port as defaultPort, for sections whose port has no struct-tag default.
+func ipDefaultPortKeyFn(defaultPort int) func(*yaml.Node) string {
+	ipOnly := ipSentinelKeyFn(strconv.Itoa(defaultPort))
+	return func(node *yaml.Node) string {
+		if key := ipPortKeyOfNode(node); key != "" {
+			return key
+		}
+		return ipOnly(node)
+	}
 }
 
 // ipSentinelKeyFn returns a keyOfNode that dedupes on ip alone with a

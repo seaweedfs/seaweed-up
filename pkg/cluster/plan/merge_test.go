@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/inventory"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/probe"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 )
 
 // buildBaseSpec generates a small but realistic cluster spec we can
@@ -927,5 +928,25 @@ master_servers:
 	}
 	if !strings.Contains(string(merged), "my hand-rolled cluster") {
 		t.Errorf("hand-written header comment lost on merge:\n%s", merged)
+	}
+}
+
+// A hand-written vector_servers entry without a port, the README's form,
+// keys on the default port, so a merge keeps it instead of appending a
+// second engine on the same address.
+func TestMerge_vectorEntryWithoutPort(t *testing.T) {
+	existing := []byte("vector_servers:\n  - ip: 10.0.0.51\n    config:\n      read-cache-mb: 1024\n")
+	fresh := &spec.Specification{
+		VectorServers: []*spec.VectorServerSpec{{Ip: "10.0.0.51", PortSsh: 22, Port: spec.DefaultVectorPort}},
+	}
+	out, report, err := Merge(existing, fresh, MergeOptions{})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if n := strings.Count(string(out), "10.0.0.51"); n != 1 {
+		t.Errorf("10.0.0.51 appears %d times:\n%s", n, out)
+	}
+	if len(report.Appended) != 0 || len(report.Unparseable) != 0 {
+		t.Errorf("report: appended %v, unparseable %v", report.Appended, report.Unparseable)
 	}
 }
