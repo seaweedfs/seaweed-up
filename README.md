@@ -204,7 +204,10 @@ vector_servers:
   release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
   4.52, whose engine and Lance worker keep tables on the filers. The enterprise
   releases ship no `weed-vector` asset, and `enable_tls` is not supported for
-  `vector_servers` yet (no `[grpc.vector]` certificate is issued).
+  `vector_servers` yet (no `[grpc.vector]` certificate is issued). Without TLS
+  the engine serves any caller that reaches its port, bypassing the gateway's
+  IAM checks, and host prep opens 8090 to all sources: keep vector hosts
+  on the cluster's private network.
 - Vector indexes are built by the Lance maintenance worker that runs beside
   every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
   and the cluster's signing key, which the S3 gateway checks it by.
