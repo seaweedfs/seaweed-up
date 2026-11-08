@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -156,6 +157,7 @@ func Merge(existing []byte, fresh *spec.Specification, opts MergeOptions) ([]byt
 		{key: "admin_servers", build: func() ([]serverEntry, error) { return adminEntries(fresh.AdminServers) }, keyOfNode: ipPortKeyOfNode},
 		{key: "envoy_servers", build: func() ([]serverEntry, error) { return envoyEntries(fresh.EnvoyServers) }, keyOfNode: ipSentinelKeyFn("envoy")},
 		{key: "worker_servers", build: func() ([]serverEntry, error) { return workerEntries(fresh.WorkerServers) }, keyOfNode: ipSentinelKeyFn("worker")},
+		{key: "vector_servers", build: func() ([]serverEntry, error) { return vectorEntries(fresh.VectorServers) }, keyOfNode: ipDefaultPortKeyFn(spec.DefaultVectorPort)},
 	}
 
 	// Track which refresh-host IPs landed somewhere so we can surface
@@ -579,6 +581,18 @@ func ipPortKeyOfNode(node *yaml.Node) string {
 	return ip + ":" + port
 }
 
+// ipDefaultPortKeyFn keys on ip:port like ipPortKeyOfNode, reading an absent
+// port as defaultPort, for sections whose port has no struct-tag default.
+func ipDefaultPortKeyFn(defaultPort int) func(*yaml.Node) string {
+	ipOnly := ipSentinelKeyFn(strconv.Itoa(defaultPort))
+	return func(node *yaml.Node) string {
+		if key := ipPortKeyOfNode(node); key != "" {
+			return key
+		}
+		return ipOnly(node)
+	}
+}
+
 // ipSentinelKeyFn returns a keyOfNode that dedupes on ip alone with a
 // section-specific suffix (worker, envoy). Workers and envoys lack a
 // single service port — admin port for workers, multi-protocol for
@@ -692,6 +706,25 @@ func sftpEntries(ss []*spec.SftpServerSpec) ([]serverEntry, error) {
 			return nil, fmt.Errorf("encode sftp_server %s:%d: %w", s.Ip, s.Port, err)
 		}
 		out = append(out, serverEntry{key: keyOf(s.Ip, s.Port), node: node})
+	}
+	return out, nil
+}
+
+func vectorEntries(vs []*spec.VectorServerSpec) ([]serverEntry, error) {
+	out := make([]serverEntry, 0, len(vs))
+	for _, v := range vs {
+		if v == nil {
+			continue
+		}
+		port := v.Port
+		if port == 0 {
+			port = spec.DefaultVectorPort
+		}
+		node, err := specToYAMLNode(v)
+		if err != nil {
+			return nil, fmt.Errorf("encode vector_server %s:%d: %w", v.Ip, port, err)
+		}
+		out = append(out, serverEntry{key: keyOf(v.Ip, port), node: node})
 	}
 	return out, nil
 }

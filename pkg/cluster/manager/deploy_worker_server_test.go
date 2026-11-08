@@ -22,12 +22,12 @@ func workerInstallScripts(t *testing.T, op *fakeOperator) (goUnit, lanceUnit boo
 	return
 }
 
-// stubLanceAssetHead swaps the release-asset probe for the test's duration.
-func stubLanceAssetHead(t *testing.T, fn func(url string) (int, error)) {
+// stubReleaseAssetHead swaps the release-asset probe for the test's duration.
+func stubReleaseAssetHead(t *testing.T, fn func(url string) (int, error)) {
 	t.Helper()
-	old := lanceAssetHead
-	lanceAssetHead = fn
-	t.Cleanup(func() { lanceAssetHead = old })
+	old := releaseAssetHead
+	releaseAssetHead = fn
+	t.Cleanup(func() { releaseAssetHead = old })
 }
 
 func TestDeployWorkerInstances_BothUnits(t *testing.T) {
@@ -35,7 +35,7 @@ func TestDeployWorkerInstances_BothUnits(t *testing.T) {
 	op := newFakeOperator()
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
 	var probedURL string
-	stubLanceAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
+	stubReleaseAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101", LanceMetricsPort: 9328}
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
@@ -77,7 +77,7 @@ func TestDeployWorkerInstances_SkipsLanceOffPlatform(t *testing.T) {
 		m := &Manager{User: "root", Version: "4.44"}
 		op := newFakeOperator()
 		op.outputFn = func(cmd string) ([]byte, error) { return []byte(uname + "\n"), nil }
-		stubLanceAssetHead(t, func(url string) (int, error) {
+		stubReleaseAssetHead(t, func(url string) (int, error) {
 			t.Errorf("uname %q: no asset probe expected for an unsupported platform", uname)
 			return 0, nil
 		})
@@ -100,7 +100,7 @@ func TestDeployWorkerInstances_SkipsLanceWithoutNamespace(t *testing.T) {
 	m := &Manager{User: "root", Version: "4.44"}
 	op := newFakeOperator()
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
-	stubLanceAssetHead(t, func(url string) (int, error) {
+	stubReleaseAssetHead(t, func(url string) (int, error) {
 		t.Error("no asset probe expected when the namespace is missing")
 		return 0, nil
 	})
@@ -127,7 +127,7 @@ func TestDeployWorkerInstances_SkipsLanceOnOlderRelease(t *testing.T) {
 	m := &Manager{User: "root", Version: "4.44"}
 	op := newFakeOperator()
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
-	stubLanceAssetHead(t, func(url string) (int, error) { return 404, nil })
+	stubReleaseAssetHead(t, func(url string) (int, error) { return 404, nil })
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
@@ -152,7 +152,7 @@ func TestDeployWorkerInstances_ProbeFailureIsAnError(t *testing.T) {
 		m := &Manager{User: "root", Version: "4.44"}
 		op := newFakeOperator()
 		op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
-		stubLanceAssetHead(t, fn)
+		stubReleaseAssetHead(t, fn)
 
 		w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
 		err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0)
@@ -177,7 +177,7 @@ func TestLanceWorkerAssetArch(t *testing.T) {
 		"garbage":       "",
 	}
 	for uname, wantArch := range cases {
-		arch, reason := lanceWorkerAssetArch(uname)
+		arch, reason := rustAssetArch("weed-worker", uname)
 		if arch != wantArch {
 			t.Errorf("uname %q: arch %q, want %q", uname, arch, wantArch)
 		}
@@ -187,15 +187,15 @@ func TestLanceWorkerAssetArch(t *testing.T) {
 	}
 }
 
-func TestRustWorkerArgs(t *testing.T) {
+func TestRustToolArgs(t *testing.T) {
 	var buf bytes.Buffer
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
 	w.WriteLanceToBuffer([]string{"10.0.0.100:23646"}, &buf)
 
-	got := rustWorkerArgs(&buf)
+	got := rustToolArgs(&buf)
 	want := "--admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101"
 	if got != want {
-		t.Fatalf("rustWorkerArgs: got %q want %q", got, want)
+		t.Fatalf("rustToolArgs: got %q want %q", got, want)
 	}
 }
 
@@ -211,9 +211,9 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	m := &Manager{User: "root", Version: "4.44", filerSigning: filerSigningKeys{write: "w-key", read: "r-key"}}
 	op := newFakeOperator()
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
-	stubLanceAssetHead(t, func(url string) (int, error) { return 200, nil })
+	stubReleaseAssetHead(t, func(url string) (int, error) { return 200, nil })
 
-	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
+	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101", Masters: "10.0.0.1:9333"}
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
@@ -228,12 +228,28 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 			}
 		case strings.HasSuffix(path, "/config/security.env"):
 			lanceEnv++
-			if content != "WEED_FILER_SIGNING_KEY=w-key\n" {
+			if content != "WEED_MASTERS=10.0.0.1:9333\nWEED_FILER_SIGNING_KEY=w-key\n" {
 				t.Errorf("lance security.env = %q", content)
 			}
 		}
 	}
 	if goToml != 1 || lanceEnv != 1 {
 		t.Fatalf("want security.toml for the go unit and security.env for the lance unit, got %d/%d; uploads: %v", goToml, lanceEnv, keys(op.uploads))
+	}
+}
+
+// weed-worker needs its masters whether or not the cluster signs; they go in
+// the environment, which a weed-worker that predates them ignores.
+func TestLanceWorkerEnv(t *testing.T) {
+	m := &Manager{}
+	files := m.lanceWorkerEnv("10.0.0.1:9333,10.0.0.2:9333")
+	if len(files) != 1 || files[0].Name != "security.env" {
+		t.Fatalf("want one security.env, got %+v", files)
+	}
+	if got := files[0].Content.String(); got != "WEED_MASTERS=10.0.0.1:9333,10.0.0.2:9333\n" {
+		t.Errorf("env = %q", got)
+	}
+	if files := m.lanceWorkerEnv(""); files != nil {
+		t.Errorf("no masters and no key: want no file, got %+v", files)
 	}
 }

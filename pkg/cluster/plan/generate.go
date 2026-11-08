@@ -270,6 +270,8 @@ func Generate(inv *inventory.Inventory, factsByTarget map[string]probe.HostFacts
 				out.WorkerServers = append(out.WorkerServers, newWorkerSpec(h, ssh))
 			case inventory.RoleEnvoy:
 				out.EnvoyServers = append(out.EnvoyServers, newEnvoySpec(h, ssh))
+			case inventory.RoleVector:
+				out.VectorServers = append(out.VectorServers, newVectorSpec(h, ssh))
 			default:
 				return nil, report, fmt.Errorf("unknown role %q on host %s", role, h.IP)
 			}
@@ -450,6 +452,15 @@ func newWorkerSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.WorkerServe
 		// default to predict what task categories the worker will
 		// pick up.
 		JobType: spec.DefaultWorkerJobType,
+	}
+}
+
+// newVectorSpec leaves masters unset: deploy derives them from master_servers.
+func newVectorSpec(h *inventory.Host, ssh inventory.SSHConfig) *spec.VectorServerSpec {
+	return &spec.VectorServerSpec{
+		Ip:      h.IP,
+		PortSsh: ssh.Port,
+		Port:    spec.DefaultVectorPort,
 	}
 }
 

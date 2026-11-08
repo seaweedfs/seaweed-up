@@ -249,6 +249,7 @@ func runClusterDeploy(cmd *cobra.Command, args []string, opts *ClusterDeployOpti
 		fmt.Printf("  Filers:  %d\n", len(clusterSpec.FilerServers))
 		fmt.Printf("  Admins:  %d\n", len(clusterSpec.AdminServers))
 		fmt.Printf("  Workers: %d\n", len(clusterSpec.WorkerServers))
+		fmt.Printf("  Vectors: %d\n", len(clusterSpec.VectorServers))
 
 		if !utils.PromptForConfirmation("Proceed with deployment?") {
 			color.Yellow("Deployment cancelled by user")
@@ -632,6 +633,7 @@ func runClusterUpgrade(clusterName string, opts *ClusterUpgradeOptions) error {
 		fmt.Printf("  S3:      %d\n", len(clusterSpec.S3Servers))
 		fmt.Printf("  Admins:  %d\n", len(clusterSpec.AdminServers))
 		fmt.Printf("  Workers: %d\n", len(clusterSpec.WorkerServers))
+		fmt.Printf("  Vectors: %d\n", len(clusterSpec.VectorServers))
 		fmt.Printf("  Rollback on failure: %v\n", opts.RollbackOnFailure)
 		if !utils.PromptForConfirmation("Proceed with rolling upgrade?") {
 			color.Yellow("WARN: Upgrade cancelled by user")

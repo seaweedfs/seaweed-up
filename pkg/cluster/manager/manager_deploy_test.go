@@ -361,3 +361,24 @@ func TestPrepare_DerivesLanceNamespace(t *testing.T) {
 		t.Errorf("no s3 servers: namespace should stay empty, got %q", got)
 	}
 }
+
+// TestPrepare_DerivesLanceWorkerMasters: weed-worker keeps Lance tables
+// through the filers its masters list, so prepare fills them from
+// master_servers unless the worker names its own.
+func TestPrepare_DerivesLanceWorkerMasters(t *testing.T) {
+	m := &Manager{User: "root"}
+	sp := &spec.Specification{
+		MasterServers: []*spec.MasterServerSpec{{Ip: "10.0.0.1", Port: 9333}, {Ip: "10.0.0.2", Port: 9333, PortGrpc: 29333}},
+		WorkerServers: []*spec.WorkerServerSpec{
+			{Ip: "10.0.0.10"},
+			{Ip: "10.0.0.11", Masters: "m.example:9333"},
+		},
+	}
+	m.prepare(sp)
+	if got, want := sp.WorkerServers[0].Masters, "10.0.0.1:9333,10.0.0.2:9333.29333"; got != want {
+		t.Errorf("derived masters: got %q want %q", got, want)
+	}
+	if got, want := sp.WorkerServers[1].Masters, "m.example:9333"; got != want {
+		t.Errorf("explicit masters must win, got %q want %q", got, want)
+	}
+}

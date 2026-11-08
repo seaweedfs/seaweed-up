@@ -1101,3 +1101,41 @@ func mapsEqual(a, b map[string]interface{}) bool {
 func containsFold(s, sub string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(sub))
 }
+
+// A host with the vector role becomes a vector_servers entry on the engine's
+// default port; masters are left to deploy, which derives them.
+func TestGenerate_vectorRole(t *testing.T) {
+	dir := t.TempDir()
+	invPath := filepath.Join(dir, "inventory.yaml")
+	inv := "defaults:\n  ssh:\n    user: ubuntu\n    port: 22\nhosts:\n" +
+		"  - ip: 10.0.0.11\n    roles: [master, filer, s3]\n" +
+		"  - ip: 10.0.0.51\n    roles: [vector]\n"
+	if err := os.WriteFile(invPath, []byte(inv), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := inventory.Load(invPath)
+	if err != nil {
+		t.Fatalf("inventory.Load: %v", err)
+	}
+	facts := map[string]probe.HostFacts{
+		"10.0.0.11:22": {IP: "10.0.0.11", SSHPort: 22, CPUCores: 4},
+		"10.0.0.51:22": {IP: "10.0.0.51", SSHPort: 22, CPUCores: 4},
+	}
+	out, _, err := Generate(loaded, facts, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(out.VectorServers) != 1 || out.VectorServers[0].Ip != "10.0.0.51" || out.VectorServers[0].Port != 8090 {
+		t.Fatalf("vector_servers: %+v", out.VectorServers)
+	}
+	got, err := Marshal(out, MarshalOptions{InventoryPath: "inventory.yaml", Now: goldenStamp})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(got), "vector_servers:") {
+		t.Errorf("rendered cluster.yaml has no vector_servers:\n%s", got)
+	}
+	if _, err := UnmarshalForRoundTrip(got); err != nil {
+		t.Errorf("round-trip: %v", err)
+	}
+}
