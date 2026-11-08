@@ -21,7 +21,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
 		"RustDevAssetURL": "", "RustDevMd5URL": "", "RustDevBuildID": "",
 		"Binary": "weed", "RustVolume": false, "Enterprise": false,
-		"RustWorker": false, "RustWorkerArgs": "",
+		"RustTool": "", "RustToolArgs": "",
 	}
 	for k, v := range data {
 		base[k] = v
@@ -135,18 +135,18 @@ func TestInstallScript_RustVolumeEnterprisePath(t *testing.T) {
 func TestInstallScript_RustWorkerPath(t *testing.T) {
 	out := renderInstall(t, map[string]interface{}{
 		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
-		"Binary": "weed-worker", "RustWorker": true, "Version": "4.44",
-		"RustWorkerArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		"Binary": "weed-worker", "RustTool": "weed-worker", "Version": "4.44",
+		"RustToolArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
 	})
 	for _, want := range []string{
 		"BINARY=weed-worker",
 		"weed-worker_${OS}_${SUFFIX}.tar.gz", // versioned per-arch release asset
 		".weed-worker-version",               // version marker
-		`WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"`,
+		`TOOL_VERSION_ID="${SEAWEED_VERSION}:${TOOL_ASSET}"`,
 		"weed-worker is published for linux amd64/arm64 only", // arch guard
 		"md5sum -c",
 		`"$TMP_DIR/weed-worker" --help`, // glibc probe before install
-		"skipping the Lance maintenance worker",
+		"skipping the weed-worker unit",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
 		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}\n",

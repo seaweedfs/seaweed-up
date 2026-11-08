@@ -292,6 +292,13 @@ func buildUpgradeTargets(specification *spec.Specification, scheme string) []upg
 			describe: fmt.Sprintf("worker%d %s", i, hostPort),
 		})
 	}
+	// The vector engine serves gRPC only: like workers, a systemd liveness gate.
+	for i, v := range specification.VectorServers {
+		targets = append(targets, upgradeTarget{
+			component: vectorComponent, index: i, ip: v.Ip, portSsh: v.PortSsh,
+			describe: fmt.Sprintf("%s %s", vectorComponentInstance(i), v.ListenAddress()),
+		})
+	}
 	return targets
 }
 
@@ -375,6 +382,14 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			postDeploy: func(op operator.CommandOperator) error {
 				return m.deployLanceWorker(op, workerAdmins, w, t.index)
 			},
+		}
+	case vectorComponent:
+		v := specification.VectorServers[t.index]
+		hooks = componentHooks{
+			serviceName: vectorComponent,
+			sshAddr:     net.JoinHostPort(v.Ip, strconv.Itoa(v.PortSsh)),
+			stop:        func() error { return m.StopVectorServer(v, t.index) },
+			writeConfig: func(buf *bytes.Buffer) { v.WriteToBuffer(buf) },
 		}
 	default:
 		return fmt.Errorf("unknown component: %s", t.component)

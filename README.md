@@ -23,6 +23,7 @@ YAML file.
 | File access     | `filer_servers`           | Metadata gateway (run 3, external DB)      |
 |                 | `s3_servers`              | S3 API gateway (scale for throughput)      |
 |                 | `sftp_servers`, `envoy_servers` | Optional additional frontends        |
+|                 | `vector_servers`          | S3 Vectors engine for vector buckets       |
 | Backend ops     | `admin_servers`           | Coordinate balancing, EC, vacuum (run 1)   |
 |                 | `worker_servers`          | Execute admin-scheduled tasks (run a few)  |
 | Observability   | `monitoring`              | node_exporter + Prometheus + Grafana       |
@@ -181,6 +182,32 @@ release instead, so the rust engine works for both editions.
   `~/.ssh/known_hosts`; anything else is refused.
 
 The policy applies to both the direct node connections and the bastion hop.
+
+## Vector buckets
+
+The S3 gateway serves S3 Vectors on its own port; index and vector operations
+need the engine, `weed-vector`, which `vector_servers` deploys. It registers
+with the masters (where the gateway finds it) and keeps the indexes' files on
+the filers and volume servers, so it needs no S3 credentials:
+
+```yaml
+vector_servers:
+  - ip: 10.0.0.51          # gRPC on 10.0.0.51:8090; masters from master_servers
+    config:
+      read-cache-mb: 1024  # further weed-vector flags by name
+```
+
+- `port` defaults to `8090`; the engine listens on `ip:port`, the address it
+  registers, so the gateway must reach it. `masters` defaults to every
+  `master_servers` entry.
+- seaweed-up downloads `weed-vector_linux_<arch>.tar.gz` (plus `.md5`) from the
+  release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
+  4.52, whose engine and Lance worker keep tables on the filers. The enterprise
+  releases ship no `weed-vector` asset, and `enable_tls` is not supported for
+  `vector_servers` yet (no `[grpc.vector]` certificate is issued).
+- Vector indexes are built by the Lance maintenance worker that runs beside
+  every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
+  and the cluster's signing key, which the S3 gateway checks it by.
 
 ## Monitoring (Prometheus + Grafana)
 

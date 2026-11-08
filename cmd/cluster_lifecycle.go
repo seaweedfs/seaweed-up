@@ -95,9 +95,9 @@ func runClusterLifecycle(verb manager.LifecycleVerb, opts *ClusterLifecycleOptio
 	}
 
 	switch opts.Component {
-	case "", "master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker", "monitoring":
+	case "", "master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker", "vector", "monitoring":
 	default:
-		return fmt.Errorf("invalid --component value %q (want master|volume|filer|envoy|s3|sftp|admin|worker|monitoring)", opts.Component)
+		return fmt.Errorf("invalid --component value %q (want master|volume|filer|envoy|s3|sftp|admin|worker|vector|monitoring)", opts.Component)
 	}
 
 	if !opts.SkipConfirm {
