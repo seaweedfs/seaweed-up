@@ -127,6 +127,15 @@ func validateSftpFilerPrerequisite(specification *spec.Specification) error {
 	return nil
 }
 
+// validateVectorServers refuses vector_servers on a TLS cluster before any
+// host changes: seaweed-up issues no [grpc.vector] certificate.
+func (m *Manager) validateVectorServers(specification *spec.Specification) error {
+	if m.shouldInstall(vectorComponent) && len(specification.VectorServers) > 0 && specification.GlobalOptions.TLSEnabled {
+		return fmt.Errorf("vector_servers with enable_tls is not supported yet: seaweed-up issues no [grpc.vector] certificate")
+	}
+	return nil
+}
+
 // resolveWorkerDefaultAdmins returns the default admin endpoint(s) used when
 // an individual WorkerServerSpec does not supply its own Admin field.
 //
@@ -259,6 +268,9 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return err
 	}
 	if err := validateSftpFilerPrerequisite(specification); err != nil {
+		return err
+	}
+	if err := m.validateVectorServers(specification); err != nil {
 		return err
 	}
 	if m.installsKeyedInstances(specification) {
@@ -458,9 +470,6 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	// The S3 Vectors engine registers with the masters, where the gateway
 	// finds it, and keeps index files on the filers they list.
 	if m.shouldInstall(vectorComponent) && len(specification.VectorServers) > 0 {
-		if specification.GlobalOptions.TLSEnabled {
-			return fmt.Errorf("vector_servers with enable_tls is not supported yet: seaweed-up issues no [grpc.vector] certificate")
-		}
 		for index, vectorSpec := range specification.VectorServers {
 			task := tasks[vectorComponentInstance(index)]
 			task.Start()

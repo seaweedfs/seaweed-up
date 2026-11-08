@@ -95,3 +95,25 @@ func TestPrepare_DerivesVectorMasters(t *testing.T) {
 		t.Errorf("ssh port default: %d", sp.VectorServers[0].PortSsh)
 	}
 }
+
+// A TLS cluster with vector_servers is refused before deploy or upgrade
+// touches a host.
+func TestVectorServersRefusedOnTLS(t *testing.T) {
+	sp := func() *spec.Specification {
+		return &spec.Specification{
+			GlobalOptions: spec.GlobalOptions{TLSEnabled: true},
+			VectorServers: []*spec.VectorServerSpec{{Ip: "10.0.0.20"}},
+		}
+	}
+	m := &Manager{User: "root", Version: "4.53"}
+	if err := m.DeployCluster(sp()); err == nil || !strings.Contains(err.Error(), "enable_tls") {
+		t.Errorf("deploy: got %v, want the enable_tls refusal", err)
+	}
+	if err := m.UpgradeCluster(sp(), "4.53", UpgradeOptions{}); err == nil || !strings.Contains(err.Error(), "enable_tls") {
+		t.Errorf("upgrade: got %v, want the enable_tls refusal", err)
+	}
+	m.ComponentToDeploy = "master"
+	if err := m.validateVectorServers(sp()); err != nil {
+		t.Errorf("deploying another component: %v", err)
+	}
+}
