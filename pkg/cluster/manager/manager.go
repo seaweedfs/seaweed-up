@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
+	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 )
@@ -38,6 +39,32 @@ const (
 // "_full" segment. The binary inside the tarball is still `weed`, so
 // the existing install.sh unpack path works unchanged.
 const enterpriseAssetPrefix = "weed-enterprise-"
+
+// ReleaseAssets lists the tarballs, and their .md5 files, that install.sh
+// downloads from a release for linux amd64 and arm64 hosts of this cluster.
+// OSS amd64 hosts take the _full variant; arm64 has only the plain one.
+func (m *Manager) ReleaseAssets(specification *spec.Specification) []string {
+	flavor := ""
+	if m.Enterprise {
+		flavor = "-enterprise"
+	}
+	var names []string
+	for _, arch := range []string{"amd64", "arm64"} {
+		weed := "linux_" + arch + "_large_disk.tar.gz"
+		switch {
+		case m.Enterprise:
+			weed = enterpriseAssetPrefix + weed
+		case arch == "amd64":
+			weed = "linux_amd64_full_large_disk.tar.gz"
+		}
+		names = append(names, weed, weed+".md5")
+		if specHasRustVolume(specification) {
+			rust := "weed-volume" + flavor + "_large_disk_linux_" + arch + ".tar.gz"
+			names = append(names, rust, rust+".md5")
+		}
+	}
+	return names
+}
 
 // ReleaseOwnerRepo returns the GitHub owner/repo pair that the manager
 // should pull SeaweedFS binaries from, picking the enterprise repo when
