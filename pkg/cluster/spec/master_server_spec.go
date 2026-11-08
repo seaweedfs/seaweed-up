@@ -3,6 +3,8 @@ package spec
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -27,10 +29,11 @@ func (masterSpec *MasterServerSpec) RustAddress() string {
 	if port == 0 {
 		port = 9333
 	}
+	addr := net.JoinHostPort(masterSpec.Ip, strconv.Itoa(port))
 	if masterSpec.PortGrpc != 0 && masterSpec.PortGrpc != port+10000 {
-		return fmt.Sprintf("%s:%d.%d", masterSpec.Ip, port, masterSpec.PortGrpc)
+		return fmt.Sprintf("%s.%d", addr, masterSpec.PortGrpc)
 	}
-	return fmt.Sprintf("%s:%d", masterSpec.Ip, port)
+	return addr
 }
 
 func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
