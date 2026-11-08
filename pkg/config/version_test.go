@@ -5,11 +5,13 @@ import "testing"
 func TestPickRelease(t *testing.T) {
 	// Mirrors the enterprise release repo, which interleaves seaweed-vfs
 	// client releases with weed server releases, newest first.
+	assets := []Asset{{Name: "weed-enterprise-linux_amd64_large_disk.tar.gz"}}
 	releases := []Release{
-		{TagName: "vfs-0.1.6"},
-		{TagName: "4.40"},
-		{TagName: "vfs-0.1.5"},
-		{TagName: "4.39"},
+		{TagName: "4.41"},
+		{TagName: "vfs-0.1.6", Assets: assets},
+		{TagName: "4.40", Assets: assets},
+		{TagName: "vfs-0.1.5", Assets: assets},
+		{TagName: "4.39", Assets: assets},
 	}
 
 	tests := []struct {
@@ -18,9 +20,10 @@ func TestPickRelease(t *testing.T) {
 		tagFilter func(string) bool
 		want      string
 	}{
-		{name: "latest skips non-weed tags", ver: "0", tagFilter: IsWeedReleaseTag, want: "4.40"},
+		{name: "latest skips non-weed tags and releases without assets", ver: "0", tagFilter: IsWeedReleaseTag, want: "4.40"},
 		{name: "latest without filter", ver: "0", want: "vfs-0.1.6"},
 		{name: "exact version", ver: "4.39", tagFilter: IsWeedReleaseTag, want: "4.39"},
+		{name: "exact version without assets", ver: "4.41", tagFilter: IsWeedReleaseTag, want: "4.41"},
 		{name: "unknown version", ver: "9.99", want: ""},
 	}
 	for _, tt := range tests {

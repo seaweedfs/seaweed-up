@@ -78,11 +78,13 @@ func IsWeedReleaseTag(tag string) bool {
 
 // pickRelease selects the release for ver from releaseList: the newest tag
 // accepted by tagFilter when ver is "0" (nil accepts all), or the exact tag
-// match otherwise. Returns a zero Release when nothing matches.
+// match otherwise. Returns a zero Release when nothing matches. A release is
+// published before its binaries finish uploading, so "0" skips releases that
+// have no assets yet.
 func pickRelease(releaseList []Release, ver string, tagFilter func(string) bool) Release {
 	if ver == "0" {
 		for _, r := range releaseList {
-			if tagFilter == nil || tagFilter(r.TagName) {
+			if len(r.Assets) > 0 && (tagFilter == nil || tagFilter(r.TagName)) {
 				return r
 			}
 		}
