@@ -68,6 +68,7 @@ func TestHostPrepScriptEmbedded(t *testing.T) {
 		"18888",
 		"8333",
 		"23646",
+		"8090",
 		"chrony",
 		"systemd-timesyncd",
 		"ufw",
