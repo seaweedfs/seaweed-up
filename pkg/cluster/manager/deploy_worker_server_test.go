@@ -213,7 +213,7 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
 	stubLanceAssetHead(t, func(url string) (int, error) { return 200, nil })
 
-	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
+	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101", Masters: "10.0.0.1:9333"}
 	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
@@ -228,12 +228,28 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 			}
 		case strings.HasSuffix(path, "/config/security.env"):
 			lanceEnv++
-			if content != "WEED_FILER_SIGNING_KEY=w-key\n" {
+			if content != "WEED_MASTERS=10.0.0.1:9333\nWEED_FILER_SIGNING_KEY=w-key\n" {
 				t.Errorf("lance security.env = %q", content)
 			}
 		}
 	}
 	if goToml != 1 || lanceEnv != 1 {
 		t.Fatalf("want security.toml for the go unit and security.env for the lance unit, got %d/%d; uploads: %v", goToml, lanceEnv, keys(op.uploads))
+	}
+}
+
+// weed-worker needs its masters whether or not the cluster signs; they go in
+// the environment, which a weed-worker that predates them ignores.
+func TestLanceWorkerEnv(t *testing.T) {
+	m := &Manager{}
+	files := m.lanceWorkerEnv("10.0.0.1:9333,10.0.0.2:9333")
+	if len(files) != 1 || files[0].Name != "security.env" {
+		t.Fatalf("want one security.env, got %+v", files)
+	}
+	if got := files[0].Content.String(); got != "WEED_MASTERS=10.0.0.1:9333,10.0.0.2:9333\n" {
+		t.Errorf("env = %q", got)
+	}
+	if files := m.lanceWorkerEnv(""); files != nil {
+		t.Errorf("no masters and no key: want no file, got %+v", files)
 	}
 }

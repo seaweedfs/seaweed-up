@@ -20,6 +20,19 @@ type MasterServerSpec struct {
 	OS                 string                 `yaml:"os,omitempty"`
 }
 
+// RustAddress is the master as the Rust components take it: `ip:port`, or
+// `ip:port.grpc` when the gRPC port is not port+10000.
+func (masterSpec *MasterServerSpec) RustAddress() string {
+	port := masterSpec.Port
+	if port == 0 {
+		port = 9333
+	}
+	if masterSpec.PortGrpc != 0 && masterSpec.PortGrpc != port+10000 {
+		return fmt.Sprintf("%s:%d.%d", masterSpec.Ip, port, masterSpec.PortGrpc)
+	}
+	return fmt.Sprintf("%s:%d", masterSpec.Ip, port)
+}
+
 func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "mdir", ".")
 	addToBuffer(buf, "peers", strings.Join(masters, ","))

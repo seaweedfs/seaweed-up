@@ -92,7 +92,7 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 
 	var buf bytes.Buffer
 	w.WriteLanceToBuffer(admins, &buf)
-	return m.deployComponentInstance(op, workerLanceComponent, workerLanceComponentInstance(index), &buf, m.instanceSecurityEnv()...)
+	return m.deployComponentInstance(op, workerLanceComponent, workerLanceComponentInstance(index), &buf, m.lanceWorkerEnv(w.Masters)...)
 }
 
 // lanceAssetHead issues the probe's HEAD; a var so tests stub the network away.

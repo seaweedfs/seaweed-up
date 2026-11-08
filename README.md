@@ -78,6 +78,8 @@ don't repeat them per server:
   entry uses. Define it once under `global`; the secret lives in one place.
 - **`s3_servers[].filer`** — defaults to the first `filer_servers` entry.
 - **`worker_servers[].admin`** — defaults to the first `admin_servers` entry.
+- **`worker_servers[].masters`** — the Lance maintenance worker's masters, whose
+  filers it keeps Lance tables through; defaults to every `master_servers` entry.
 
 So a multi-gateway / multi-worker spec is just a list of IPs:
 

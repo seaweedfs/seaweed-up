@@ -661,8 +661,15 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	for _, adminSpec := range specification.AdminServers {
 		adminSpec.PortSsh = utils.NvlInt(adminSpec.PortSsh, m.SshPort, 22)
 	}
+	rustMasters := make([]string, 0, len(specification.MasterServers))
+	for _, masterSpec := range specification.MasterServers {
+		rustMasters = append(rustMasters, masterSpec.RustAddress())
+	}
 	for _, workerSpec := range specification.WorkerServers {
 		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
+		if workerSpec.Masters == "" {
+			workerSpec.Masters = strings.Join(rustMasters, ",")
+		}
 		// Default the Lance namespace to the first s3 server's port.lance.
 		if workerSpec.Namespace == "" && len(specification.S3Servers) > 0 {
 			s3Spec := specification.S3Servers[0]

@@ -5,6 +5,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/fatih/color"
@@ -130,12 +131,20 @@ func (m *Manager) instanceSecurityToml(component string) []extraConfigFile {
 	return []extraConfigFile{{Name: "security.toml", Content: bytes.NewBufferString(toml), Mode: "0600"}}
 }
 
-// instanceSecurityEnv hands the key to weed-worker, which has no -config_dir
-// and reads WEED_FILER_SIGNING_KEY in every release that signs its stream.
-func (m *Manager) instanceSecurityEnv() []extraConfigFile {
-	if m.filerSigning.write == "" {
+// lanceWorkerEnv is weed-worker's environment file. WEED_MASTERS names the
+// masters whose filers it keeps Lance tables through, required after 4.52;
+// WEED_FILER_SIGNING_KEY signs its admin stream and its Lance namespace
+// calls. Variables, not flags: a release that predates one ignores it.
+func (m *Manager) lanceWorkerEnv(masters string) []extraConfigFile {
+	var env strings.Builder
+	if masters != "" {
+		env.WriteString("WEED_MASTERS=" + masters + "\n")
+	}
+	if m.filerSigning.write != "" {
+		env.WriteString("WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n")
+	}
+	if env.Len() == 0 {
 		return nil
 	}
-	env := "WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n"
-	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env), Mode: "0600"}}
+	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env.String()), Mode: "0600"}}
 }
