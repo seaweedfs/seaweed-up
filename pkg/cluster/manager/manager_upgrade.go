@@ -124,7 +124,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		return nil
 	}
-	if len(specification.AdminServers) > 0 || len(specification.WorkerServers) > 0 {
+	if len(specification.AdminServers) > 0 || len(specification.WorkerServers) > 0 || len(specification.S3Servers) > 0 {
 		if err := m.loadInstanceSecurity(specification); err != nil {
 			return err
 		}
@@ -343,15 +343,16 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			stop:        func() error { return m.StopS3Server(s3, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { s3.WriteToBuffer(buf, s3ConfigPath) },
 			extras: func() ([]extraConfigFile, error) {
+				extras := m.s3SecurityToml()
 				if len(s3.S3Config) == 0 {
-					return nil, nil
+					return extras, nil
 				}
 				b, err := json.MarshalIndent(s3.S3Config, "", "  ")
 				if err != nil {
 					return nil, fmt.Errorf("marshal s3.json: %w", err)
 				}
 				// s3.json holds IAM credentials; restrict to owner-only.
-				return []extraConfigFile{{Name: "s3.json", Content: bytes.NewBuffer(b), Mode: "0600"}}, nil
+				return append(extras, extraConfigFile{Name: "s3.json", Content: bytes.NewBuffer(b), Mode: "0600"}), nil
 			},
 		}
 	case "admin":

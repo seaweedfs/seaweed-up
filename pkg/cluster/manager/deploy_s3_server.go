@@ -20,7 +20,7 @@ func (m *Manager) DeployS3Server(s *spec.S3ServerSpec, index int) error {
 		remoteConfigDir := fmt.Sprintf("%s/%s.d", m.confDir, componentInstance)
 
 		var s3ConfigPath string
-		var extras []extraConfigFile
+		extras := m.s3SecurityToml()
 		if len(s.S3Config) > 0 {
 			b, err := json.MarshalIndent(s.S3Config, "", "  ")
 			if err != nil {

@@ -100,24 +100,38 @@ func loadFilerSigningKeys(clusterName string) (filerSigningKeys, error) {
 	return filerSigningKeys{write: write, read: read}, nil
 }
 
-// installsAdminOrWorker reports whether a deploy installs admin or worker
-// instances.
-func (m *Manager) installsAdminOrWorker(specification *spec.Specification) bool {
+// installsKeyedInstances reports whether a deploy installs admin, worker or
+// s3 instances, the ones that carry the cluster's signing keys.
+func (m *Manager) installsKeyedInstances(specification *spec.Specification) bool {
 	installsAdmin := m.shouldInstall("admin") && len(specification.AdminServers) > 0
 	installsWorker := m.shouldInstall("worker") && len(specification.WorkerServers) > 0
-	return installsAdmin || installsWorker
+	installsS3 := m.shouldInstall("s3") && len(specification.S3Servers) > 0
+	return installsAdmin || installsWorker || installsS3
 }
 
-// loadInstanceSecurity loads the signing keys for admin and worker instances.
-// The admin authenticates worker streams with jwt.filer_signing.key, so each
-// of those instances gets its own copy of the key.
+// loadInstanceSecurity loads the signing keys for admin, worker and s3
+// instances. The admin authenticates worker streams with
+// jwt.filer_signing.key, and the s3 gateway's Lance namespace authenticates
+// the Lance worker and weed-vector-cli by a token derived from it, so each of
+// those instances gets its own copy of the key.
 func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
 	keys, err := loadFilerSigningKeys(specification.Name)
 	if err != nil {
-		return fmt.Errorf("admin/worker security.toml: %w", err)
+		return fmt.Errorf("admin/worker/s3 security.toml: %w", err)
 	}
 	m.filerSigning = keys
+	m.tlsCluster = specification.GlobalOptions.TLSEnabled
 	return nil
+}
+
+// s3SecurityToml is the s3 instance's security.toml, without TLS only: the
+// file carries the signing keys alone and would hide the cluster's TLS
+// settings from the gateway.
+func (m *Manager) s3SecurityToml() []extraConfigFile {
+	if m.tlsCluster {
+		return nil
+	}
+	return m.instanceSecurityToml("s3")
 }
 
 // instanceSecurityToml is the JWT-only security.toml installed into an
