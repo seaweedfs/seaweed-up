@@ -40,26 +40,26 @@ func (m *Manager) runWorkerSystemctl(w *spec.WorkerServerSpec, index int, action
 	})
 }
 
-func (m *Manager) DeployWorkerServer(admins []string, w *spec.WorkerServerSpec, index int) error {
+func (m *Manager) DeployWorkerServer(admins, masters []string, w *spec.WorkerServerSpec, index int) error {
 	return m.runWorkerRemote(w, func(op operator.CommandOperator) error {
-		return m.deployWorkerInstances(op, admins, w, index)
+		return m.deployWorkerInstances(op, admins, masters, w, index)
 	})
 }
 
 // deployWorkerInstances installs the Go unit and, when the host qualifies,
 // the companion Lance unit in one SSH session.
-func (m *Manager) deployWorkerInstances(op operator.CommandOperator, admins []string, w *spec.WorkerServerSpec, index int) error {
+func (m *Manager) deployWorkerInstances(op operator.CommandOperator, admins, masters []string, w *spec.WorkerServerSpec, index int) error {
 	var buf bytes.Buffer
 	w.WriteToBuffer(admins, &buf)
 	if err := m.deployComponentInstance(op, "worker", workerComponentInstance(index), &buf, m.instanceSecurityToml("worker")...); err != nil {
 		return err
 	}
-	return m.deployLanceWorker(op, admins, w, index)
+	return m.deployLanceWorker(op, admins, masters, w, index)
 }
 
 // deployLanceWorker installs the companion Rust weed-worker unit; it skips,
 // never fails the host, when the host or release cannot run it.
-func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string, w *spec.WorkerServerSpec, index int) error {
+func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins, masters []string, w *spec.WorkerServerSpec, index int) error {
 	if w.Namespace == "" {
 		m.info(fmt.Sprintf("worker %s: no Lance namespace resolvable (no s3_servers and no worker_servers[].namespace); skipping the Lance maintenance worker", w.Ip))
 		return nil
@@ -91,7 +91,7 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 	}
 
 	var buf bytes.Buffer
-	w.WriteLanceToBuffer(admins, &buf)
+	w.WriteLanceToBuffer(admins, masters, &buf)
 	return m.deployComponentInstance(op, workerLanceComponent, workerLanceComponentInstance(index), &buf, m.instanceSecurityEnv()...)
 }
 

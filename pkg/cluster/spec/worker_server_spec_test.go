@@ -125,10 +125,10 @@ func TestWorkerServerSpec_WriteLanceToBuffer(t *testing.T) {
 		Config:           map[string]interface{}{"maxDetect": 2},
 	}
 	var buf bytes.Buffer
-	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
+	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, []string{"10.0.0.1:9333", "10.0.0.2:9333"}, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.1:23646\nnamespace=http://10.0.0.51:9101\nmetrics-port=9328\nmetrics-ip=0.0.0.0\n"
+	want := "masters=10.0.0.1:9333,10.0.0.2:9333\nadmin=10.0.0.1:23646\nnamespace=http://10.0.0.51:9101\nmetrics-port=9328\nmetrics-ip=0.0.0.0\n"
 	if got != want {
 		t.Fatalf("WriteLanceToBuffer: got %q want %q", got, want)
 	}
@@ -141,10 +141,10 @@ func TestWorkerServerSpec_WriteLanceToBuffer_ExplicitAdmin(t *testing.T) {
 		Namespace: "http://10.0.0.51:9101",
 	}
 	var buf bytes.Buffer
-	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
+	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, []string{"10.0.0.1:9333"}, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.2:23646\nnamespace=http://10.0.0.51:9101\n"
+	want := "masters=10.0.0.1:9333\nadmin=10.0.0.2:23646\nnamespace=http://10.0.0.51:9101\n"
 	if got != want {
 		t.Fatalf("WriteLanceToBuffer explicit admin: got %q want %q", got, want)
 	}

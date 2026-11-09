@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // WorkerServerSpec describes a SeaweedFS maintenance worker instance.
@@ -110,7 +111,8 @@ func (w *WorkerServerSpec) adminEndpoint(admins []string) string {
 
 // WriteLanceToBuffer renders the companion Rust unit's options; the deploy
 // path turns them into ExecStart flags since weed-worker reads no options file.
-func (w *WorkerServerSpec) WriteLanceToBuffer(admins []string, buf *bytes.Buffer) {
+func (w *WorkerServerSpec) WriteLanceToBuffer(admins, masters []string, buf *bytes.Buffer) {
+	addToBuffer(buf, "masters", strings.Join(masters, ","))
 	addToBuffer(buf, "admin", w.adminEndpoint(admins))
 	addToBuffer(buf, "namespace", w.Namespace)
 	addToBufferInt(buf, "metrics-port", w.LanceMetricsPort, 0)

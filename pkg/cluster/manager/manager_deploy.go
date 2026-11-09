@@ -534,7 +534,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 			workerEg.Go(func() error {
 				task := tasks[fmt.Sprintf("worker%d", index)]
 				task.Start()
-				if err := m.DeployWorkerServer(defaultAdmins, workerSpec, index); err != nil {
+				if err := m.DeployWorkerServer(defaultAdmins, masters, workerSpec, index); err != nil {
 					wrapped := fmt.Errorf("deploy worker server %s:%d: %w", workerSpec.Ip, workerSpec.PortSsh, err)
 					task.Fail(wrapped)
 					recordWorkerErr(wrapped)

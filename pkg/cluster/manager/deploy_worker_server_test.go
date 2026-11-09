@@ -38,7 +38,7 @@ func TestDeployWorkerInstances_BothUnits(t *testing.T) {
 	stubLanceAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101", LanceMetricsPort: 9328}
-	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestDeployWorkerInstances_BothUnits(t *testing.T) {
 			for _, want := range []string{
 				"BINARY=weed-worker",
 				"weed-worker_${OS}_${SUFFIX}.tar.gz",
-				"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101 --metrics-port 9328 --metrics-ip 0.0.0.0",
+				"ExecStart=${BIN_DIR}/${BINARY} --masters 10.0.0.1:9333 --admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101 --metrics-port 9328 --metrics-ip 0.0.0.0",
 			} {
 				if !strings.Contains(content, want) {
 					t.Errorf("lance install script missing %q", want)
@@ -83,7 +83,7 @@ func TestDeployWorkerInstances_SkipsLanceOffPlatform(t *testing.T) {
 		})
 
 		w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
-		if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+		if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0); err != nil {
 			t.Fatalf("uname %q: deployWorkerInstances should not fail the host: %v", uname, err)
 		}
 		goUnit, lanceUnit := workerInstallScripts(t, op)
@@ -106,7 +106,7 @@ func TestDeployWorkerInstances_SkipsLanceWithoutNamespace(t *testing.T) {
 	})
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10"} // Namespace empty after prepare()
-	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances should not fail the host: %v", err)
 	}
 	goUnit, lanceUnit := workerInstallScripts(t, op)
@@ -130,7 +130,7 @@ func TestDeployWorkerInstances_SkipsLanceOnOlderRelease(t *testing.T) {
 	stubLanceAssetHead(t, func(url string) (int, error) { return 404, nil })
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
-	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0); err != nil {
 		t.Fatalf("a release without the asset should not fail the host: %v", err)
 	}
 	goUnit, lanceUnit := workerInstallScripts(t, op)
@@ -155,7 +155,7 @@ func TestDeployWorkerInstances_ProbeFailureIsAnError(t *testing.T) {
 		stubLanceAssetHead(t, fn)
 
 		w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
-		err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0)
+		err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0)
 		if err == nil {
 			t.Errorf("%s: expected an error, not a silent skip", name)
 		}
@@ -190,10 +190,10 @@ func TestLanceWorkerAssetArch(t *testing.T) {
 func TestRustWorkerArgs(t *testing.T) {
 	var buf bytes.Buffer
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
-	w.WriteLanceToBuffer([]string{"10.0.0.100:23646"}, &buf)
+	w.WriteLanceToBuffer([]string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, &buf)
 
 	got := rustWorkerArgs(&buf)
-	want := "--admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101"
+	want := "--masters 10.0.0.1:9333 --admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101"
 	if got != want {
 		t.Fatalf("rustWorkerArgs: got %q want %q", got, want)
 	}
@@ -214,7 +214,7 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	stubLanceAssetHead(t, func(url string) (int, error) { return 200, nil })
 
 	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
-	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, []string{"10.0.0.1:9333"}, w, 0); err != nil {
 		t.Fatalf("deployWorkerInstances: %v", err)
 	}
 	var goToml, lanceEnv int

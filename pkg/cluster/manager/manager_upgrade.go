@@ -372,7 +372,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			writeConfig: func(buf *bytes.Buffer) { w.WriteToBuffer(workerAdmins, buf) },
 			extras:      func() ([]extraConfigFile, error) { return m.instanceSecurityToml("worker"), nil },
 			postDeploy: func(op operator.CommandOperator) error {
-				return m.deployLanceWorker(op, workerAdmins, w, t.index)
+				return m.deployLanceWorker(op, workerAdmins, masters, w, t.index)
 			},
 		}
 	default:
