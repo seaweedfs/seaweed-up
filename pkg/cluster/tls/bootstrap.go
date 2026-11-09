@@ -25,6 +25,8 @@ type Bundle struct {
 	VolumeKey  []byte
 	FilerCert  []byte
 	FilerKey   []byte
+	VectorCert []byte
+	VectorKey  []byte
 	ClientCert []byte
 	ClientKey  []byte
 }
@@ -133,6 +135,9 @@ func BuildHostBundleFromParsed(caPEM []byte, ca *ParsedCA, hostIP string) (*Bund
 	if b.FilerCert, b.FilerKey, err = IssueCertFromParsed(ca, "seaweedfs-filer", sans); err != nil {
 		return nil, err
 	}
+	if b.VectorCert, b.VectorKey, err = IssueCertFromParsed(ca, "seaweedfs-vector", sans); err != nil {
+		return nil, err
+	}
 	if b.ClientCert, b.ClientKey, err = IssueCertFromParsed(ca, "seaweedfs-client", sans); err != nil {
 		return nil, err
 	}
@@ -158,6 +163,8 @@ func PersistHostBundle(clusterName, hostIP string, b *Bundle) error {
 		"volume.key": b.VolumeKey,
 		"filer.crt":  b.FilerCert,
 		"filer.key":  b.FilerKey,
+		"vector.crt": b.VectorCert,
+		"vector.key": b.VectorKey,
 		"client.crt": b.ClientCert,
 		"client.key": b.ClientKey,
 	}
@@ -206,6 +213,8 @@ func UploadBundle(op operator.CommandOperator, component string, b *Bundle, jwtF
 		{"volume.key", b.VolumeKey, "0600"},
 		{"filer.crt", b.FilerCert, "0644"},
 		{"filer.key", b.FilerKey, "0600"},
+		{"vector.crt", b.VectorCert, "0644"},
+		{"vector.key", b.VectorKey, "0600"},
 		{"client.crt", b.ClientCert, "0644"},
 		{"client.key", b.ClientKey, "0600"},
 	}
@@ -288,7 +297,7 @@ func runInstallScript(op operator.CommandOperator, script, sshUser, sudoPass str
 // shellSingleQuote wraps s in single quotes so it is safe to embed in a
 // POSIX shell command. Any single quote inside s is escaped by closing
 // the quoted string, inserting an escaped quote, and reopening:
-// ' -> '\''. Mirrors the helper in pkg/cluster/manager so the two
+// ' -> '\”. Mirrors the helper in pkg/cluster/manager so the two
 // deploy paths share the same quoting semantics.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
@@ -317,6 +326,11 @@ func HostRole(s *spec.Specification, ip string) string {
 			return "filer"
 		}
 	}
+	for _, v := range s.VectorServers {
+		if v.Ip == ip {
+			return "vector"
+		}
+	}
 	return "client"
 }
 
@@ -341,6 +355,9 @@ func AllHosts(s *spec.Specification) []HostEntry {
 	}
 	for _, f := range s.FilerServers {
 		add(f.Ip, "filer", f.PortSsh)
+	}
+	for _, v := range s.VectorServers {
+		add(v.Ip, "vector", v.PortSsh)
 	}
 	return out
 }

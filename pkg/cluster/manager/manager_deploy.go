@@ -13,6 +13,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	sutls "github.com/seaweedfs/seaweed-up/pkg/cluster/tls"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
@@ -123,15 +124,6 @@ func validateSftpFilerPrerequisite(specification *spec.Specification) error {
 		if sftpSpec.Filer == "" {
 			return fmt.Errorf("sftp server %s has no filer configured: define at least one filer_servers entry or set an explicit 'filer' on each sftp_servers entry", sftpSpec.Ip)
 		}
-	}
-	return nil
-}
-
-// validateVectorServers refuses vector_servers on a TLS cluster before any
-// host changes: seaweed-up issues no [grpc.vector] certificate.
-func (m *Manager) validateVectorServers(specification *spec.Specification) error {
-	if m.shouldInstall(vectorComponent) && len(specification.VectorServers) > 0 && specification.GlobalOptions.TLSEnabled {
-		return fmt.Errorf("vector_servers with enable_tls is not supported yet: seaweed-up issues no [grpc.vector] certificate")
 	}
 	return nil
 }
@@ -268,9 +260,6 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 		return err
 	}
 	if err := validateSftpFilerPrerequisite(specification); err != nil {
-		return err
-	}
-	if err := m.validateVectorServers(specification); err != nil {
 		return err
 	}
 	if m.installsKeyedInstances(specification) {
@@ -717,6 +706,15 @@ func (m *Manager) prepare(specification *spec.Specification) {
 		if vectorSpec.Masters == "" {
 			vectorSpec.Masters = strings.Join(rustMasters, ",")
 		}
+		if specification.GlobalOptions.TLSEnabled {
+			if vectorSpec.Config == nil {
+				vectorSpec.Config = make(map[string]interface{})
+			}
+			if _, set := vectorSpec.Config["security-toml"]; !set {
+				vectorSpec.Config["security-toml"] = sutls.DefaultRemoteSecurityTOML
+			}
+		}
+
 	}
 	// The monitoring host's SSH port isn't a struct-tag default, so normalize
 	// it here like every other server; otherwise lifecycle commands would dial

@@ -228,6 +228,30 @@ func BuildHostPlans(s *spec.Specification, defaultSSHPort int) []HostPlan {
 		addComp(p, "envoy")
 	}
 
+	for _, v := range s.VectorServers {
+		if v == nil {
+			continue
+		}
+		sshPort := v.PortSsh
+		if sshPort == 0 {
+			sshPort = defaultSSHPort
+		}
+		p := get(v.Ip, sshPort)
+		port := v.Port
+		if port == 0 {
+			port = spec.DefaultVectorPort
+		}
+		addPort(p, port)
+		addPort(p, v.MetricsPort)
+		addComp(p, "vector")
+		if v.Arch != "" {
+			p.Arch = v.Arch
+		}
+		if v.OS != "" {
+			p.OS = v.OS
+		}
+	}
+
 	out := make([]HostPlan, 0, len(byHost))
 	for _, p := range byHost {
 		sort.Ints(p.Ports)

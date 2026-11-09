@@ -140,6 +140,8 @@ func TestRenderSecurityTOML(t *testing.T) {
 			"[grpc.volume]",
 			"[grpc.filer]",
 			"[grpc.client]",
+			"[grpc.vector]",
+			"/etc/seaweed/certs/vector.crt",
 			"/etc/seaweed/certs/ca.crt",
 			"/etc/seaweed/certs/master.crt",
 		} {
