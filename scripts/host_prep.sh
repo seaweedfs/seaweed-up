@@ -78,7 +78,7 @@ fs.file-max=2097152
 # Opens SeaweedFS ports on the detected firewall (ufw/firewalld/iptables).
 setup_firewall() {
   info "Configuring firewall rules"
-  PORTS="9333 19333 8080 18080 8888 18888 8333 23646 8090"
+  PORTS="9333 19333 8080 18080 8888 18888 8333 23646 8090 ${SEAWEED_EXTRA_PORTS:-}"
 
   if command -v ufw >/dev/null 2>&1 && $SUDO ufw status 2>/dev/null | grep -qi "Status: active"; then
     info "Detected ufw"
