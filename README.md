@@ -193,6 +193,7 @@ the filers and volume servers, so it needs no S3 credentials:
 ```yaml
 vector_servers:
   - ip: 10.0.0.51          # gRPC on 10.0.0.51:8090; masters from master_servers
+    metrics_port: 9329    # opt in with an engine build that exposes metrics
     config:
       read-cache-mb: 1024  # further weed-vector flags by name
 ```
@@ -212,6 +213,8 @@ vector_servers:
 - Vector indexes are built by the Lance maintenance worker that runs beside
   every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
   and the cluster's signing key, which the S3 gateway checks it by.
+
+Vector metrics are opt-in for compatibility with older engine releases. When `metrics_port` is set, seaweed-up binds it to the vector host IP, adds a Prometheus scrape target, and checks `/ready` after upgrades. `metrics_ip` overrides the bind address. Monitoring also installs node_exporter on vector hosts.
 
 ## Monitoring (Prometheus + Grafana)
 

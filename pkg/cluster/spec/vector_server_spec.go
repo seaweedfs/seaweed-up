@@ -3,6 +3,7 @@ package spec
 import (
 	"bytes"
 	"fmt"
+	"github.com/seaweedfs/seaweed-up/pkg/utils"
 	"net"
 	"sort"
 	"strconv"
@@ -21,7 +22,9 @@ type VectorServerSpec struct {
 	Port int `yaml:"port,omitempty"`
 	// Masters is the comma-separated master list; empty derives from
 	// master_servers.
-	Masters string `yaml:"masters,omitempty"`
+	Masters     string `yaml:"masters,omitempty"`
+	MetricsPort int    `yaml:"metrics_port,omitempty"`
+	MetricsIP   string `yaml:"metrics_ip,omitempty"`
 	// Config carries further weed-vector flags by name, e.g. read-cache-mb.
 	Config map[string]interface{} `yaml:"config,omitempty"`
 	Arch   string                 `yaml:"arch,omitempty"`
@@ -32,7 +35,7 @@ type VectorServerSpec struct {
 const DefaultVectorPort = 8090
 
 // vectorReservedKeys are rendered from the explicit fields.
-var vectorReservedKeys = map[string]struct{}{"listen": {}, "masters": {}}
+var vectorReservedKeys = map[string]struct{}{"listen": {}, "masters": {}, "metrics-port": {}, "metrics-ip": {}, "metricsPort": {}, "metricsIp": {}}
 
 // ListenAddress is the engine's gRPC address.
 func (v *VectorServerSpec) ListenAddress() string {
@@ -48,6 +51,10 @@ func (v *VectorServerSpec) ListenAddress() string {
 func (v *VectorServerSpec) WriteToBuffer(buf *bytes.Buffer) {
 	addToBuffer(buf, "listen", v.ListenAddress())
 	addToBuffer(buf, "masters", v.Masters)
+	if v.MetricsPort > 0 {
+		addToBufferInt(buf, "metrics-port", v.MetricsPort, 0)
+		addToBuffer(buf, "metrics-ip", utils.Nvl(v.MetricsIP, v.Ip))
+	}
 	keys := make([]string, 0, len(v.Config))
 	for k := range v.Config {
 		if _, reserved := vectorReservedKeys[k]; !reserved {
@@ -58,4 +65,8 @@ func (v *VectorServerSpec) WriteToBuffer(buf *bytes.Buffer) {
 	for _, k := range keys {
 		fmt.Fprintf(buf, "%s=%v\n", k, v.Config[k])
 	}
+}
+
+func (v *VectorServerSpec) MetricsAddress() string {
+	return net.JoinHostPort(v.Ip, strconv.Itoa(v.MetricsPort))
 }

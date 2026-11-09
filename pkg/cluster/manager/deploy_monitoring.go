@@ -51,6 +51,11 @@ func monitoringNodeHosts(s *spec.Specification) []monHost {
 			add(f.Ip, f.PortSsh)
 		}
 	}
+	for _, v := range s.VectorServers {
+		if v != nil {
+			add(v.Ip, v.PortSsh)
+		}
+	}
 	return out
 }
 

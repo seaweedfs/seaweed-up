@@ -149,6 +149,16 @@ func RenderPromConfig(s *spec.Specification) string {
 		hosts[f.Ip] = struct{}{}
 	}
 
+	var vectors []string
+	for _, v := range s.VectorServers {
+		if v != nil {
+			if v.MetricsPort > 0 {
+				vectors = append(vectors, v.MetricsAddress())
+			}
+			hosts[v.Ip] = struct{}{}
+		}
+	}
+
 	// Worker metrics are opt-in (no auto-assignment). Worker hosts carry no
 	// node_exporter, so they stay out of that job.
 	var workers []string
@@ -172,6 +182,7 @@ func RenderPromConfig(s *spec.Specification) string {
 	writeJob("seaweedfs-volume", volumes)
 	writeJob("seaweedfs-filer", filers)
 	writeJob("seaweedfs-worker", workers)
+	writeJob("seaweedfs-vector", vectors)
 
 	var nodeTargets []string
 	for h := range hosts {

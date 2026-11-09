@@ -292,11 +292,16 @@ func buildUpgradeTargets(specification *spec.Specification, scheme string) []upg
 			describe: fmt.Sprintf("worker%d %s", i, hostPort),
 		})
 	}
-	// The vector engine serves gRPC only: like workers, a systemd liveness gate.
 	for i, v := range specification.VectorServers {
 		targets = append(targets, upgradeTarget{
 			component: vectorComponent, index: i, ip: v.Ip, portSsh: v.PortSsh,
 			describe: fmt.Sprintf("%s %s", vectorComponentInstance(i), v.ListenAddress()),
+			healthURL: func() string {
+				if v.MetricsPort > 0 {
+					return "http://" + v.MetricsAddress() + "/ready"
+				}
+				return ""
+			}(),
 		})
 	}
 	return targets
