@@ -34,3 +34,12 @@ func TestVectorMetricsPortsAreReserved(t *testing.T) {
 		t.Fatal("master metrics collide with vector metrics")
 	}
 }
+
+func TestVectorMetricsBindAddress(t *testing.T) {
+	for _, test := range []struct{ bind, want string }{{"10.0.1.20", "10.0.1.20:9329"}, {"fd00::20", "[fd00::20]:9329"}, {"0.0.0.0", "10.0.0.20:9329"}, {"::", "10.0.0.20:9329"}} {
+		v := &VectorServerSpec{Ip: "10.0.0.20", MetricsPort: 9329, MetricsIP: test.bind}
+		if got := v.MetricsAddress(); got != test.want {
+			t.Errorf("bind %s: %s want %s", test.bind, got, test.want)
+		}
+	}
+}

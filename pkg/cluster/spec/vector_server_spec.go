@@ -68,5 +68,9 @@ func (v *VectorServerSpec) WriteToBuffer(buf *bytes.Buffer) {
 }
 
 func (v *VectorServerSpec) MetricsAddress() string {
-	return net.JoinHostPort(v.Ip, strconv.Itoa(v.MetricsPort))
+	host := utils.Nvl(v.MetricsIP, v.Ip)
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		host = v.Ip
+	}
+	return net.JoinHostPort(host, strconv.Itoa(v.MetricsPort))
 }
