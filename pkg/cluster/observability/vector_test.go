@@ -19,3 +19,11 @@ func TestVectorScrapeTargets(t *testing.T) {
 		t.Fatal("disabled engine metrics were added")
 	}
 }
+
+func TestVectorGatewayMetrics(t *testing.T) {
+	s := &spec.Specification{S3Servers: []*spec.S3ServerSpec{{Ip: "fd00::30", MetricsPort: 9326}, nil}}
+	output := RenderPromConfig(s)
+	if !strings.Contains(output, "seaweedfs-s3") || !strings.Contains(output, "[fd00::30]:9326") {
+		t.Fatal(output)
+	}
+}

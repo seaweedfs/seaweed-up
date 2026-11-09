@@ -9,7 +9,9 @@ package observability
 import (
 	_ "embed"
 	"fmt"
+	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -149,6 +151,16 @@ func RenderPromConfig(s *spec.Specification) string {
 		hosts[f.Ip] = struct{}{}
 	}
 
+	var gateways []string
+	for _, gateway := range s.S3Servers {
+		if gateway != nil {
+			if gateway.MetricsPort > 0 {
+				gateways = append(gateways, net.JoinHostPort(gateway.Ip, strconv.Itoa(gateway.MetricsPort)))
+			}
+			hosts[gateway.Ip] = struct{}{}
+		}
+	}
+
 	var vectors []string
 	for _, v := range s.VectorServers {
 		if v != nil {
@@ -183,6 +195,7 @@ func RenderPromConfig(s *spec.Specification) string {
 	writeJob("seaweedfs-filer", filers)
 	writeJob("seaweedfs-worker", workers)
 	writeJob("seaweedfs-vector", vectors)
+	writeJob("seaweedfs-s3", gateways)
 
 	var nodeTargets []string
 	for h := range hosts {

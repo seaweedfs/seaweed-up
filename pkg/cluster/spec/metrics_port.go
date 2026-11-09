@@ -49,6 +49,12 @@ func AssignMetricsPorts(s *Specification) {
 		}
 	}
 
+	for _, gateway := range s.S3Servers {
+		if gateway != nil {
+			mark(gateway.Ip, gateway.MetricsPort)
+		}
+	}
+
 	next := map[string]int{}
 	alloc := func(ip string) int {
 		if used[ip] == nil {
