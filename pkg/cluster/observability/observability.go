@@ -199,7 +199,7 @@ func RenderPromConfig(s *spec.Specification) string {
 
 	var nodeTargets []string
 	for h := range hosts {
-		nodeTargets = append(nodeTargets, fmt.Sprintf("%s:%d", h, NodeExporterPort))
+		nodeTargets = append(nodeTargets, net.JoinHostPort(h, strconv.Itoa(NodeExporterPort)))
 	}
 	writeJob("seaweedfs-node-exporter", nodeTargets)
 
