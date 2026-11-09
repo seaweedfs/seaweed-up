@@ -96,24 +96,14 @@ func TestPrepare_DerivesVectorMasters(t *testing.T) {
 	}
 }
 
-// A TLS cluster with vector_servers is refused before deploy or upgrade
-// touches a host.
-func TestVectorServersRefusedOnTLS(t *testing.T) {
-	sp := func() *spec.Specification {
-		return &spec.Specification{
-			GlobalOptions: spec.GlobalOptions{TLSEnabled: true},
-			VectorServers: []*spec.VectorServerSpec{{Ip: "10.0.0.20"}},
-		}
+func TestPrepareVectorServersOnTLS(t *testing.T) {
+	s := &spec.Specification{GlobalOptions: spec.GlobalOptions{TLSEnabled: true}, VectorServers: []*spec.VectorServerSpec{{Ip: "10.0.0.20"}, {Ip: "10.0.0.21", Config: map[string]interface{}{"security-toml": "/custom/security.toml"}}}}
+	m := &Manager{User: "root"}
+	m.prepare(s)
+	if got := s.VectorServers[0].Config["security-toml"]; got != "/etc/seaweed/security.toml" {
+		t.Fatalf("TLS config = %v", got)
 	}
-	m := &Manager{User: "root", Version: "4.53"}
-	if err := m.DeployCluster(sp()); err == nil || !strings.Contains(err.Error(), "enable_tls") {
-		t.Errorf("deploy: got %v, want the enable_tls refusal", err)
-	}
-	if err := m.UpgradeCluster(sp(), "4.53", UpgradeOptions{}); err == nil || !strings.Contains(err.Error(), "enable_tls") {
-		t.Errorf("upgrade: got %v, want the enable_tls refusal", err)
-	}
-	m.ComponentToDeploy = "master"
-	if err := m.validateVectorServers(sp()); err != nil {
-		t.Errorf("deploying another component: %v", err)
+	if got := s.VectorServers[1].Config["security-toml"]; got != "/custom/security.toml" {
+		t.Fatalf("custom TLS config = %v", got)
 	}
 }

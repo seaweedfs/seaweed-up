@@ -203,8 +203,9 @@ vector_servers:
 - seaweed-up downloads `weed-vector_linux_<arch>.tar.gz` (plus `.md5`) from the
   release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
   4.52, whose engine and Lance worker keep tables on the filers. The enterprise
-  releases ship no `weed-vector` asset, and `enable_tls` is not supported for
-  `vector_servers` yet (no `[grpc.vector]` certificate is issued). Without TLS
+  releases ship no `weed-vector` asset. With `enable_tls`, vector hosts receive
+  certificates and `security.toml` for mutual TLS to the gateway, masters,
+  filers, and volume servers. Without TLS
   the engine serves any caller that reaches its port, bypassing the gateway's
   IAM checks, and host prep opens 8090 to all sources: keep vector hosts
   on the cluster's private network.

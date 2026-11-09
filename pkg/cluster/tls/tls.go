@@ -209,12 +209,19 @@ key  = "%[1]s/volume.key"
 cert = "%[1]s/filer.crt"
 key  = "%[1]s/filer.key"
 
+[grpc.vector]
+cert = "%[1]s/vector.crt"
+key  = "%[1]s/vector.key"
+
 [grpc.client]
 cert = "%[1]s/client.crt"
 key  = "%[1]s/client.key"
 
 [https.client]
 enabled = true
+cert = "%[1]s/client.crt"
+key  = "%[1]s/client.key"
+ca   = "%[1]s/ca.crt"
 
 [https.volume]
 cert = "%[1]s/volume.crt"

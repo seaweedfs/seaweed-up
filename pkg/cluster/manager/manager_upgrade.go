@@ -93,9 +93,6 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		opts.HealthInterval = 3 * time.Second
 	}
 
-	if err := m.validateVectorServers(specification); err != nil {
-		return err
-	}
 	m.prepare(specification)
 
 	// When upgrading to the rolling "dev" tag, resolve it to the newest
