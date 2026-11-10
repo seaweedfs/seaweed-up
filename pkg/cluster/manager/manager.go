@@ -62,6 +62,11 @@ func (m *Manager) ReleaseAssets(specification *spec.Specification) []string {
 			rust := "weed-volume" + flavor + "_large_disk_linux_" + arch + ".tar.gz"
 			names = append(names, rust, rust+".md5")
 		}
+		// Enterprise releases ship no weed-vector; the vector deploy reports that.
+		if !m.Enterprise && specification != nil && len(specification.VectorServers) > 0 {
+			vector := "weed-vector_linux_" + arch + ".tar.gz"
+			names = append(names, vector, vector+".md5")
+		}
 	}
 	return names
 }
