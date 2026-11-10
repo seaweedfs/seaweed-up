@@ -26,6 +26,7 @@ const (
 	RoleAdmin    = "admin"
 	RoleWorker   = "worker"
 	RoleEnvoy    = "envoy"
+	RoleVector   = "vector"
 	RoleExternal = "external"
 )
 
@@ -38,6 +39,7 @@ var validRoles = map[string]struct{}{
 	RoleAdmin:    {},
 	RoleWorker:   {},
 	RoleEnvoy:    {},
+	RoleVector:   {},
 	RoleExternal: {},
 }
 

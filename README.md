@@ -23,6 +23,7 @@ YAML file.
 | File access     | `filer_servers`           | Metadata gateway (run 3, external DB)      |
 |                 | `s3_servers`              | S3 API gateway (scale for throughput)      |
 |                 | `sftp_servers`, `envoy_servers` | Optional additional frontends        |
+|                 | `vector_servers`          | S3 Vectors engine for vector buckets       |
 | Backend ops     | `admin_servers`           | Coordinate balancing, EC, vacuum (run 1)   |
 |                 | `worker_servers`          | Execute admin-scheduled tasks (run a few)  |
 | Observability   | `monitoring`              | node_exporter + Prometheus + Grafana       |
@@ -78,6 +79,8 @@ don't repeat them per server:
   entry uses. Define it once under `global`; the secret lives in one place.
 - **`s3_servers[].filer`** — defaults to the first `filer_servers` entry.
 - **`worker_servers[].admin`** — defaults to the first `admin_servers` entry.
+- **`worker_servers[].masters`** — the Lance maintenance worker's masters, whose
+  filers it keeps Lance tables through; defaults to every `master_servers` entry.
 
 So a multi-gateway / multi-worker spec is just a list of IPs:
 
@@ -179,6 +182,39 @@ release instead, so the rust engine works for both editions.
   `~/.ssh/known_hosts`; anything else is refused.
 
 The policy applies to both the direct node connections and the bastion hop.
+
+## Vector buckets
+
+The S3 gateway serves S3 Vectors on its own port; index and vector operations
+need the engine, `weed-vector`, which `vector_servers` deploys. It registers
+with the masters (where the gateway finds it) and keeps the indexes' files on
+the filers and volume servers, so it needs no S3 credentials:
+
+```yaml
+vector_servers:
+  - ip: 10.0.0.51          # gRPC on 10.0.0.51:8090; masters from master_servers
+    metrics_port: 9329    # opt in with an engine build that exposes metrics
+    config:
+      read-cache-mb: 1024  # further weed-vector flags by name
+```
+
+- `port` defaults to `8090`; the engine listens on `ip:port`, the address it
+  registers, so the gateway must reach it. `masters` defaults to every
+  `master_servers` entry.
+- seaweed-up downloads `weed-vector_linux_<arch>.tar.gz` (plus `.md5`) from the
+  release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
+  4.52, whose engine and Lance worker keep tables on the filers. The enterprise
+  releases ship no `weed-vector` asset. With `enable_tls`, vector hosts receive
+  certificates and `security.toml` for mutual TLS to the gateway, masters,
+  filers, and volume servers. Without TLS
+  the engine serves any caller that reaches its port, bypassing the gateway's
+  IAM checks, and host prep opens 8090 to all sources: keep vector hosts
+  on the cluster's private network.
+- Vector indexes are built by the Lance maintenance worker that runs beside
+  every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
+  and the cluster's signing key, which the S3 gateway checks it by.
+
+Vector metrics are opt-in for compatibility with older engine releases. When `metrics_port` is set, seaweed-up binds it to the vector host IP, adds a Prometheus scrape target, and checks `/ready` after upgrades. `metrics_ip` overrides the bind address. Monitoring also installs node_exporter on vector hosts.
 
 ## Monitoring (Prometheus + Grafana)
 

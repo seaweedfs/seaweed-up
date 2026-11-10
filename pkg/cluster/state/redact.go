@@ -72,6 +72,11 @@ func redactedSpec(sp *spec.Specification) (*spec.Specification, error) {
 			redactMap(s.Config)
 		}
 	}
+	for _, v := range clone.VectorServers {
+		if v != nil {
+			redactMap(v.Config)
+		}
+	}
 	for _, s := range clone.S3Servers {
 		if s != nil {
 			redactMap(s.S3Config)

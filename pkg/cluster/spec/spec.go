@@ -69,6 +69,7 @@ type (
 		AdminServers  []*AdminServerSpec  `yaml:"admin_servers,omitempty"`
 		EnvoyServers  []*EnvoyServerSpec  `yaml:"envoy_servers,omitempty"`
 		WorkerServers []*WorkerServerSpec `yaml:"worker_servers,omitempty"`
+		VectorServers []*VectorServerSpec `yaml:"vector_servers,omitempty"`
 		// Monitoring, when set, makes seaweed-up deploy a Prometheus +
 		// Grafana stack (and node_exporter on every host) as part of the
 		// cluster, with the bundled SeaweedFS dashboard pre-loaded.

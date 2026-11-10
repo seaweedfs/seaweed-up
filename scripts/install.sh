@@ -175,47 +175,50 @@ download_and_install() {
     $SUDO install -m 0755 "$TMP_DIR/${rustBin}" "${BIN_DIR}/${BINARY}"
     echo "${RUST_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
   fi
-{{else}}{{if .RustWorker}}
-  # Rust maintenance worker. The release ships linux amd64/arm64 only;
-  # refuse other targets up front.
+{{else}}{{if .RustTool}}
+  # A single-binary Rust tool: {{.RustTool}} (Lance maintenance) or weed-vector
+  # (the S3 Vectors engine). The release ships linux amd64/arm64 only; refuse
+  # other targets up front.
   case $SUFFIX in
   amd64 | arm64) ;;
   *)
-    fatal "weed-worker is published for linux amd64/arm64 only; this host is ${ARCH}"
+    fatal "{{.RustTool}} is published for linux amd64/arm64 only; this host is ${ARCH}"
     ;;
   esac
-  # Marker-keyed idempotency: weed-worker's version scheme differs from the release tag.
-  MARKER="${BIN_DIR}/.weed-worker-version"
+  # Marker-keyed idempotency: {{.RustTool}}'s version scheme differs from the release tag.
+  MARKER="${BIN_DIR}/.{{.RustTool}}-version"
   OS="linux"
-  WORKER_ASSET="weed-worker_${OS}_${SUFFIX}.tar.gz"
-  WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"
-  WORKER_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${WORKER_ASSET}"
+  TOOL_ASSET="{{.RustTool}}_${OS}_${SUFFIX}.tar.gz"
+  TOOL_VERSION_ID="${SEAWEED_VERSION}:${TOOL_ASSET}"
+  TOOL_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${TOOL_ASSET}"
   curID=""
   [ -f "$MARKER" ] && curID=$(cat "$MARKER" 2>/dev/null)
-  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$curID" = "${WORKER_VERSION_ID}" ]; then
-    info "weed-worker ${WORKER_VERSION_ID} already installed, skipping"
+  if [ -x "${BIN_DIR}/${BINARY}" ] && [ "$curID" = "${TOOL_VERSION_ID}" ]; then
+    info "{{.RustTool}} ${TOOL_VERSION_ID} already installed, skipping"
   else
-    info "Downloading weed-worker ${WORKER_VERSION_ID} (${WORKER_URL})"
-    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${WORKER_ASSET}" -sfL "${WORKER_URL}"
-    # Every worker asset ships a .md5; verification is mandatory.
-    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${WORKER_ASSET}.md5" -sfL "${WORKER_URL}.md5"
-    info "Verifying weed-worker ${WORKER_VERSION_ID}"
-    md5Value=$(awk '{print $1}' "$TMP_DIR/${WORKER_ASSET}.md5")
-    ( cd "$TMP_DIR" && echo "${md5Value}  ${WORKER_ASSET}" | md5sum -c )
-    # The archive holds a single file named weed-worker.
-    $SUDO tar xzf "$TMP_DIR/${WORKER_ASSET}" -C "$TMP_DIR"
-    [ -f "$TMP_DIR/weed-worker" ] || fatal "no weed-worker binary in ${WORKER_ASSET}"
+    info "Downloading {{.RustTool}} ${TOOL_VERSION_ID} (${TOOL_URL})"
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${TOOL_ASSET}" -sfL "${TOOL_URL}"
+    # Every {{.RustTool}} asset ships a .md5; verification is mandatory.
+    curl {{.ProxyConfig}} --retry 3 --retry-delay 2 -o "$TMP_DIR/${TOOL_ASSET}.md5" -sfL "${TOOL_URL}.md5"
+    info "Verifying {{.RustTool}} ${TOOL_VERSION_ID}"
+    md5Value=$(awk '{print $1}' "$TMP_DIR/${TOOL_ASSET}.md5")
+    ( cd "$TMP_DIR" && echo "${md5Value}  ${TOOL_ASSET}" | md5sum -c )
+    # The archive holds a single file named {{.RustTool}}.
+    $SUDO tar xzf "$TMP_DIR/${TOOL_ASSET}" -C "$TMP_DIR"
+    [ -f "$TMP_DIR/{{.RustTool}}" ] || fatal "no {{.RustTool}} binary in ${TOOL_ASSET}"
     # A build against a newer glibc than this host has would only crash-loop
-    # under systemd; leave any previous install in place and skip the unit.
-    loaderErr=$("$TMP_DIR/weed-worker" --help 2>&1 >/dev/null) || true
+    # under systemd; leave any previous install in place. The Lance worker is
+    # optional and skips its unit; weed-vector was asked for by name and fails.
+    loaderErr=$("$TMP_DIR/{{.RustTool}}" --help 2>&1 >/dev/null) || true
     case "$loaderErr" in
     *GLIBC*)
-      info "weed-worker needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1)); skipping the Lance maintenance worker"
+{{if eq .RustTool "weed-worker"}}      info "{{.RustTool}} needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1)); skipping the {{.RustTool}} unit"
       exit 0
-      ;;
+{{else}}      fatal "{{.RustTool}} needs a newer glibc than this host provides ($(ldd --version 2>/dev/null | head -1))"
+{{end}}      ;;
     esac
-    $SUDO install -m 0755 "$TMP_DIR/weed-worker" "${BIN_DIR}/${BINARY}"
-    echo "${WORKER_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
+    $SUDO install -m 0755 "$TMP_DIR/{{.RustTool}}" "${BIN_DIR}/${BINARY}"
+    echo "${TOOL_VERSION_ID}" | $SUDO tee "$MARKER" >/dev/null
   fi
 {{else}}{{if .DevAssetURL}}
   # Rolling "dev" build path. The version string ("dev") never changes, so
@@ -326,8 +329,8 @@ StartLimitIntervalSec=10
 
 [Service]
 WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}
-{{if .RustWorker}}EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env
-{{end}}{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustWorker}}ExecStart=${BIN_DIR}/${BINARY} {{.RustWorkerArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
+{{if .RustTool}}EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env
+{{end}}{{if .RustVolume}}ExecStart=${BIN_DIR}/${BINARY} --options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{else}}{{if .RustTool}}ExecStart=${BIN_DIR}/${BINARY} {{.RustToolArgs}}{{else}}ExecStart=${BIN_DIR}/${BINARY} -logdir=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR} -alsologtostderr=false -config_dir=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR} ${COMPONENT} -options=${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/${COMPONENT}.options{{end}}{{end}}
 ExecReload=/bin/kill -s HUP \$MAINPID
 KillMode=process
 KillSignal=SIGINT

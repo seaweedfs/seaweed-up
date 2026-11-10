@@ -3,6 +3,8 @@ package spec
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +20,20 @@ type MasterServerSpec struct {
 	Config             map[string]interface{} `yaml:"config,omitempty"`
 	Arch               string                 `yaml:"arch,omitempty"`
 	OS                 string                 `yaml:"os,omitempty"`
+}
+
+// RustAddress is the master as the Rust components take it: `ip:port`, or
+// `ip:port.grpc` when the gRPC port is not port+10000.
+func (masterSpec *MasterServerSpec) RustAddress() string {
+	port := masterSpec.Port
+	if port == 0 {
+		port = 9333
+	}
+	addr := net.JoinHostPort(masterSpec.Ip, strconv.Itoa(port))
+	if masterSpec.PortGrpc != 0 && masterSpec.PortGrpc != port+10000 {
+		return fmt.Sprintf("%s.%d", addr, masterSpec.PortGrpc)
+	}
+	return addr
 }
 
 func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {

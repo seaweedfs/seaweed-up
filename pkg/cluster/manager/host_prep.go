@@ -2,6 +2,7 @@ package manager
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -22,7 +23,7 @@ func PrepareHostsForSpec(m *Manager, specification *spec.Specification) error {
 // reached through the given CommandOperator. The script configures ulimits,
 // sysctls, firewall rules, and time sync. It is idempotent and safe to run
 // multiple times.
-func (m *Manager) PrepareHost(op operator.CommandOperator) error {
+func (m *Manager) PrepareHost(op operator.CommandOperator, ports ...int) error {
 	m.info("Running host preparation (ulimits, sysctls, firewall, time sync)...")
 
 	dir := "/tmp/seaweed-up." + randstr.String(6)
@@ -37,7 +38,13 @@ func (m *Manager) PrepareHost(op operator.CommandOperator) error {
 		return fmt.Errorf("upload host_prep.sh: %w", err)
 	}
 
-	cmd := fmt.Sprintf("cat %s | SUDO_PASS=%s sh -", remotePath, shellSingleQuote(m.sudoPass))
+	var extraPorts []string
+	for _, port := range ports {
+		if port > 0 && port <= 65535 {
+			extraPorts = append(extraPorts, strconv.Itoa(port))
+		}
+	}
+	cmd := fmt.Sprintf("cat %s | SUDO_PASS=%s SEAWEED_EXTRA_PORTS=%s sh -", remotePath, shellSingleQuote(m.sudoPass), shellSingleQuote(strings.Join(extraPorts, " ")))
 	if err := op.Execute(cmd); err != nil {
 		return fmt.Errorf("run host_prep.sh: %w", err)
 	}
@@ -89,10 +96,29 @@ func (m *Manager) PrepareAllHosts(specification *spec.Specification) error {
 	for _, s := range specification.WorkerServers {
 		add(s.Ip, s.PortSsh)
 	}
+	for _, s := range specification.VectorServers {
+		add(s.Ip, s.PortSsh)
+	}
 
+	extraPorts := map[string][]int{}
+	for _, v := range specification.VectorServers {
+		if v == nil {
+			continue
+		}
+		port := v.Port
+		if port == 0 {
+			port = spec.DefaultVectorPort
+		}
+		extraPorts[v.Ip] = append(extraPorts[v.Ip], port, v.MetricsPort)
+	}
+	for _, gateway := range specification.S3Servers {
+		if gateway != nil {
+			extraPorts[gateway.Ip] = append(extraPorts[gateway.Ip], gateway.Port, gateway.MetricsPort)
+		}
+	}
 	prepare := m.prepareHostAddressFn
 	if prepare == nil {
-		prepare = m.PrepareHostAddress
+		prepare = func(ip string, port int) error { return m.PrepareHostAddress(ip, port, extraPorts[ip]...) }
 	}
 	for _, h := range order {
 		m.info(fmt.Sprintf("Preparing host %s:%d", h.ip, h.sshPort))
@@ -104,7 +130,7 @@ func (m *Manager) PrepareAllHosts(specification *spec.Specification) error {
 }
 
 // PrepareHostAddress connects to the given SSH address and runs PrepareHost.
-func (m *Manager) PrepareHostAddress(ip string, sshPort int) error {
+func (m *Manager) PrepareHostAddress(ip string, sshPort int, ports ...int) error {
 	if sshPort == 0 {
 		sshPort = 22
 	}
@@ -114,7 +140,7 @@ func (m *Manager) PrepareHostAddress(ip string, sshPort int) error {
 		m.IdentityFile,
 		"",
 		func(op operator.CommandOperator) error {
-			return m.PrepareHost(op)
+			return m.PrepareHost(op, ports...)
 		},
 	)
 }

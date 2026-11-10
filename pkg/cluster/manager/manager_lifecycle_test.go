@@ -136,13 +136,12 @@ func TestServicesForHost(t *testing.T) {
 		t.Errorf("sftp filter: %v", got)
 	}
 
-	// Two worker instances co-located on the same host should both surface.
+	// Two worker instances co-located on the same host should both surface,
+	// each with its Lance companion unit.
 	workerSvcs := servicesForHost(s, "10.0.0.6", "worker")
-	if len(workerSvcs) != 2 {
-		t.Fatalf("expected 2 worker services, got %v", workerSvcs)
-	}
-	if workerSvcs[0] != "seaweed_worker0.service" || workerSvcs[1] != "seaweed_worker1.service" {
-		t.Errorf("worker services wrong: %v", workerSvcs)
+	want := []string{"seaweed_worker0.service", "seaweed_worker-lance0.service", "seaweed_worker1.service", "seaweed_worker-lance1.service"}
+	if strings.Join(workerSvcs, ",") != strings.Join(want, ",") {
+		t.Errorf("worker services: got %v want %v", workerSvcs, want)
 	}
 }
 

@@ -69,7 +69,7 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 		m.info(fmt.Sprintf("worker %s: cannot detect the host platform (%v); skipping the Lance maintenance worker", w.Ip, err))
 		return nil
 	}
-	arch, reason := lanceWorkerAssetArch(string(uname))
+	arch, reason := rustAssetArch("weed-worker", string(uname))
 	if reason != "" {
 		m.info(fmt.Sprintf("worker %s: %s; skipping the Lance maintenance worker", w.Ip, reason))
 		return nil
@@ -80,7 +80,7 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 	owner, repo := m.ReleaseOwnerRepo()
 	asset := fmt.Sprintf("weed-worker_linux_%s.tar.gz", arch)
 	assetURL := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, m.Version, asset)
-	switch status, err := lanceAssetHead(assetURL); {
+	switch status, err := releaseAssetHead(assetURL); {
 	case err != nil:
 		return fmt.Errorf("check the weed-worker release asset %s: %w", assetURL, err)
 	case status == http.StatusNotFound:
@@ -92,11 +92,11 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 
 	var buf bytes.Buffer
 	w.WriteLanceToBuffer(admins, &buf)
-	return m.deployComponentInstance(op, workerLanceComponent, workerLanceComponentInstance(index), &buf, m.instanceSecurityEnv()...)
+	return m.deployComponentInstance(op, workerLanceComponent, workerLanceComponentInstance(index), &buf, m.lanceWorkerEnv(w.Masters)...)
 }
 
-// lanceAssetHead issues the probe's HEAD; a var so tests stub the network away.
-var lanceAssetHead = func(url string) (int, error) {
+// releaseAssetHead probes a release asset with a HEAD; a var so tests stub the network away.
+var releaseAssetHead = func(url string) (int, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Head(url)
 	if err != nil {
@@ -107,16 +107,16 @@ var lanceAssetHead = func(url string) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// lanceWorkerAssetArch maps `uname -s -m` to the release asset arch, or gives
-// the reason weed-worker cannot run there (linux amd64/arm64 only).
-func lanceWorkerAssetArch(unameOut string) (arch, reason string) {
+// rustAssetArch maps `uname -s -m` to the release asset arch of a Rust
+// binary, or gives the reason it cannot run there (linux amd64/arm64 only).
+func rustAssetArch(binary, unameOut string) (arch, reason string) {
 	fields := strings.Fields(unameOut)
 	if len(fields) < 2 {
 		return "", fmt.Sprintf("unexpected uname output %q", strings.TrimSpace(unameOut))
 	}
 	osName, machine := fields[0], fields[1]
 	if !strings.EqualFold(osName, "Linux") {
-		return "", fmt.Sprintf("weed-worker is published for linux only; host reports %s", osName)
+		return "", fmt.Sprintf("%s is published for linux only; host reports %s", binary, osName)
 	}
 	switch machine {
 	case "x86_64", "amd64":
@@ -124,7 +124,7 @@ func lanceWorkerAssetArch(unameOut string) (arch, reason string) {
 	case "aarch64", "arm64":
 		return "arm64", ""
 	}
-	return "", fmt.Sprintf("weed-worker is published for linux amd64/arm64 only; host is %s", machine)
+	return "", fmt.Sprintf("%s is published for linux amd64/arm64 only; host is %s", binary, machine)
 }
 
 func (m *Manager) ResetWorkerServer(w *spec.WorkerServerSpec, index int) error {

@@ -70,22 +70,39 @@ func TestLoadInstanceSecurity(t *testing.T) {
 	homedir.Reset()
 	t.Cleanup(homedir.Reset)
 
-	t.Run("deploys without admin or worker skip the keys", func(t *testing.T) {
+	t.Run("deploys without admin, worker or s3 skip the keys", func(t *testing.T) {
 		m := NewManager()
 		s := &spec.Specification{
 			FilerServers:  []*spec.FilerServerSpec{{Ip: "10.0.0.1"}},
 			WorkerServers: []*spec.WorkerServerSpec{{Ip: "10.0.0.3"}},
 		}
 		m.ComponentToDeploy = "filer"
-		if m.installsAdminOrWorker(s) {
+		if m.installsKeyedInstances(s) {
 			t.Error("a filer-only deploy must not need the admin signing key")
 		}
 		m.ComponentToDeploy = ""
-		if !m.installsAdminOrWorker(s) {
+		if !m.installsKeyedInstances(s) {
 			t.Error("a full deploy with workers needs the admin signing key")
 		}
 		if got := m.instanceSecurityToml("worker"); got != nil {
 			t.Fatalf("expected no security.toml without loaded keys, got %d files", len(got))
+		}
+		m.ComponentToDeploy = "s3"
+		if m.installsKeyedInstances(&spec.Specification{S3Servers: []*spec.S3ServerSpec{{Ip: "10.0.0.4"}}}) == false {
+			t.Error("an s3 deploy needs the signing key: the Lance namespace verifies cluster tokens with it")
+		}
+	})
+
+	t.Run("s3 instances get the keys without TLS only", func(t *testing.T) {
+		m := NewManager()
+		m.filerSigning = filerSigningKeys{write: "w-key", read: "r-key"}
+		files := m.s3SecurityToml()
+		if len(files) != 1 || files[0].Name != "security.toml" || !strings.Contains(files[0].Content.String(), `key = "w-key"`) {
+			t.Fatalf("s3 security.toml: %+v", files)
+		}
+		m.tlsCluster = true
+		if files := m.s3SecurityToml(); files != nil {
+			t.Errorf("a TLS cluster's s3 instance must keep the cluster's security.toml, got %d files", len(files))
 		}
 	})
 

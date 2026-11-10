@@ -163,6 +163,8 @@ type Manager struct {
 	// filerSigning is loaded by loadInstanceSecurity before admin and
 	// worker instances are installed.
 	filerSigning filerSigningKeys
+	// tlsCluster is the spec's enable_tls, recorded with filerSigning.
+	tlsCluster bool
 	// devAsset holds the resolved rolling "dev" build of the Go `weed`
 	// server (set by resolveDevAsset when Version == "dev"); nil otherwise.
 	devAsset *config.DevAsset

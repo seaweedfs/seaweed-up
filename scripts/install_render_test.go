@@ -21,7 +21,7 @@ func renderInstall(t *testing.T, data map[string]interface{}) string {
 		"DevAssetURL": "", "DevMd5URL": "", "DevBuildID": "",
 		"RustDevAssetURL": "", "RustDevMd5URL": "", "RustDevBuildID": "",
 		"Binary": "weed", "RustVolume": false, "Enterprise": false,
-		"RustWorker": false, "RustWorkerArgs": "",
+		"RustTool": "", "RustToolArgs": "",
 	}
 	for k, v := range data {
 		base[k] = v
@@ -135,18 +135,18 @@ func TestInstallScript_RustVolumeEnterprisePath(t *testing.T) {
 func TestInstallScript_RustWorkerPath(t *testing.T) {
 	out := renderInstall(t, map[string]interface{}{
 		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
-		"Binary": "weed-worker", "RustWorker": true, "Version": "4.44",
-		"RustWorkerArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		"Binary": "weed-worker", "RustTool": "weed-worker", "Version": "4.44",
+		"RustToolArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
 	})
 	for _, want := range []string{
 		"BINARY=weed-worker",
 		"weed-worker_${OS}_${SUFFIX}.tar.gz", // versioned per-arch release asset
 		".weed-worker-version",               // version marker
-		`WORKER_VERSION_ID="${SEAWEED_VERSION}:${WORKER_ASSET}"`,
+		`TOOL_VERSION_ID="${SEAWEED_VERSION}:${TOOL_ASSET}"`,
 		"weed-worker is published for linux amd64/arm64 only", // arch guard
 		"md5sum -c",
 		`"$TMP_DIR/weed-worker" --help`, // glibc probe before install
-		"skipping the Lance maintenance worker",
+		"skipping the weed-worker unit",
 		// flags on the ExecStart line: weed-worker reads no options file
 		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
 		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}\n",
@@ -169,6 +169,28 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 	}
 	if goUnit := renderInstall(t, map[string]interface{}{"Component": "worker"}); strings.Contains(goUnit, "EnvironmentFile") {
 		t.Errorf("go units read security.toml from -config_dir and need no environment file")
+	}
+}
+
+// weed-vector is asked for by name, so a glibc too old for it fails the
+// deploy instead of skipping the unit like the Lance worker.
+func TestInstallScript_RustToolGlibc(t *testing.T) {
+	out := renderInstall(t, map[string]interface{}{
+		"Component": "vector", "ComponentInstance": "vector0",
+		"Binary": "weed-vector", "RustTool": "weed-vector", "Version": "4.53",
+	})
+	if want := `fatal "weed-vector needs a newer glibc`; !strings.Contains(out, want) {
+		t.Errorf("vector install script missing %q", want)
+	}
+	if strings.Contains(out, "skipping the weed-vector unit") {
+		t.Errorf("vector install script must not skip its unit on an old glibc")
+	}
+	out = renderInstall(t, map[string]interface{}{
+		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
+		"Binary": "weed-worker", "RustTool": "weed-worker", "Version": "4.53",
+	})
+	if strings.Contains(out, `fatal "weed-worker needs a newer glibc`) {
+		t.Errorf("the optional Lance worker must skip, not fail, on an old glibc")
 	}
 }
 

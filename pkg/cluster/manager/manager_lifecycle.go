@@ -76,7 +76,14 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 	case "worker":
 		for i, w := range s.WorkerServers {
 			if w.Ip == ip {
-				names = append(names, fmt.Sprintf("seaweed_worker%d.service", i))
+				names = append(names, fmt.Sprintf("seaweed_worker%d.service", i),
+					fmt.Sprintf("seaweed_%s.service", workerLanceComponentInstance(i)))
+			}
+		}
+	case vectorComponent:
+		for i, v := range s.VectorServers {
+			if v.Ip == ip {
+				names = append(names, fmt.Sprintf("seaweed_%s.service", vectorComponentInstance(i)))
 			}
 		}
 	case "monitoring":
@@ -102,10 +109,10 @@ func componentServiceNames(s *spec.Specification, component, ip string) []string
 
 // servicesForHost returns all seaweed_* systemd unit names for a host,
 // optionally filtered by component ("" / "master" / "volume" / "filer" /
-// "envoy" / "s3" / "sftp" / "admin" / "worker").
+// "envoy" / "s3" / "sftp" / "admin" / "worker" / "vector").
 func servicesForHost(s *spec.Specification, ip, component string) []string {
 	var names []string
-	comps := []string{"master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker", "monitoring"}
+	comps := []string{"master", "volume", "filer", "envoy", "s3", "sftp", "admin", "worker", vectorComponent, "monitoring"}
 	if component != "" {
 		comps = []string{component}
 	}
@@ -169,6 +176,11 @@ func uniqueHosts(s *spec.Specification, component string) []hostEntry {
 	if component == "" || component == "worker" {
 		for _, w := range s.WorkerServers {
 			add(w.Ip, w.PortSsh)
+		}
+	}
+	if component == "" || component == vectorComponent {
+		for _, v := range s.VectorServers {
+			add(v.Ip, v.PortSsh)
 		}
 	}
 	if (component == "" || component == "monitoring") && s.Monitoring != nil {

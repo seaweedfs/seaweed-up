@@ -38,6 +38,10 @@ type WorkerServerSpec struct {
 	// Namespace is the companion Rust weed-worker's Lance namespace URL; empty
 	// derives from the first s3 server's port.lance (9101), else the unit skips.
 	Namespace string `yaml:"namespace,omitempty"`
+	// Masters is the companion weed-worker's comma-separated master list: it
+	// keeps Lance tables through the filers they list. Empty derives from
+	// master_servers.
+	Masters string `yaml:"masters,omitempty"`
 }
 
 // DefaultWorkerJobType is the value WriteToBuffer falls back to when

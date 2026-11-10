@@ -13,6 +13,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/progress"
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
+	sutls "github.com/seaweedfs/seaweed-up/pkg/cluster/tls"
 	"github.com/seaweedfs/seaweed-up/pkg/config"
 	"github.com/seaweedfs/seaweed-up/pkg/operator"
 	"github.com/seaweedfs/seaweed-up/pkg/utils"
@@ -236,6 +237,11 @@ func (m *Manager) buildDeployTasks(rep progress.Reporter, s *spec.Specification)
 			add("envoy", i, x.Ip)
 		}
 	}
+	if m.shouldInstall(vectorComponent) {
+		for i, x := range s.VectorServers {
+			add(vectorComponent, i, x.Ip)
+		}
+	}
 	if m.shouldInstall("monitoring") && s.Monitoring != nil {
 		tasks["monitoring"] = rep.AddTask("monitoring", fmt.Sprintf("%-10s %s", "monitoring", s.Monitoring.Host))
 	}
@@ -256,7 +262,7 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 	if err := validateSftpFilerPrerequisite(specification); err != nil {
 		return err
 	}
-	if m.installsAdminOrWorker(specification) {
+	if m.installsKeyedInstances(specification) {
 		if err := m.loadInstanceSecurity(specification); err != nil {
 			return err
 		}
@@ -447,6 +453,21 @@ func (m *Manager) DeployCluster(specification *spec.Specification) error {
 				return s3Errors[0]
 			}
 			return fmt.Errorf("%d deploy errors: %w", len(s3Errors), stderrors.Join(s3Errors...))
+		}
+	}
+
+	// The S3 Vectors engine registers with the masters, where the gateway
+	// finds it, and keeps index files on the filers they list.
+	if m.shouldInstall(vectorComponent) && len(specification.VectorServers) > 0 {
+		for index, vectorSpec := range specification.VectorServers {
+			task := tasks[vectorComponentInstance(index)]
+			task.Start()
+			if err := m.DeployVectorServer(vectorSpec, index); err != nil {
+				wrapped := fmt.Errorf("deploy vector server %s:%d: %w", vectorSpec.Ip, vectorSpec.PortSsh, err)
+				task.Fail(wrapped)
+				return wrapped
+			}
+			task.Done()
 		}
 	}
 
@@ -661,8 +682,15 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	for _, adminSpec := range specification.AdminServers {
 		adminSpec.PortSsh = utils.NvlInt(adminSpec.PortSsh, m.SshPort, 22)
 	}
+	rustMasters := make([]string, 0, len(specification.MasterServers))
+	for _, masterSpec := range specification.MasterServers {
+		rustMasters = append(rustMasters, masterSpec.RustAddress())
+	}
 	for _, workerSpec := range specification.WorkerServers {
 		workerSpec.PortSsh = utils.NvlInt(workerSpec.PortSsh, m.SshPort, 22)
+		if workerSpec.Masters == "" {
+			workerSpec.Masters = strings.Join(rustMasters, ",")
+		}
 		// Default the Lance namespace to the first s3 server's port.lance.
 		if workerSpec.Namespace == "" && len(specification.S3Servers) > 0 {
 			s3Spec := specification.S3Servers[0]
@@ -673,6 +701,21 @@ func (m *Manager) prepare(specification *spec.Specification) {
 			workerSpec.Namespace = "http://" + net.JoinHostPort(s3Spec.Ip, strconv.Itoa(lancePort))
 		}
 	}
+	for _, vectorSpec := range specification.VectorServers {
+		vectorSpec.PortSsh = utils.NvlInt(vectorSpec.PortSsh, m.SshPort, 22)
+		if vectorSpec.Masters == "" {
+			vectorSpec.Masters = strings.Join(rustMasters, ",")
+		}
+		if specification.GlobalOptions.TLSEnabled {
+			if vectorSpec.Config == nil {
+				vectorSpec.Config = make(map[string]interface{})
+			}
+			if _, set := vectorSpec.Config["security-toml"]; !set {
+				vectorSpec.Config["security-toml"] = sutls.DefaultRemoteSecurityTOML
+			}
+		}
+
+	}
 	// The monitoring host's SSH port isn't a struct-tag default, so normalize
 	// it here like every other server; otherwise lifecycle commands would dial
 	// it on port 0 when not set explicitly.
@@ -681,9 +724,21 @@ func (m *Manager) prepare(specification *spec.Specification) {
 	}
 }
 
-// rustWorkerArgs turns rendered worker-lance options into `--key value` flags:
-// weed-worker reads no options file, so they go on the ExecStart line.
-func rustWorkerArgs(cliOptions *bytes.Buffer) string {
+// rustToolBinary is the single-binary Rust tool a component installs, or "".
+func rustToolBinary(component string) string {
+	switch component {
+	case workerLanceComponent:
+		return "weed-worker"
+	case vectorComponent:
+		return "weed-vector"
+	}
+	return ""
+}
+
+// rustToolArgs turns rendered worker-lance or vector options into `--key
+// value` flags: weed-worker and weed-vector read no options file, so they go
+// on the ExecStart line.
+func rustToolArgs(cliOptions *bytes.Buffer) string {
 	var args []string
 	for _, line := range strings.Split(cliOptions.String(), "\n") {
 		line = strings.TrimSpace(line)
@@ -743,15 +798,16 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 	}
 
 	// Rust volume servers install weed-volume, the worker-lance component
-	// weed-worker; everything else installs weed.
+	// weed-worker, the vector component weed-vector; everything else
+	// installs weed.
 	rustVolume := engine == "rust" || engine == "weed-volume"
-	rustWorker := component == workerLanceComponent
+	rustTool := rustToolBinary(component)
 	binary := "weed"
 	switch {
 	case rustVolume:
 		binary = "weed-volume"
-	case rustWorker:
-		binary = "weed-worker"
+	case rustTool != "":
+		binary = rustTool
 	}
 
 	data := map[string]interface{}{
@@ -759,8 +815,8 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		"ComponentInstance": componentInstance,
 		"Binary":            binary,
 		"RustVolume":        rustVolume,
-		"RustWorker":        rustWorker,
-		"RustWorkerArgs":    "",
+		"RustTool":          rustTool,
+		"RustToolArgs":      "",
 		"ConfigDir":         m.confDir,
 		"DataDir":           m.dataDir,
 		"TmpDir":            dir,
@@ -791,8 +847,8 @@ func (m *Manager) deployComponentBinary(op operator.CommandOperator, component s
 		data["DevMd5URL"] = m.devAsset.Md5URL
 		data["DevBuildID"] = m.devAsset.BuildID
 	}
-	if rustWorker {
-		data["RustWorkerArgs"] = rustWorkerArgs(cliOptions)
+	if rustTool != "" {
+		data["RustToolArgs"] = rustToolArgs(cliOptions)
 	}
 	if rustVolume && m.rustDevAsset != nil {
 		data["RustDevAssetURL"] = m.rustDevAsset.DownloadURL

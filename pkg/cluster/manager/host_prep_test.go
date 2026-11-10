@@ -68,6 +68,7 @@ func TestHostPrepScriptEmbedded(t *testing.T) {
 		"18888",
 		"8333",
 		"23646",
+		"8090",
 		"chrony",
 		"systemd-timesyncd",
 		"ufw",
@@ -257,5 +258,22 @@ func TestPrepareAllHostsPropagatesError(t *testing.T) {
 	}
 	if err := m.PrepareAllHosts(s); err == nil {
 		t.Fatal("expected error from PrepareAllHosts, got nil")
+	}
+}
+
+func TestVectorFirewallPorts(t *testing.T) {
+	m := NewManager()
+	op := newFakeOperator()
+	if err := m.PrepareHost(op, 8091, 9329, -1, 70000); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, command := range op.executed {
+		if strings.Contains(command, "SEAWEED_EXTRA_PORTS='8091 9329'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("custom vector listener/metrics ports omitted: %v", op.executed)
 	}
 }

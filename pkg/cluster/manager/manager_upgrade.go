@@ -124,7 +124,7 @@ func (m *Manager) UpgradeCluster(specification *spec.Specification, targetVersio
 		}
 		return nil
 	}
-	if len(specification.AdminServers) > 0 || len(specification.WorkerServers) > 0 {
+	if m.installsKeyedInstances(specification) {
 		if err := m.loadInstanceSecurity(specification); err != nil {
 			return err
 		}
@@ -292,6 +292,18 @@ func buildUpgradeTargets(specification *spec.Specification, scheme string) []upg
 			describe: fmt.Sprintf("worker%d %s", i, hostPort),
 		})
 	}
+	for i, v := range specification.VectorServers {
+		targets = append(targets, upgradeTarget{
+			component: vectorComponent, index: i, ip: v.Ip, portSsh: v.PortSsh,
+			describe: fmt.Sprintf("%s %s", vectorComponentInstance(i), v.ListenAddress()),
+			healthURL: func() string {
+				if v.MetricsPort > 0 {
+					return "http://" + v.MetricsAddress() + "/ready"
+				}
+				return ""
+			}(),
+		})
+	}
 	return targets
 }
 
@@ -343,15 +355,16 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			stop:        func() error { return m.StopS3Server(s3, t.index) },
 			writeConfig: func(buf *bytes.Buffer) { s3.WriteToBuffer(buf, s3ConfigPath) },
 			extras: func() ([]extraConfigFile, error) {
+				extras := m.s3SecurityToml()
 				if len(s3.S3Config) == 0 {
-					return nil, nil
+					return extras, nil
 				}
 				b, err := json.MarshalIndent(s3.S3Config, "", "  ")
 				if err != nil {
 					return nil, fmt.Errorf("marshal s3.json: %w", err)
 				}
 				// s3.json holds IAM credentials; restrict to owner-only.
-				return []extraConfigFile{{Name: "s3.json", Content: bytes.NewBuffer(b), Mode: "0600"}}, nil
+				return append(extras, extraConfigFile{Name: "s3.json", Content: bytes.NewBuffer(b), Mode: "0600"}), nil
 			},
 		}
 	case "admin":
@@ -374,6 +387,14 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			postDeploy: func(op operator.CommandOperator) error {
 				return m.deployLanceWorker(op, workerAdmins, w, t.index)
 			},
+		}
+	case vectorComponent:
+		v := specification.VectorServers[t.index]
+		hooks = componentHooks{
+			serviceName: vectorComponent,
+			sshAddr:     net.JoinHostPort(v.Ip, strconv.Itoa(v.PortSsh)),
+			stop:        func() error { return m.StopVectorServer(v, t.index) },
+			writeConfig: func(buf *bytes.Buffer) { v.WriteToBuffer(buf) },
 		}
 	default:
 		return fmt.Errorf("unknown component: %s", t.component)

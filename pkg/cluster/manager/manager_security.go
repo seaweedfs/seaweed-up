@@ -5,6 +5,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/fatih/color"
@@ -99,24 +100,38 @@ func loadFilerSigningKeys(clusterName string) (filerSigningKeys, error) {
 	return filerSigningKeys{write: write, read: read}, nil
 }
 
-// installsAdminOrWorker reports whether a deploy installs admin or worker
-// instances.
-func (m *Manager) installsAdminOrWorker(specification *spec.Specification) bool {
+// installsKeyedInstances reports whether a deploy installs admin, worker or
+// s3 instances, the ones that carry the cluster's signing keys.
+func (m *Manager) installsKeyedInstances(specification *spec.Specification) bool {
 	installsAdmin := m.shouldInstall("admin") && len(specification.AdminServers) > 0
 	installsWorker := m.shouldInstall("worker") && len(specification.WorkerServers) > 0
-	return installsAdmin || installsWorker
+	installsS3 := m.shouldInstall("s3") && len(specification.S3Servers) > 0
+	return installsAdmin || installsWorker || installsS3
 }
 
-// loadInstanceSecurity loads the signing keys for admin and worker instances.
-// The admin authenticates worker streams with jwt.filer_signing.key, so each
-// of those instances gets its own copy of the key.
+// loadInstanceSecurity loads the signing keys for admin, worker and s3
+// instances. The admin authenticates worker streams with
+// jwt.filer_signing.key, and the s3 gateway's Lance namespace authenticates
+// the Lance worker and weed-vector-cli by a token derived from it, so each of
+// those instances gets its own copy of the key.
 func (m *Manager) loadInstanceSecurity(specification *spec.Specification) error {
 	keys, err := loadFilerSigningKeys(specification.Name)
 	if err != nil {
-		return fmt.Errorf("admin/worker security.toml: %w", err)
+		return fmt.Errorf("admin/worker/s3 security.toml: %w", err)
 	}
 	m.filerSigning = keys
+	m.tlsCluster = specification.GlobalOptions.TLSEnabled
 	return nil
+}
+
+// s3SecurityToml is the s3 instance's security.toml, without TLS only: the
+// file carries the signing keys alone and would hide the cluster's TLS
+// settings from the gateway.
+func (m *Manager) s3SecurityToml() []extraConfigFile {
+	if m.tlsCluster {
+		return nil
+	}
+	return m.instanceSecurityToml("s3")
 }
 
 // instanceSecurityToml is the JWT-only security.toml installed into an
@@ -130,12 +145,20 @@ func (m *Manager) instanceSecurityToml(component string) []extraConfigFile {
 	return []extraConfigFile{{Name: "security.toml", Content: bytes.NewBufferString(toml), Mode: "0600"}}
 }
 
-// instanceSecurityEnv hands the key to weed-worker, which has no -config_dir
-// and reads WEED_FILER_SIGNING_KEY in every release that signs its stream.
-func (m *Manager) instanceSecurityEnv() []extraConfigFile {
-	if m.filerSigning.write == "" {
+// lanceWorkerEnv is weed-worker's environment file. WEED_MASTERS names the
+// masters whose filers it keeps Lance tables through, required after 4.52;
+// WEED_FILER_SIGNING_KEY signs its admin stream and its Lance namespace
+// calls. Variables, not flags: a release that predates one ignores it.
+func (m *Manager) lanceWorkerEnv(masters string) []extraConfigFile {
+	var env strings.Builder
+	if masters != "" {
+		env.WriteString("WEED_MASTERS=" + masters + "\n")
+	}
+	if m.filerSigning.write != "" {
+		env.WriteString("WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n")
+	}
+	if env.Len() == 0 {
 		return nil
 	}
-	env := "WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n"
-	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env), Mode: "0600"}}
+	return []extraConfigFile{{Name: "security.env", Content: bytes.NewBufferString(env.String()), Mode: "0600"}}
 }

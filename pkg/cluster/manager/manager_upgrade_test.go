@@ -80,3 +80,11 @@ func TestBuildUpgradeTargets_TLSScheme(t *testing.T) {
 		t.Errorf("healthURL = %q, want %q", got, want)
 	}
 }
+
+func TestVectorUpgradeReadiness(t *testing.T) {
+	s := &spec.Specification{VectorServers: []*spec.VectorServerSpec{{Ip: "fd00::20", MetricsPort: 9329}, {Ip: "10.0.0.21"}}}
+	targets := buildUpgradeTargets(s, "https")
+	if targets[0].healthURL != "http://[fd00::20]:9329/ready" || targets[1].healthURL != "" {
+		t.Fatalf("unexpected vector health targets: %+v", targets)
+	}
+}
