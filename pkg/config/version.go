@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,13 +77,29 @@ func IsWeedReleaseTag(tag string) bool {
 	return weedReleaseTagRE.MatchString(tag)
 }
 
+// HasAssets reports whether the release lists every named asset, or any
+// asset at all when no names are given.
+func (r Release) HasAssets(names ...string) bool {
+	if len(r.Assets) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if !slices.ContainsFunc(r.Assets, func(a Asset) bool { return a.Name == name }) {
+			return false
+		}
+	}
+	return true
+}
+
 // pickRelease selects the release for ver from releaseList: the newest tag
 // accepted by tagFilter when ver is "0" (nil accepts all), or the exact tag
-// match otherwise. Returns a zero Release when nothing matches.
-func pickRelease(releaseList []Release, ver string, tagFilter func(string) bool) Release {
+// match otherwise. Returns a zero Release when nothing matches. A release is
+// published before its binaries finish uploading, so "0" skips releases that
+// do not list requiredAssets yet.
+func pickRelease(releaseList []Release, ver string, tagFilter func(string) bool, requiredAssets []string) Release {
 	if ver == "0" {
 		for _, r := range releaseList {
-			if tagFilter == nil || tagFilter(r.TagName) {
+			if (tagFilter == nil || tagFilter(r.TagName)) && r.HasAssets(requiredAssets...) {
 				return r
 			}
 		}
@@ -98,8 +115,8 @@ func pickRelease(releaseList []Release, ver string, tagFilter func(string) bool)
 
 // GitHubLatestRelease uses the GitHub API to get information about the specific
 // release of a repository. When ver is "0", the newest release whose tag passes
-// tagFilter is picked; pass nil to accept every tag.
-func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string, tagFilter func(string) bool) (Release, error) {
+// tagFilter and that lists requiredAssets is picked; pass nil to accept every tag.
+func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string, tagFilter func(string) bool, requiredAssets ...string) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, githubAPITimeout)
 	defer cancel()
 
@@ -143,7 +160,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string, ta
 	if err != nil {
 		return Release{}, err
 	}
-	release := pickRelease(releaseList, ver, tagFilter)
+	release := pickRelease(releaseList, ver, tagFilter, requiredAssets)
 
 	if release.TagName == "" {
 		return Release{}, fmt.Errorf("can not find the specific version")
