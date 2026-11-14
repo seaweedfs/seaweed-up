@@ -17,13 +17,13 @@ func vectorComponentInstance(index int) string {
 	return fmt.Sprintf("%s%d", vectorComponent, index)
 }
 
-// vectorAsset is the weed-vector release tarball for a linux arch; the
-// enterprise release publishes its engine as weed-vector-enterprise_.
-func (m *Manager) vectorAsset(arch string) string {
+// rustToolAsset is a Rust tool's release tarball for a linux arch; the
+// enterprise release publishes its tools as <tool>-enterprise_.
+func (m *Manager) rustToolAsset(tool, arch string) string {
 	if m.Enterprise {
-		return "weed-vector-enterprise_linux_" + arch + ".tar.gz"
+		return tool + "-enterprise_linux_" + arch + ".tar.gz"
 	}
-	return "weed-vector_linux_" + arch + ".tar.gz"
+	return tool + "_linux_" + arch + ".tar.gz"
 }
 
 func (m *Manager) runVectorRemote(v *spec.VectorServerSpec, fn func(op operator.CommandOperator) error) error {
@@ -52,7 +52,7 @@ func (m *Manager) deployVectorInstance(op operator.CommandOperator, v *spec.Vect
 		return fmt.Errorf("vector %s: %s", v.Ip, reason)
 	}
 	owner, repo := m.ReleaseOwnerRepo()
-	asset := m.vectorAsset(arch)
+	asset := m.rustToolAsset("weed-vector", arch)
 	assetURL := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, m.Version, asset)
 	switch status, err := releaseAssetHead(assetURL); {
 	case err != nil:

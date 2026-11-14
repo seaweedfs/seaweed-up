@@ -220,7 +220,9 @@ vector_servers:
   on the cluster's private network.
 - Vector indexes are built by the Lance maintenance worker that runs beside
   every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
-  and the cluster's signing key, which the S3 gateway checks it by.
+  and the cluster's signing key, which the S3 gateway checks it by. It is
+  `weed-worker_linux_<arch>.tar.gz`, or `weed-worker-enterprise_linux_<arch>.tar.gz`
+  with `--enterprise`; a release without it skips the worker with a warning.
 
 Vector metrics are opt-in for compatibility with older engine releases. When `metrics_port` is set, seaweed-up binds it to the vector host IP, adds a Prometheus scrape target, and checks `/ready` after upgrades. `metrics_ip` overrides the bind address. Monitoring also installs node_exporter on vector hosts.
 
