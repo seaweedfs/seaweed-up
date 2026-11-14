@@ -55,6 +55,12 @@ func (m *Manager) deployVectorInstance(op operator.CommandOperator, v *spec.Vect
 	}
 	var buf bytes.Buffer
 	v.WriteToBuffer(&buf)
+	// The enterprise engine keeps its id in --state-dir, so a restarted engine
+	// gets its placements back; its default is under /tmp, which a reboot may
+	// clear. The open-source engine has no such flag.
+	if _, set := v.Config["state-dir"]; m.Enterprise && !set {
+		fmt.Fprintf(&buf, "state-dir=%s/%s\n", m.dataDir, vectorComponentInstance(index))
+	}
 	return m.deployComponentInstance(op, vectorComponent, vectorComponentInstance(index), &buf)
 }
 
