@@ -205,7 +205,8 @@ vector_servers:
   (`<data_dir>/vector<N>`, `/opt/seaweed/vector0` by default) through
   `--state-dir`, so an engine back within the masters' `restart_grace` (2m by
   default) gets its index placements back, even after a reboot.
-  `config: {state-dir: ...}` picks another directory.
+  `config: {state-dir: ...}` picks another directory, which seaweed-up does
+  not create or clear: a reset empties only `<data_dir>/vector<N>`.
 - seaweed-up downloads `weed-vector_linux_<arch>.tar.gz` (plus `.md5`) from the
   release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
   4.52, whose engine and Lance worker keep tables on the filers. The enterprise
