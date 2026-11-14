@@ -188,7 +188,7 @@ download_and_install() {
   # Marker-keyed idempotency: {{.RustTool}}'s version scheme differs from the release tag.
   MARKER="${BIN_DIR}/.{{.RustTool}}-version"
   OS="linux"
-  TOOL_ASSET="{{.RustTool}}_${OS}_${SUFFIX}.tar.gz"
+  TOOL_ASSET="{{.RustTool}}{{if and .Enterprise (eq .RustTool "weed-vector")}}-enterprise{{end}}_${OS}_${SUFFIX}.tar.gz"
   TOOL_VERSION_ID="${SEAWEED_VERSION}:${TOOL_ASSET}"
   TOOL_URL="https://github.com/{{.ReleaseOwner}}/{{.ReleaseRepo}}/releases/download/${SEAWEED_VERSION}/${TOOL_ASSET}"
   curID=""
