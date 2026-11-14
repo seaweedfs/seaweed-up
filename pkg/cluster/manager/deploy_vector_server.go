@@ -17,6 +17,15 @@ func vectorComponentInstance(index int) string {
 	return fmt.Sprintf("%s%d", vectorComponent, index)
 }
 
+// vectorAsset is the weed-vector release tarball for a linux arch; the
+// enterprise release publishes its engine as weed-vector-enterprise_.
+func (m *Manager) vectorAsset(arch string) string {
+	if m.Enterprise {
+		return "weed-vector-enterprise_linux_" + arch + ".tar.gz"
+	}
+	return "weed-vector_linux_" + arch + ".tar.gz"
+}
+
 func (m *Manager) runVectorRemote(v *spec.VectorServerSpec, fn func(op operator.CommandOperator) error) error {
 	return operator.ExecuteRemote(fmt.Sprintf("%s:%d", v.Ip, v.PortSsh), m.User, m.IdentityFile, m.sudoPass, fn)
 }
@@ -43,7 +52,7 @@ func (m *Manager) deployVectorInstance(op operator.CommandOperator, v *spec.Vect
 		return fmt.Errorf("vector %s: %s", v.Ip, reason)
 	}
 	owner, repo := m.ReleaseOwnerRepo()
-	asset := fmt.Sprintf("weed-vector_linux_%s.tar.gz", arch)
+	asset := m.vectorAsset(arch)
 	assetURL := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, m.Version, asset)
 	switch status, err := releaseAssetHead(assetURL); {
 	case err != nil:

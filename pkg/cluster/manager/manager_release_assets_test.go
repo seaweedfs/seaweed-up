@@ -46,7 +46,9 @@ func TestReleaseAssets(t *testing.T) {
 		}},
 		{name: "enterprise vector", enterprise: true, spec: vectors, want: []string{
 			"weed-enterprise-linux_amd64_large_disk.tar.gz", "weed-enterprise-linux_amd64_large_disk.tar.gz.md5",
+			"weed-vector-enterprise_linux_amd64.tar.gz", "weed-vector-enterprise_linux_amd64.tar.gz.md5",
 			"weed-enterprise-linux_arm64_large_disk.tar.gz", "weed-enterprise-linux_arm64_large_disk.tar.gz.md5",
+			"weed-vector-enterprise_linux_arm64.tar.gz", "weed-vector-enterprise_linux_arm64.tar.gz.md5",
 		}},
 	}
 	for _, tt := range tests {

@@ -45,6 +45,40 @@ func TestDeployVectorInstance(t *testing.T) {
 	}
 }
 
+func TestDeployVectorInstance_Enterprise(t *testing.T) {
+	m := &Manager{User: "root", Version: "4.54", Enterprise: true}
+	op := newFakeOperator()
+	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
+	var probedURL string
+	stubReleaseAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
+
+	v := &spec.VectorServerSpec{Ip: "10.0.0.20", Masters: "10.0.0.1:9333"}
+	if err := m.deployVectorInstance(op, v, 0); err != nil {
+		t.Fatalf("deployVectorInstance: %v", err)
+	}
+	if want := "https://github.com/seaweedfs/artifactory/releases/download/4.54/weed-vector-enterprise_linux_amd64.tar.gz"; probedURL != want {
+		t.Errorf("asset probe URL: got %q want %q", probedURL, want)
+	}
+	var script string
+	for path, content := range op.uploads {
+		if strings.HasSuffix(path, "/install_vector0.sh") {
+			script = content
+		}
+	}
+	if script == "" {
+		t.Fatalf("no install_vector0.sh uploaded; uploads: %v", keys(op.uploads))
+	}
+	for _, want := range []string{
+		`TOOL_ASSET="weed-vector-enterprise_${OS}_${SUFFIX}.tar.gz"`,
+		"seaweedfs/artifactory/releases/download",
+		`[ -f "$TMP_DIR/weed-vector" ]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("enterprise vector install script missing %q", want)
+		}
+	}
+}
+
 // The enterprise engine keeps its id under the instance's data directory
 // unless the spec names a state-dir; the open-source engine gets none.
 func TestDeployVectorInstance_StateDir(t *testing.T) {
