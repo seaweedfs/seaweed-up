@@ -63,7 +63,7 @@ func (m *Manager) ReleaseAssets(specification *spec.Specification) []string {
 			names = append(names, rust, rust+".md5")
 		}
 		if specification != nil && len(specification.VectorServers) > 0 {
-			vector := m.vectorAsset(arch)
+			vector := m.rustToolAsset("weed-vector", arch)
 			names = append(names, vector, vector+".md5")
 		}
 	}

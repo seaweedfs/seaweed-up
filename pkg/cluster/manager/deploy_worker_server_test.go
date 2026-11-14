@@ -72,6 +72,36 @@ func TestDeployWorkerInstances_BothUnits(t *testing.T) {
 	}
 }
 
+func TestDeployWorkerInstances_Enterprise(t *testing.T) {
+	m := &Manager{User: "root", Version: "4.54", Enterprise: true}
+	op := newFakeOperator()
+	op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux aarch64\n"), nil }
+	var probedURL string
+	stubReleaseAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
+
+	w := &spec.WorkerServerSpec{Ip: "10.0.0.10", Namespace: "http://10.0.0.51:9101"}
+	if err := m.deployWorkerInstances(op, []string{"10.0.0.100:23646"}, w, 0); err != nil {
+		t.Fatalf("deployWorkerInstances: %v", err)
+	}
+	if want := "https://github.com/seaweedfs/artifactory/releases/download/4.54/weed-worker-enterprise_linux_arm64.tar.gz"; probedURL != want {
+		t.Errorf("asset probe URL: got %q want %q", probedURL, want)
+	}
+	var script string
+	for path, content := range op.uploads {
+		if strings.HasSuffix(path, "/install_worker-lance0.sh") {
+			script = content
+		}
+	}
+	for _, want := range []string{
+		`TOOL_ASSET="weed-worker-enterprise_${OS}_${SUFFIX}.tar.gz"`,
+		"seaweedfs/artifactory/releases/download",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("enterprise lance install script missing %q", want)
+		}
+	}
+}
+
 func TestDeployWorkerInstances_SkipsLanceOffPlatform(t *testing.T) {
 	for _, uname := range []string{"Darwin arm64", "Linux armv7l", "Linux riscv64"} {
 		m := &Manager{User: "root", Version: "4.44"}

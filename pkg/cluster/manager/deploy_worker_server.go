@@ -78,7 +78,7 @@ func (m *Manager) deployLanceWorker(op operator.CommandOperator, admins []string
 	// Probed from the control host so a 404 skips instead of failing
 	// mid-install; only a definite 404 means "predates weed-worker".
 	owner, repo := m.ReleaseOwnerRepo()
-	asset := fmt.Sprintf("weed-worker_linux_%s.tar.gz", arch)
+	asset := m.rustToolAsset("weed-worker", arch)
 	assetURL := fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/%s", owner, repo, m.Version, asset)
 	switch status, err := releaseAssetHead(assetURL); {
 	case err != nil:
