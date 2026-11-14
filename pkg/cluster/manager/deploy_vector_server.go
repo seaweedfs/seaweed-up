@@ -63,8 +63,19 @@ func (m *Manager) deployVectorInstance(op operator.CommandOperator, v *spec.Vect
 		return fmt.Errorf("check the weed-vector release asset %s: HTTP %d", assetURL, status)
 	}
 	var buf bytes.Buffer
-	v.WriteToBuffer(&buf)
+	m.vectorOptions(v, index, &buf)
 	return m.deployComponentInstance(op, vectorComponent, vectorComponentInstance(index), &buf)
+}
+
+// vectorOptions writes weed-vector's flags for deploys and upgrades alike.
+// The enterprise engine keeps its id in --state-dir, so a restarted engine
+// gets its placements back; its default is under /tmp, which a reboot may
+// clear. The open-source engine has no such flag.
+func (m *Manager) vectorOptions(v *spec.VectorServerSpec, index int, buf *bytes.Buffer) {
+	v.WriteToBuffer(buf)
+	if _, set := v.Config["state-dir"]; m.Enterprise && !set {
+		fmt.Fprintf(buf, "state-dir=%s/%s\n", m.dataDir, vectorComponentInstance(index))
+	}
 }
 
 func (m *Manager) runVectorSystemctl(v *spec.VectorServerSpec, index int, action string) error {

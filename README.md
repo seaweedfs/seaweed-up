@@ -201,6 +201,12 @@ vector_servers:
 - `port` defaults to `8090`; the engine listens on `ip:port`, the address it
   registers, so the gateway must reach it. `masters` defaults to every
   `master_servers` entry.
+- With `--enterprise`, the engine keeps its id in its data directory
+  (`<data_dir>/vector<N>`, `/opt/seaweed/vector0` by default) through
+  `--state-dir`, so an engine back within the masters' `restart_grace` (2m by
+  default) gets its index placements back, even after a reboot.
+  `config: {state-dir: ...}` picks another directory, which seaweed-up does
+  not create or clear: a reset empties only `<data_dir>/vector<N>`.
 - seaweed-up downloads `weed-vector_linux_<arch>.tar.gz` (plus `.md5`) from the
   release for `--version`; linux amd64/arm64 only. Use a SeaweedFS release after
   4.52, whose engine and Lance worker keep tables on the filers. With

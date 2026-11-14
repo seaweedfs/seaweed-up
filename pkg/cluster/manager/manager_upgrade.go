@@ -394,7 +394,7 @@ func (m *Manager) upgradeOneHost(specification *spec.Specification, masters, wor
 			serviceName: vectorComponent,
 			sshAddr:     net.JoinHostPort(v.Ip, strconv.Itoa(v.PortSsh)),
 			stop:        func() error { return m.StopVectorServer(v, t.index) },
-			writeConfig: func(buf *bytes.Buffer) { v.WriteToBuffer(buf) },
+			writeConfig: func(buf *bytes.Buffer) { m.vectorOptions(v, t.index, buf) },
 		}
 	default:
 		return fmt.Errorf("unknown component: %s", t.component)

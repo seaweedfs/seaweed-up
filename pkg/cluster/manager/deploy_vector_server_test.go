@@ -79,6 +79,43 @@ func TestDeployVectorInstance_Enterprise(t *testing.T) {
 	}
 }
 
+// The enterprise engine keeps its id under the instance's data directory
+// unless the spec names a state-dir; the open-source engine gets none.
+func TestDeployVectorInstance_StateDir(t *testing.T) {
+	stubReleaseAssetHead(t, func(url string) (int, error) { return 200, nil })
+	for _, tc := range []struct {
+		name       string
+		enterprise bool
+		config     map[string]interface{}
+		want       string
+	}{
+		{"enterprise", true, nil, "--state-dir /opt/seaweed/vector0"},
+		{"enterprise with state-dir", true, map[string]interface{}{"state-dir": "/srv/vector"}, "--state-dir /srv/vector"},
+		{"open source", false, nil, ""},
+	} {
+		m := &Manager{User: "root", Version: "4.54", Enterprise: tc.enterprise, dataDir: "/opt/seaweed"}
+		op := newFakeOperator()
+		op.outputFn = func(cmd string) ([]byte, error) { return []byte("Linux x86_64\n"), nil }
+		v := &spec.VectorServerSpec{Ip: "10.0.0.20", Masters: "10.0.0.1:9333", Config: tc.config}
+		if err := m.deployVectorInstance(op, v, 0); err != nil {
+			t.Fatalf("%s: deployVectorInstance: %v", tc.name, err)
+		}
+		var script string
+		for path, content := range op.uploads {
+			if strings.HasSuffix(path, "/install_vector0.sh") {
+				script = content
+			}
+		}
+		got := strings.Count(script, "--state-dir")
+		switch {
+		case tc.want == "" && got != 0:
+			t.Errorf("%s: open-source engine got --state-dir", tc.name)
+		case tc.want != "" && (got != 1 || !strings.Contains(script, tc.want)):
+			t.Errorf("%s: want one %q, script has %d --state-dir", tc.name, tc.want, got)
+		}
+	}
+}
+
 // The engine is asked for by name, so what would make the Lance worker skip
 // fails the vector deploy instead.
 func TestDeployVectorInstance_Refusals(t *testing.T) {
