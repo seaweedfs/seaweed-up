@@ -15,7 +15,7 @@ func TestWorkerServerSpec_WriteToBuffer_ExplicitAdmin(t *testing.T) {
 	w.WriteToBuffer(nil, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.1:23646\njobType=all\n"
+	want := "admin=10.0.0.1:23646\njobType=all\nworkingDir=.\n"
 	if got != want {
 		t.Fatalf("WriteToBuffer with explicit admin: got %q want %q", got, want)
 	}
@@ -27,7 +27,7 @@ func TestWorkerServerSpec_WriteToBuffer_FallbackAdmin(t *testing.T) {
 	w.WriteToBuffer([]string{"10.0.0.1:23646", "10.0.0.2:23646"}, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.1:23646\njobType=all\n"
+	want := "admin=10.0.0.1:23646\njobType=all\nworkingDir=.\n"
 	if got != want {
 		t.Fatalf("WriteToBuffer fallback admin: got %q want %q", got, want)
 	}
@@ -43,7 +43,7 @@ func TestWorkerServerSpec_WriteToBuffer_NoAdminStillEmitsJobType(t *testing.T) {
 	w.WriteToBuffer(nil, &buf)
 
 	got := buf.String()
-	want := "jobType=all\n"
+	want := "jobType=all\nworkingDir=.\n"
 	if got != want {
 		t.Fatalf("WriteToBuffer no-admin: got %q want %q", got, want)
 	}
@@ -107,7 +107,7 @@ func TestWorkerServerSpec_WriteToBuffer_MetricsPort(t *testing.T) {
 	w.WriteToBuffer(nil, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.1:23646\njobType=all\nmetricsPort=9327\n"
+	want := "admin=10.0.0.1:23646\njobType=all\nmetricsPort=9327\nworkingDir=.\n"
 	if got != want {
 		t.Fatalf("WriteToBuffer metrics port: got %q want %q", got, want)
 	}
@@ -147,5 +147,28 @@ func TestWorkerServerSpec_WriteLanceToBuffer_ExplicitAdmin(t *testing.T) {
 	want := "admin=10.0.0.2:23646\nnamespace=http://10.0.0.51:9101\n"
 	if got != want {
 		t.Fatalf("WriteLanceToBuffer explicit admin: got %q want %q", got, want)
+	}
+}
+
+// A worker refuses to start without a working dir, so one is always given:
+// the unit's working directory, unless the config names another.
+func TestWorkerServerSpec_WriteToBuffer_WorkingDir(t *testing.T) {
+	var buf bytes.Buffer
+	(&WorkerServerSpec{Admin: "10.0.0.1:23646"}).WriteToBuffer(nil, &buf)
+	if !strings.Contains(buf.String(), "\nworkingDir=.\n") {
+		t.Fatalf("default working dir missing: %q", buf.String())
+	}
+
+	buf.Reset()
+	(&WorkerServerSpec{Admin: "10.0.0.1:23646", Config: map[string]interface{}{"workingDir": "/data/scratch"}}).WriteToBuffer(nil, &buf)
+	got := buf.String()
+	if strings.Count(got, "workingDir=") != 1 || !strings.Contains(got, "workingDir=/data/scratch\n") {
+		t.Fatalf("configured working dir = %q, want it once", got)
+	}
+
+	buf.Reset()
+	(&WorkerServerSpec{Admin: "10.0.0.1:23646", Config: map[string]interface{}{"-workingDir": "/data/scratch"}}).WriteToBuffer(nil, &buf)
+	if got := buf.String(); strings.Contains(got, "workingDir=.\n") {
+		t.Fatalf("default working dir shadows the configured -workingDir: %q", got)
 	}
 }
