@@ -359,7 +359,10 @@ type diskSpaceCheck struct{}
 
 func (diskSpaceCheck) Name() string { return "disk-space" }
 func (diskSpaceCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
-	cmd := fmt.Sprintf("mkdir -p %s 2>/dev/null; df -P %s", shellQuote(plan.DataDir), shellQuote(plan.DataDir))
+	// On a fresh host the data dir does not exist yet, and the SSH user may
+	// not be allowed to create it (deploy does, with sudo). The dir will be
+	// made on its nearest existing ancestor's filesystem, so measure that.
+	cmd := fmt.Sprintf(`p=%s; while [ ! -e "$p" ] && [ "$p" != / ]; do p=$(dirname "$p"); done; df -P "$p"`, shellQuote(plan.DataDir))
 	out, err := r.Output(cmd)
 	if err != nil {
 		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: err.Error()}
