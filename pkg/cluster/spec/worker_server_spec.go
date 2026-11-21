@@ -84,6 +84,13 @@ func (w *WorkerServerSpec) WriteToBuffer(admins []string, buf *bytes.Buffer) {
 	}
 	addToBuffer(buf, "jobType", jobType)
 	addToBufferInt(buf, "metricsPort", w.MetricsPort, 0)
+	// A worker stages volume data for some job types on local disk and
+	// refuses to start without somewhere to put it. Like the master's mdir
+	// and the admin's dataDir, it defaults to the unit's working directory,
+	// the instance's data dir.
+	if _, set := w.Config["workingDir"]; !set {
+		addToBuffer(buf, "workingDir", ".")
+	}
 
 	if len(w.Config) == 0 {
 		return
