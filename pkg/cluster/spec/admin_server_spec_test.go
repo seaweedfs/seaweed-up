@@ -138,6 +138,8 @@ func TestAdminServerSpec_WriteToBuffer_ConfigReservedKeysSkipped(t *testing.T) {
 			"dataDir":       "/tmp/bogus",
 			"adminUser":     "other",
 			"adminPassword": "other",
+			"-ip.bind":      "0.0.0.0",
+			"-port":         9998,
 			// A non-reserved key should still flow through.
 			"port.grpc": 33646,
 		},

@@ -82,6 +82,8 @@ func TestSftpServerSpec_WriteToBuffer_ConfigReservedKeysSkipped(t *testing.T) {
 			"filer":         "evil:1",
 			"sshPrivateKey": "/tmp/hijack_key",
 			"userStoreFile": "/tmp/hijack_users",
+			"-ip.bind":      "0.0.0.0",
+			"-metricsPort":  9327,
 			// Non-reserved extra passes through.
 			"logLevel": "debug",
 		},

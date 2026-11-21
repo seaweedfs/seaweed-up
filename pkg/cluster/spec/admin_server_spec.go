@@ -82,9 +82,9 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 
 	// Write free-form Config entries in stable (sorted) order so the
 	// resulting options file is deterministic. Keys that are already
-	// handled by explicit struct fields above are skipped so that users
-	// cannot accidentally emit a duplicate (and ambiguous) flag by
-	// placing e.g. `port:` under `config:`.
+	// handled by explicit struct fields above are skipped, in either
+	// spelling, so that users cannot accidentally emit a duplicate (and
+	// ambiguous) flag by placing e.g. `port:` or `-port:` under `config:`.
 	if len(a.Config) > 0 {
 		reserved := map[string]bool{
 			"ip":                true,
@@ -98,7 +98,7 @@ func (a *AdminServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 		}
 		keys := make([]string, 0, len(a.Config))
 		for k := range a.Config {
-			if reserved[k] {
+			if reserved[strings.TrimPrefix(k, "-")] {
 				continue
 			}
 			keys = append(keys, k)
