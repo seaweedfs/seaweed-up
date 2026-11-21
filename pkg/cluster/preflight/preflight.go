@@ -361,11 +361,15 @@ func (diskSpaceCheck) Name() string { return "disk-space" }
 func (diskSpaceCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
 	// On a fresh host the data dir does not exist yet, and the SSH user may
 	// not be allowed to create it (deploy does, with sudo). The dir will be
-	// made on its nearest existing ancestor's filesystem, so measure that.
-	cmd := fmt.Sprintf(`p=%s; while [ ! -e "$p" ] && [ "$p" != / ]; do p=$(dirname "$p"); done; df -P "$p"`, shellQuote(plan.DataDir))
+	// made on its nearest existing ancestor's filesystem, so measure that,
+	// unless that ancestor is a file the dir cannot be made under.
+	cmd := fmt.Sprintf(`p=%s; while [ ! -e "$p" ] && [ "$p" != / ]; do p=$(dirname "$p"); done; if [ -d "$p" ]; then df -P "$p"; else echo "not a directory: $p"; fi`, shellQuote(plan.DataDir))
 	out, err := r.Output(cmd)
 	if err != nil {
 		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: err.Error()}
+	}
+	if txt := strings.TrimSpace(string(out)); strings.HasPrefix(txt, "not a directory: ") {
+		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: fmt.Sprintf("%s: %s", plan.DataDir, txt)}
 	}
 	availKB, err := ParseFreeKB(string(out))
 	if err != nil {

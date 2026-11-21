@@ -2,7 +2,9 @@ package preflight
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -227,6 +229,23 @@ func TestDiskSpaceCheckOnAFreshHost(t *testing.T) {
 		if strings.Contains(cmd, "mkdir") {
 			t.Errorf("the check creates directories: %s", cmd)
 		}
+	}
+}
+
+// A data dir under a regular file cannot be created, however much space
+// the file's filesystem has.
+func TestDiskSpaceCheckUnderAFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "storage")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := HostPlan{Host: "h1", DataDir: filepath.Join(file, "seaweed")}
+	r := &scriptRunner{run: func(cmd string) ([]byte, error) {
+		return exec.Command("sh", "-c", cmd).Output()
+	}}
+	res := diskSpaceCheck{}.Run(context.Background(), plan, r)
+	if res.OK || !strings.Contains(res.Detail, "not a directory: "+file) {
+		t.Fatalf("disk-space under a regular file = %+v", res)
 	}
 }
 
