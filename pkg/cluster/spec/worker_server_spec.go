@@ -88,7 +88,9 @@ func (w *WorkerServerSpec) WriteToBuffer(admins []string, buf *bytes.Buffer) {
 	// refuses to start without somewhere to put it. Like the master's mdir
 	// and the admin's dataDir, it defaults to the unit's working directory,
 	// the instance's data dir.
-	if _, set := w.Config["workingDir"]; !set {
+	_, set := w.Config["workingDir"]
+	_, dashed := w.Config["-workingDir"]
+	if !set && !dashed {
 		addToBuffer(buf, "workingDir", ".")
 	}
 

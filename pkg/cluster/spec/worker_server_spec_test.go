@@ -165,4 +165,10 @@ func TestWorkerServerSpec_WriteToBuffer_WorkingDir(t *testing.T) {
 	if strings.Count(got, "workingDir=") != 1 || !strings.Contains(got, "workingDir=/data/scratch\n") {
 		t.Fatalf("configured working dir = %q, want it once", got)
 	}
+
+	buf.Reset()
+	(&WorkerServerSpec{Admin: "10.0.0.1:23646", Config: map[string]interface{}{"-workingDir": "/data/scratch"}}).WriteToBuffer(nil, &buf)
+	if got := buf.String(); strings.Contains(got, "workingDir=.\n") {
+		t.Fatalf("default working dir shadows the configured -workingDir: %q", got)
+	}
 }
