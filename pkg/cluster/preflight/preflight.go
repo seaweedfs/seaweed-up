@@ -359,10 +359,19 @@ type diskSpaceCheck struct{}
 
 func (diskSpaceCheck) Name() string { return "disk-space" }
 func (diskSpaceCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
-	cmd := fmt.Sprintf("mkdir -p %s 2>/dev/null; df -P %s", shellQuote(plan.DataDir), shellQuote(plan.DataDir))
+	// On a fresh host the data dir does not exist yet, and the SSH user may
+	// not be allowed to create it (deploy does, with sudo). The dir will be
+	// made on its nearest existing ancestor's filesystem, so measure that,
+	// unless that ancestor is a file the dir cannot be made under. Look
+	// with sudo when there is one, as deploy does, so a directory the SSH
+	// user cannot search does not hide the mount below it.
+	cmd := fmt.Sprintf(`s=; if [ "$(id -u)" != 0 ] && sudo -n true 2>/dev/null; then s='sudo -n'; fi; p=%s; while ! $s test -e "$p" && [ "$p" != / ]; do p=$(dirname "$p"); done; if $s test -d "$p"; then $s df -P "$p"; else echo "not a directory: $p"; fi`, shellQuote(plan.DataDir))
 	out, err := r.Output(cmd)
 	if err != nil {
 		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: err.Error()}
+	}
+	if txt := strings.TrimSpace(string(out)); strings.HasPrefix(txt, "not a directory: ") {
+		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: fmt.Sprintf("%s: %s", plan.DataDir, txt)}
 	}
 	availKB, err := ParseFreeKB(string(out))
 	if err != nil {

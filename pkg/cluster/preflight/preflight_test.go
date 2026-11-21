@@ -2,8 +2,12 @@ package preflight
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweed-up/pkg/cluster/spec"
@@ -205,3 +209,48 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// A fresh host has no data dir yet, and the SSH user may not be able to
+// create one: the check measures the filesystem it will be created on and
+// creates nothing itself.
+func TestDiskSpaceCheckOnAFreshHost(t *testing.T) {
+	plan := HostPlan{Host: "h1", DataDir: "/opt/seaweed"}
+	var ran []string
+	r := &scriptRunner{run: func(cmd string) ([]byte, error) {
+		ran = append(ran, cmd)
+		out, err := exec.Command("sh", "-c", strings.ReplaceAll(cmd, "/opt/seaweed", "/nonexistent-seaweed-up-test/opt/seaweed")).Output()
+		return out, err
+	}}
+	res := diskSpaceCheck{}.Run(context.Background(), plan, r)
+	if !res.OK {
+		t.Fatalf("disk-space on a host without the data dir = %+v", res)
+	}
+	for _, cmd := range ran {
+		if strings.Contains(cmd, "mkdir") {
+			t.Errorf("the check creates directories: %s", cmd)
+		}
+	}
+}
+
+// A data dir under a regular file cannot be created, however much space
+// the file's filesystem has.
+func TestDiskSpaceCheckUnderAFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "storage")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := HostPlan{Host: "h1", DataDir: filepath.Join(file, "seaweed")}
+	r := &scriptRunner{run: func(cmd string) ([]byte, error) {
+		return exec.Command("sh", "-c", cmd).Output()
+	}}
+	res := diskSpaceCheck{}.Run(context.Background(), plan, r)
+	if res.OK || !strings.Contains(res.Detail, "not a directory: "+file) {
+		t.Fatalf("disk-space under a regular file = %+v", res)
+	}
+}
+
+type scriptRunner struct {
+	run func(cmd string) ([]byte, error)
+}
+
+func (s *scriptRunner) Output(cmd string) ([]byte, error) { return s.run(cmd) }
