@@ -362,8 +362,10 @@ func (diskSpaceCheck) Run(ctx context.Context, plan HostPlan, r Runner) Result {
 	// On a fresh host the data dir does not exist yet, and the SSH user may
 	// not be allowed to create it (deploy does, with sudo). The dir will be
 	// made on its nearest existing ancestor's filesystem, so measure that,
-	// unless that ancestor is a file the dir cannot be made under.
-	cmd := fmt.Sprintf(`p=%s; while [ ! -e "$p" ] && [ "$p" != / ]; do p=$(dirname "$p"); done; if [ -d "$p" ]; then df -P "$p"; else echo "not a directory: $p"; fi`, shellQuote(plan.DataDir))
+	// unless that ancestor is a file the dir cannot be made under. Look
+	// with sudo when there is one, as deploy does, so a directory the SSH
+	// user cannot search does not hide the mount below it.
+	cmd := fmt.Sprintf(`s=; if [ "$(id -u)" != 0 ] && sudo -n true 2>/dev/null; then s='sudo -n'; fi; p=%s; while ! $s test -e "$p" && [ "$p" != / ]; do p=$(dirname "$p"); done; if $s test -d "$p"; then $s df -P "$p"; else echo "not a directory: $p"; fi`, shellQuote(plan.DataDir))
 	out, err := r.Output(cmd)
 	if err != nil {
 		return Result{Name: "disk-space", Host: plan.Host, OK: false, Detail: err.Error()}
