@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // SftpServerSpec describes a SeaweedFS SFTP gateway instance. It exposes the
@@ -28,8 +29,9 @@ type SftpServerSpec struct {
 // specs; SFTP only needs a filer endpoint, which may come from the spec or be
 // derived by the caller.
 // sftpReservedConfigKeys lists CLI flag names that are managed by explicit
-// SftpServerSpec fields. Any matching entries in Config are ignored so that
-// typed fields remain the source of truth and cannot be silently overridden.
+// SftpServerSpec fields. Any matching entries in Config, with or without a
+// leading dash, are ignored so that typed fields remain the source of truth
+// and cannot be silently overridden.
 var sftpReservedConfigKeys = map[string]struct{}{
 	"ip":            {},
 	"ip.bind":       {},
@@ -54,7 +56,7 @@ func (s *SftpServerSpec) WriteToBuffer(masters []string, buf *bytes.Buffer) {
 	}
 	keys := make([]string, 0, len(s.Config))
 	for k := range s.Config {
-		if _, reserved := sftpReservedConfigKeys[k]; reserved {
+		if _, reserved := sftpReservedConfigKeys[strings.TrimPrefix(k, "-")]; reserved {
 			continue
 		}
 		keys = append(keys, k)

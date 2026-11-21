@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // WorkerServerSpec describes a SeaweedFS maintenance worker instance.
@@ -56,7 +57,8 @@ const DefaultWorkerJobType = "all"
 // explicit WorkerServerSpec field or managed by the deploy pipeline itself.
 //
 // Each entry is the exact CLI flag name (the portion after the leading `-`
-// on the `weed worker` command line) as rendered by addToBuffer.
+// on the `weed worker` command line) as rendered by addToBuffer; a Config
+// key matches in either spelling, since weed's options file drops the dash.
 var workerReservedKeys = map[string]struct{}{
 	// `admin` is always emitted by WriteToBuffer from the explicit
 	// WorkerServerSpec.Admin field (or the deploy-time fallback derived
@@ -99,7 +101,7 @@ func (w *WorkerServerSpec) WriteToBuffer(admins []string, buf *bytes.Buffer) {
 	}
 	keys := make([]string, 0, len(w.Config))
 	for k := range w.Config {
-		if _, reserved := workerReservedKeys[k]; reserved {
+		if _, reserved := workerReservedKeys[strings.TrimPrefix(k, "-")]; reserved {
 			continue
 		}
 		keys = append(keys, k)

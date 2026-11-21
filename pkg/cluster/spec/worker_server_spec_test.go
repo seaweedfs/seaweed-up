@@ -80,7 +80,7 @@ func TestWorkerServerSpec_WriteToBuffer_JobTypeInConfigSuppressed(t *testing.T) 
 		Ip:      "10.0.0.5",
 		Admin:   "10.0.0.1:23646",
 		JobType: "ec",
-		Config:  map[string]interface{}{"jobType": "balance"},
+		Config:  map[string]interface{}{"jobType": "balance", "-jobType": "vacuum"},
 	}
 	var buf bytes.Buffer
 	w.WriteToBuffer(nil, &buf)
@@ -92,7 +92,7 @@ func TestWorkerServerSpec_WriteToBuffer_JobTypeInConfigSuppressed(t *testing.T) 
 	if !strings.Contains(got, "jobType=ec\n") {
 		t.Errorf("expected jobType=ec from struct field; got %q", got)
 	}
-	if strings.Contains(got, "jobType=balance") {
+	if strings.Contains(got, "jobType=balance") || strings.Contains(got, "jobType=vacuum") {
 		t.Errorf("Config jobType should be dropped by reserved-keys filter; got %q", got)
 	}
 }
