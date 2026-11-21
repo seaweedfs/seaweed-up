@@ -50,7 +50,8 @@ func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.B
 
 	// Free-form config entries become further master options, in sorted
 	// order, as the admin's and the worker's do. Keys written from the
-	// fields above are skipped rather than emitted twice.
+	// fields above are skipped rather than emitted twice, in either
+	// spelling: weed's options file drops a leading dash.
 	reserved := map[string]bool{
 		"mdir": true, "peers": true, "ip": true, "ip.bind": true, "port": true,
 		"port.grpc": true, "volumeSizeLimitMB": true, "defaultReplication": true,
@@ -58,7 +59,7 @@ func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.B
 	}
 	keys := make([]string, 0, len(masterSpec.Config))
 	for k := range masterSpec.Config {
-		if !reserved[k] {
+		if !reserved[strings.TrimPrefix(k, "-")] {
 			keys = append(keys, k)
 		}
 	}

@@ -33,6 +33,7 @@ func TestMasterServerSpec_WriteToBufferConfig(t *testing.T) {
 		"deletionRetention": "-1s",
 		"garbageThreshold":  0.4,
 		"port":              9999,
+		"-port":             9998,
 	}}
 	var buf bytes.Buffer
 	m.WriteToBuffer([]string{"10.0.0.1:9333"}, &buf)
@@ -42,8 +43,8 @@ func TestMasterServerSpec_WriteToBufferConfig(t *testing.T) {
 			t.Errorf("options missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "port=9999") {
-		t.Errorf("a config entry repeated the port option:\n%s", got)
+	if strings.Contains(got, "port=9999") || strings.Contains(got, "port=9998") {
+		t.Errorf("a config entry repeated a port option:\n%s", got)
 	}
 	if strings.Index(got, "deletionRetention") > strings.Index(got, "garbageThreshold") {
 		t.Errorf("config entries are not sorted:\n%s", got)
