@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -46,6 +47,25 @@ func (masterSpec *MasterServerSpec) WriteToBuffer(masters []string, buf *bytes.B
 	addToBufferInt(buf, "volumeSizeLimitMB", masterSpec.VolumeSizeLimitMB, 30000)
 	addToBuffer(buf, "defaultReplication", masterSpec.DefaultReplication)
 	addToBufferInt(buf, "metricsPort", masterSpec.MetricsPort, 0)
+
+	// Free-form config entries become further master options, in sorted
+	// order, as the admin's and the worker's do. Keys written from the
+	// fields above are skipped rather than emitted twice.
+	reserved := map[string]bool{
+		"mdir": true, "peers": true, "ip": true, "ip.bind": true, "port": true,
+		"port.grpc": true, "volumeSizeLimitMB": true, "defaultReplication": true,
+		"metricsPort": true,
+	}
+	keys := make([]string, 0, len(masterSpec.Config))
+	for k := range masterSpec.Config {
+		if !reserved[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(buf, "%s=%v\n", k, masterSpec.Config[k])
+	}
 }
 
 func addToBuffer(buf *bytes.Buffer, name, value string) {
