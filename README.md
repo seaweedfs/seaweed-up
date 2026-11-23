@@ -79,8 +79,10 @@ don't repeat them per server:
   entry uses. Define it once under `global`; the secret lives in one place.
 - **`s3_servers[].filer`** — defaults to the first `filer_servers` entry.
 - **`worker_servers[].admin`** — defaults to the first `admin_servers` entry.
-- **`worker_servers[].masters`** — the Lance maintenance worker's masters, whose
-  filers it keeps Lance tables through; defaults to every `master_servers` entry.
+- **`worker_servers[].masters`** and **`worker_servers[].namespace`** — the
+  Lance maintenance worker's masters and Lance namespace URL; default to every
+  `master_servers` entry and the first `s3_servers` entry's `port.lance`. Only
+  workers up to 4.55 read them; later ones learn both from admin.
 
 So a multi-gateway / multi-worker spec is just a list of IPs:
 
@@ -219,8 +221,9 @@ vector_servers:
   IAM checks, and host prep opens 8090 to all sources: keep vector hosts
   on the cluster's private network.
 - Vector indexes are built by the Lance maintenance worker that runs beside
-  every `worker_servers` entry: it gets the masters (`worker_servers[].masters`)
-  and the cluster's signing key, which the S3 gateway checks it by. It is
+  every `worker_servers` entry: it gets the admin, the cluster's signing key,
+  which the S3 gateway checks it by, and, for releases up to 4.55, the masters
+  and the Lance namespace; with no namespace to give it, it is skipped. It is
   `weed-worker_linux_<arch>.tar.gz`, or `weed-worker-enterprise_linux_<arch>.tar.gz`
   with `--enterprise`; a release without it skips the worker with a warning.
 

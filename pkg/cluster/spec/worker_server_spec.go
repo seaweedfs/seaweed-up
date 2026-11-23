@@ -36,12 +36,14 @@ type WorkerServerSpec struct {
 	// LanceMetricsPort exposes the companion Rust unit's /metrics
 	// (`weed-worker --metrics-port`); 9328 continues the per-component series.
 	LanceMetricsPort int `yaml:"lance_metrics_port,omitempty"`
-	// Namespace is the companion Rust weed-worker's Lance namespace URL; empty
-	// derives from the first s3 server's port.lance (9101), else the unit skips.
+	// Namespace is the companion Rust weed-worker's Lance namespace URL, read
+	// only by releases up to 4.55; later ones learn it from admin. Empty derives
+	// from the first s3 server's port.lance (9101), else the unit skips.
 	Namespace string `yaml:"namespace,omitempty"`
-	// Masters is the companion weed-worker's comma-separated master list: it
-	// keeps Lance tables through the filers they list. Empty derives from
-	// master_servers.
+	// Masters is the companion weed-worker's comma-separated master list, whose
+	// filers it keeps Lance tables through, read only by releases up to 4.55;
+	// later ones learn the filers from admin. Empty
+	// derives from master_servers.
 	Masters string `yaml:"masters,omitempty"`
 }
 
@@ -125,9 +127,9 @@ func (w *WorkerServerSpec) adminEndpoint(admins []string) string {
 
 // WriteLanceToBuffer renders the companion Rust unit's options; the deploy
 // path turns them into ExecStart flags since weed-worker reads no options file.
+// Namespace and Masters go in its environment, see lanceWorkerEnv.
 func (w *WorkerServerSpec) WriteLanceToBuffer(admins []string, buf *bytes.Buffer) {
 	addToBuffer(buf, "admin", w.adminEndpoint(admins))
-	addToBuffer(buf, "namespace", w.Namespace)
 	addToBufferInt(buf, "metrics-port", w.LanceMetricsPort, 0)
 	if w.LanceMetricsPort != 0 {
 		// weed-worker defaults metrics to loopback; prometheus scrapes remotely.

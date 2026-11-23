@@ -114,11 +114,13 @@ func TestWorkerServerSpec_WriteToBuffer_MetricsPort(t *testing.T) {
 }
 
 func TestWorkerServerSpec_WriteLanceToBuffer(t *testing.T) {
-	// Go-worker vocabulary (jobType, metricsPort, Config) must not leak in;
-	// a non-zero lance metrics port brings the 0.0.0.0 bind with it.
+	// Go-worker vocabulary (jobType, metricsPort, Config) must not leak in,
+	// nor namespace and masters, which go in the environment; a non-zero lance
+	// metrics port brings the 0.0.0.0 bind with it.
 	w := &WorkerServerSpec{
 		Ip:               "10.0.0.5",
 		Namespace:        "http://10.0.0.51:9101",
+		Masters:          "10.0.0.1:9333",
 		JobType:          "ec,balance",
 		MetricsPort:      9327,
 		LanceMetricsPort: 9328,
@@ -128,7 +130,7 @@ func TestWorkerServerSpec_WriteLanceToBuffer(t *testing.T) {
 	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.1:23646\nnamespace=http://10.0.0.51:9101\nmetrics-port=9328\nmetrics-ip=0.0.0.0\n"
+	want := "admin=10.0.0.1:23646\nmetrics-port=9328\nmetrics-ip=0.0.0.0\n"
 	if got != want {
 		t.Fatalf("WriteLanceToBuffer: got %q want %q", got, want)
 	}
@@ -144,7 +146,7 @@ func TestWorkerServerSpec_WriteLanceToBuffer_ExplicitAdmin(t *testing.T) {
 	w.WriteLanceToBuffer([]string{"10.0.0.1:23646"}, &buf)
 
 	got := buf.String()
-	want := "admin=10.0.0.2:23646\nnamespace=http://10.0.0.51:9101\n"
+	want := "admin=10.0.0.2:23646\n"
 	if got != want {
 		t.Fatalf("WriteLanceToBuffer explicit admin: got %q want %q", got, want)
 	}

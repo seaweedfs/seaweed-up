@@ -52,23 +52,31 @@ func TestDeployWorkerInstances_BothUnits(t *testing.T) {
 		t.Fatalf("expected both worker units (go=%v lance=%v); uploads: %v", goUnit, lanceUnit, keys(op.uploads))
 	}
 
+	var lanceEnv string
 	for path, content := range op.uploads {
 		if strings.HasSuffix(path, "/install_worker-lance0.sh") {
 			for _, want := range []string{
 				"BINARY=weed-worker",
 				"weed-worker_${OS}_${SUFFIX}.tar.gz",
-				"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101 --metrics-port 9328 --metrics-ip 0.0.0.0",
+				"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.100:23646 --metrics-port 9328 --metrics-ip 0.0.0.0\n",
 			} {
 				if !strings.Contains(content, want) {
 					t.Errorf("lance install script missing %q", want)
 				}
 			}
 		}
+		if strings.HasSuffix(path, "/config/security.env") {
+			lanceEnv = content
+		}
 		if strings.HasSuffix(path, "/install_worker0.sh") {
 			if !strings.Contains(content, "BINARY=weed") || strings.Contains(content, "BINARY=weed-worker") {
 				t.Errorf("go worker install script should install weed")
 			}
 		}
+	}
+	// An unsigned cluster still ships the env file: it carries the namespace.
+	if want := "WEED_LANCE_NAMESPACE=http://10.0.0.51:9101\n"; lanceEnv != want {
+		t.Errorf("lance security.env = %q, want %q", lanceEnv, want)
 	}
 }
 
@@ -223,7 +231,7 @@ func TestRustToolArgs(t *testing.T) {
 	w.WriteLanceToBuffer([]string{"10.0.0.100:23646"}, &buf)
 
 	got := rustToolArgs(&buf)
-	want := "--admin 10.0.0.100:23646 --namespace http://10.0.0.51:9101"
+	want := "--admin 10.0.0.100:23646"
 	if got != want {
 		t.Fatalf("rustToolArgs: got %q want %q", got, want)
 	}
@@ -258,7 +266,7 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 			}
 		case strings.HasSuffix(path, "/config/security.env"):
 			lanceEnv++
-			if content != "WEED_MASTERS=10.0.0.1:9333\nWEED_FILER_SIGNING_KEY=w-key\n" {
+			if content != "WEED_LANCE_NAMESPACE=http://10.0.0.51:9101\nWEED_MASTERS=10.0.0.1:9333\nWEED_FILER_SIGNING_KEY=w-key\n" {
 				t.Errorf("lance security.env = %q", content)
 			}
 		}
@@ -268,18 +276,33 @@ func TestDeployWorkerInstances_InstallsSecurityToml(t *testing.T) {
 	}
 }
 
-// weed-worker needs its masters whether or not the cluster signs; they go in
-// the environment, which a weed-worker that predates them ignores.
+// An older weed-worker needs its namespace and masters whether or not the
+// cluster signs; a release that drops either ignores the variable.
 func TestLanceWorkerEnv(t *testing.T) {
 	m := &Manager{}
-	files := m.lanceWorkerEnv("10.0.0.1:9333,10.0.0.2:9333")
-	if len(files) != 1 || files[0].Name != "security.env" {
-		t.Fatalf("want one security.env, got %+v", files)
+	cases := []struct {
+		w    spec.WorkerServerSpec
+		want string
+	}{
+		{spec.WorkerServerSpec{Namespace: "http://10.0.0.51:9101", Masters: "10.0.0.1:9333,10.0.0.2:9333"},
+			"WEED_LANCE_NAMESPACE=http://10.0.0.51:9101\nWEED_MASTERS=10.0.0.1:9333,10.0.0.2:9333\n"},
+		{spec.WorkerServerSpec{Namespace: "http://10.0.0.51:9101"}, "WEED_LANCE_NAMESPACE=http://10.0.0.51:9101\n"},
+		{spec.WorkerServerSpec{Masters: "10.0.0.1:9333"}, "WEED_MASTERS=10.0.0.1:9333\n"},
 	}
-	if got := files[0].Content.String(); got != "WEED_MASTERS=10.0.0.1:9333,10.0.0.2:9333\n" {
-		t.Errorf("env = %q", got)
+	for _, c := range cases {
+		files := m.lanceWorkerEnv(&c.w)
+		if len(files) != 1 || files[0].Name != "security.env" {
+			t.Fatalf("%+v: want one security.env, got %+v", c.w, files)
+		}
+		if got := files[0].Content.String(); got != c.want {
+			t.Errorf("%+v: env = %q, want %q", c.w, got, c.want)
+		}
 	}
-	if files := m.lanceWorkerEnv(""); files != nil {
-		t.Errorf("no masters and no key: want no file, got %+v", files)
+	if files := m.lanceWorkerEnv(&spec.WorkerServerSpec{}); files != nil {
+		t.Errorf("no namespace, masters or key: want no file, got %+v", files)
+	}
+	keyed := &Manager{filerSigning: filerSigningKeys{write: "w-key"}}
+	if files := keyed.lanceWorkerEnv(&spec.WorkerServerSpec{}); len(files) != 1 || files[0].Content.String() != "WEED_FILER_SIGNING_KEY=w-key\n" {
+		t.Errorf("key only: got %+v", files)
 	}
 }
