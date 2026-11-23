@@ -145,14 +145,19 @@ func (m *Manager) instanceSecurityToml(component string) []extraConfigFile {
 	return []extraConfigFile{{Name: "security.toml", Content: bytes.NewBufferString(toml), Mode: "0600"}}
 }
 
-// lanceWorkerEnv is weed-worker's environment file. WEED_MASTERS names the
-// masters whose filers it keeps Lance tables through, required after 4.52;
-// WEED_FILER_SIGNING_KEY signs its admin stream and its Lance namespace
-// calls. Variables, not flags: a release that predates one ignores it.
-func (m *Manager) lanceWorkerEnv(masters string) []extraConfigFile {
+// lanceWorkerEnv is weed-worker's environment file. WEED_LANCE_NAMESPACE and
+// WEED_MASTERS are for releases up to 4.55, which require both, and for a
+// later worker under an older admin, which names no namespace; otherwise a
+// worker from 4.56 learns both from admin. WEED_FILER_SIGNING_KEY signs its
+// admin stream and its Lance namespace calls. Variables, not flags: a release
+// that predates or drops one ignores it.
+func (m *Manager) lanceWorkerEnv(w *spec.WorkerServerSpec) []extraConfigFile {
 	var env strings.Builder
-	if masters != "" {
-		env.WriteString("WEED_MASTERS=" + masters + "\n")
+	if w.Namespace != "" {
+		env.WriteString("WEED_LANCE_NAMESPACE=" + w.Namespace + "\n")
+	}
+	if w.Masters != "" {
+		env.WriteString("WEED_MASTERS=" + w.Masters + "\n")
 	}
 	if m.filerSigning.write != "" {
 		env.WriteString("WEED_FILER_SIGNING_KEY=" + m.filerSigning.write + "\n")

@@ -136,7 +136,7 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 	out := renderInstall(t, map[string]interface{}{
 		"Component": "worker-lance", "ComponentInstance": "worker-lance0",
 		"Binary": "weed-worker", "RustTool": "weed-worker", "Version": "4.44",
-		"RustToolArgs": "--admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		"RustToolArgs": "--admin 10.0.0.61:23646 --metrics-port 9328",
 	})
 	for _, want := range []string{
 		"BINARY=weed-worker",
@@ -148,9 +148,9 @@ func TestInstallScript_RustWorkerPath(t *testing.T) {
 		`"$TMP_DIR/weed-worker" --help`, // glibc probe before install
 		"skipping the weed-worker unit",
 		// flags on the ExecStart line: weed-worker reads no options file
-		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --namespace http://10.0.0.51:9101",
+		"ExecStart=${BIN_DIR}/${BINARY} --admin 10.0.0.61:23646 --metrics-port 9328",
 		"WorkingDirectory=${SEAWEED_COMPONENT_INSTANCE_DATA_DIR}\n",
-		// the admin signing key, kept off the command line
+		// the signing key, namespace and masters, kept off the command line
 		"EnvironmentFile=-${SEAWEED_COMPONENT_INSTANCE_CONFIG_DIR}/security.env\n",
 	} {
 		if !strings.Contains(out, want) {
