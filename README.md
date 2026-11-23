@@ -81,10 +81,8 @@ don't repeat them per server:
 - **`worker_servers[].admin`** — defaults to the first `admin_servers` entry.
 - **`worker_servers[].masters`** and **`worker_servers[].namespace`** — the
   Lance maintenance worker's masters and Lance namespace URL; default to every
-  `master_servers` entry and the first `s3_servers` entry's `port.lance`.
-  Releases up to 4.55 need both. A worker from 4.56 learns its filers from
-  admin and ignores `masters`; it uses `namespace` only when admin names none,
-  as an admin before 4.56 does.
+  `master_servers` entry and the first `s3_servers` entry's `port.lance`. Only
+  workers up to 4.55 read them; later ones learn both from admin.
 
 So a multi-gateway / multi-worker spec is just a list of IPs:
 

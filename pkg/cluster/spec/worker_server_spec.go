@@ -36,14 +36,13 @@ type WorkerServerSpec struct {
 	// LanceMetricsPort exposes the companion Rust unit's /metrics
 	// (`weed-worker --metrics-port`); 9328 continues the per-component series.
 	LanceMetricsPort int `yaml:"lance_metrics_port,omitempty"`
-	// Namespace is the companion Rust weed-worker's Lance namespace URL. From
-	// 4.56 the worker learns it from admin; this serves releases up to 4.55 and
-	// a later worker under an older admin, which names none. Empty derives from
-	// the first s3 server's port.lance (9101), else the unit skips.
+	// Namespace is the companion Rust weed-worker's Lance namespace URL, read
+	// only by releases up to 4.55; later ones learn it from admin. Empty derives
+	// from the first s3 server's port.lance (9101), else the unit skips.
 	Namespace string `yaml:"namespace,omitempty"`
 	// Masters is the companion weed-worker's comma-separated master list, whose
-	// filers it keeps Lance tables through. From 4.56 the worker learns the
-	// filers from admin and ignores it; releases up to 4.55 require it. Empty
+	// filers it keeps Lance tables through, read only by releases up to 4.55;
+	// later ones learn the filers from admin. Empty
 	// derives from master_servers.
 	Masters string `yaml:"masters,omitempty"`
 }
