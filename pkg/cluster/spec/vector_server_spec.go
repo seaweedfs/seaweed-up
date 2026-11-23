@@ -25,7 +25,7 @@ type VectorServerSpec struct {
 	Masters     string `yaml:"masters,omitempty"`
 	MetricsPort int    `yaml:"metrics_port,omitempty"`
 	MetricsIP   string `yaml:"metrics_ip,omitempty"`
-	// Config carries further weed-vector flags by name, e.g. read-cache-mb.
+	// Config carries further weed-vector flags by name, e.g. filer-group.
 	Config map[string]interface{} `yaml:"config,omitempty"`
 	Arch   string                 `yaml:"arch,omitempty"`
 	OS     string                 `yaml:"os,omitempty"`

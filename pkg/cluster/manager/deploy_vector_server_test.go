@@ -14,7 +14,7 @@ func TestDeployVectorInstance(t *testing.T) {
 	var probedURL string
 	stubReleaseAssetHead(t, func(url string) (int, error) { probedURL = url; return 200, nil })
 
-	v := &spec.VectorServerSpec{Ip: "10.0.0.20", Masters: "10.0.0.1:9333", Config: map[string]interface{}{"read-cache-mb": 1024}}
+	v := &spec.VectorServerSpec{Ip: "10.0.0.20", Masters: "10.0.0.1:9333", Config: map[string]interface{}{"filer-group": "eu"}}
 	if err := m.deployVectorInstance(op, v, 0); err != nil {
 		t.Fatalf("deployVectorInstance: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestDeployVectorInstance(t *testing.T) {
 		"BINARY=weed-vector",
 		"weed-vector_${OS}_${SUFFIX}.tar.gz",
 		".weed-vector-version",
-		"ExecStart=${BIN_DIR}/${BINARY} --listen 10.0.0.20:8090 --masters 10.0.0.1:9333 --read-cache-mb 1024",
+		"ExecStart=${BIN_DIR}/${BINARY} --listen 10.0.0.20:8090 --masters 10.0.0.1:9333 --filer-group eu",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("vector install script missing %q", want)

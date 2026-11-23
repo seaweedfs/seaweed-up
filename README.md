@@ -196,13 +196,14 @@ the filers and volume servers, so it needs no S3 credentials:
 vector_servers:
   - ip: 10.0.0.51          # gRPC on 10.0.0.51:8090; masters from master_servers
     metrics_port: 9329    # opt in with an engine build that exposes metrics
-    config:
-      read-cache-mb: 1024  # further weed-vector flags by name
 ```
 
 - `port` defaults to `8090`; the engine listens on `ip:port`, the address it
   registers, so the gateway must reach it. `masters` defaults to every
   `master_servers` entry.
+- `config` passes further weed-vector flags by name, such as `filer-group`
+  when the filers run in a named group; it must name the filers' group, or the
+  engine finds no filers and exits.
 - With `--enterprise`, the engine keeps its id in its data directory
   (`<data_dir>/vector<N>`, `/opt/seaweed/vector0` by default) through
   `--state-dir`, so an engine back within the masters' `restart_grace` (2m by
