@@ -195,7 +195,7 @@ vector_servers:
   - ip: 10.0.0.51          # gRPC on 10.0.0.51:8090; masters from master_servers
     metrics_port: 9329    # opt in with an engine build that exposes metrics
     config:
-      read-cache-mb: 1024  # further weed-vector flags by name
+      filer-group: eu  # further weed-vector flags by name
 ```
 
 - `port` defaults to `8090`; the engine listens on `ip:port`, the address it

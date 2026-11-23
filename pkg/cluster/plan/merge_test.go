@@ -935,7 +935,7 @@ master_servers:
 // keys on the default port, so a merge keeps it instead of appending a
 // second engine on the same address.
 func TestMerge_vectorEntryWithoutPort(t *testing.T) {
-	existing := []byte("vector_servers:\n  - ip: 10.0.0.51\n    config:\n      read-cache-mb: 1024\n")
+	existing := []byte("vector_servers:\n  - ip: 10.0.0.51\n    config:\n      filer-group: eu\n")
 	fresh := &spec.Specification{
 		VectorServers: []*spec.VectorServerSpec{{Ip: "10.0.0.51", PortSsh: 22, Port: spec.DefaultVectorPort}},
 	}

@@ -7,10 +7,10 @@ import (
 
 func TestVectorServerSpec_WriteToBuffer(t *testing.T) {
 	v := &VectorServerSpec{Ip: "10.0.0.20", Masters: "10.0.0.1:9333,10.0.0.2:9333",
-		Config: map[string]interface{}{"read-cache-mb": 1024, "listen": "0.0.0.0:1", "masters": "x"}}
+		Config: map[string]interface{}{"filer-group": "eu", "listen": "0.0.0.0:1", "masters": "x"}}
 	var buf bytes.Buffer
 	v.WriteToBuffer(&buf)
-	want := "listen=10.0.0.20:8090\nmasters=10.0.0.1:9333,10.0.0.2:9333\nread-cache-mb=1024\n"
+	want := "listen=10.0.0.20:8090\nmasters=10.0.0.1:9333,10.0.0.2:9333\nfiler-group=eu\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
